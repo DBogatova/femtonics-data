@@ -1,0 +1,39 @@
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- macOS ---
+.DS_Store
+**/.DS_Store
+
+# --- Raw & processed imaging data (kept local, NOT in git) ---
+preprocessed/
+rbp4_132_phpeb/
+rbp4_139_phpeb/
+rbp4_141_phpeb/
+rbp4ach/
+
+# --- Safety net: never commit large data / media, wherever it lives ---
+*.mesc
+*.tif
+*.tiff
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.mp4
+*.avi
+*.mov
+
+# --- Generated figures / tables (regenerate from code) ---
+*.png
+*.pdf
+*.csv
+
+# Keep the project docs and code
+!README.md
+!requirements.txt
