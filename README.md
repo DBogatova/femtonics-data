@@ -76,11 +76,21 @@ exactly what you draw, incl. faint branches; stays on-structure).
 ```bash
 python code/STEP3_mask/guideline_mask_napari.py runN_clean.tif --voxel 0.8 0.9 0.9
 ```
-napari: select **guideline** layer → path tool → click along the dendrite (multiple
+napari: select the **trace** layer → path tool → click along the dendrite (multiple
 paths for branches). `b` = build (footprint shows on the MIP), `Ctrl+S` = save
 → `*_guided_labelmap.tif`.
 - `--radius` corridor half-width (thinner/thicker), `--thr-pct` structure sensitivity
   (lower = more), `--enhance` cell (vesselness) boost on the background.
+- **Trace from multiple views.** `--proj-axis {z,y,x}` sets the starting projection
+  (z=XY top, y=XZ side, x=ZY end-on); switch live with **`a`** (cycle), **`j`/`k`/`l`**
+  (XY/XZ/ZY). Each plane has its own **trace** layer, and `b` unions the corridors from
+  every projection you drew on (each extruded along its own axis) — so you can pick up a
+  branch that's hidden behind others in the top view.
+- **Catch briefly-firing branches.** `--activity-pct N` (e.g. `90`) also pulls in corridor
+  voxels whose *transient* activity (per-voxel `max − mean` over time) exceeds that
+  percentile, so episodically-active branches aren't lost (default `0` = structure only).
+  The magenta **transient branches (max−mean)** layer highlights where those are, to guide
+  your tracing.
 
 **`refine_mask_napari.py`** — *fix the mask.* Paint to add / erase to remove,
 editing 2D slices in any orientation and flipping to 3D to check.
@@ -93,6 +103,14 @@ Select the mask layer → paintbrush/eraser → `Ctrl+S` saves `*_edited.tif`. K
 overlays on the 4D series. **`--rot-x DEG`** (e.g. 45) rotates the whole volume around
 X so you can see/edit a branch hidden in XY/XZ — additions are rotated back and unioned
 onto the mask on save (add-only in that mode).
+- **See what the mask misses.** For 4D input, two reference layers are added from the
+  stack: **activity (max)** and the magenta **transient branches** (`max − mean` high-pass,
+  on by default). Toggle them with the eye icon and paint the mask to include branches
+  that only light up briefly.
+- **Paint segments here too.** `--segments` turns this into a segment painter: it shows
+  the given mask as faint context and lets you paint segment numbers (1,2,3…) on a fresh
+  layer with the same slice/3D controls, saving `*_segments_labelmap.tif` clamped to the
+  mask (an alternative to STEP 4).
 
 ---
 
@@ -105,8 +123,17 @@ python code/STEP4_segments/segment_mask_napari.py runN_clean.tif runN_edited_lab
 ```
 napari: on the **segments** layer, set the label number (1,2,3,4…) and paint each
 segment over the footprint. Keys: **`a`** cycle projection (XY→XZ→ZY), **`j`/`k`/`l`**
-jump to XY/XZ/ZY, **`s`** save → `*_segments_labelmap.tif`. Paint each part on the view
-where it doesn't overlap others; only mask voxels get labeled.
+jump to XY/XZ/ZY, **`d`** toggle 2D projection painting ↔ rotatable **3D edit** (the mask
+is pre-filled so the brush always has a surface), **`g`** grow segments from your seeds
+through the mask (geodesic nearest-seed: dab one stroke per branch, then `g` fills each
+connected branch and splits touching branches at their junction), **`u`** undo the last
+grow, **`s`** save → `*_segments_labelmap.tif`. Label #, brush size and paint/erase use
+napari's own controls (`P`/`E`, `-`/`=`, `M`, `[`/`]`). Only mask voxels get labeled.
+- Paint each part on the view where it doesn't overlap others; for many thin overlapping
+  branches, prefer seed + **`g`** grow (which stays precise) over 2D extrusion (which
+  labels every mask voxel through the depth).
+- `--agg {max,mean}` temporal projection for the anatomy background (default `max`,
+  matches refine), `--axis {z,y,x}` starting projection.
 
 ---
 
@@ -122,6 +149,8 @@ python code/STEP5_traces/extract_segment_traces.py runN_clean.tif runN_segments_
   PCA split of a single-label mask).
 - `--proj-axis {z,y,x}` view for the segment map (z=XY, y=XZ, x=ZY).
 - `--mask` full mask to draw semi-transparently under the segments.
+- `--exclude LABEL [LABEL ...]` drop one or more segment labels (e.g. `--exclude 3`);
+  the remaining segments keep their original numbers and colors.
 - `--f0-pct` F0 baseline percentile (default 10), `--prom-frac` event sensitivity.
 
 Outputs (next to the stack): per-segment `*_segNN.csv` (Slice,Mean=ΔF/F), a combined
@@ -160,6 +189,17 @@ python code/STEP6_movie/segment_3d_movie.py runN_clean.tif runN_segments_labelma
 ## `code/extra/`
 
 Kept but not part of the main pipeline:
+- `segment_event_coherence.py` — how coherent are events across the painted segments
+  (STEP 4)? Orders segments soma→branch by mean X and reports pairwise ΔF/F correlation,
+  event co-participation (global vs isolated "network events"), per-event leader, and the
+  soma-end↔branch-end lead/lag (onset-delta + cross-correlation). Figure + `*_network_events.csv`.
+  `--window` groups cross-segment events into one network event; `--order`/`--names` label
+  roles; `--frame-ms` reports lags in ms.
+- `segment_branch_propagation.py` — for each branch-initiated event, how far toward the
+  soma does it propagate? Classifies each event as branch-local / reached-trunk /
+  reached-soma using a per-segment empirical response threshold (null distribution of
+  sliding random windows at false-positive rate `--p`). Figure (propagation profile +
+  per-event reach raster) + `*_events.csv`.
 - `plot_traces_tool.py` — stacked/overlay plots of ImageJ ROI `Slice,Mean` CSVs
   (anatomical ordering, role colors, `--dff`, Arial, PDF). `plot_run12.py`,
   `plot_traces*.py` are older/one-off versions.

@@ -18,10 +18,20 @@ Controls: select the mask layer -> paintbrush adds, eraser removes; Ctrl+S saves
 time series; --frame N shows one timepoint.
 --rot-x DEG rotates the volume around X (e.g. 45) so you can see/edit a branch hidden
 in the XY/XZ views; painted additions are rotated back and unioned onto the mask on save.
+Two reference layers are added from the 4D stack to reveal branches the mask may miss:
+"activity (max)" (ever-bright) and "transient branches" (max-mean high-pass, magenta,
+on by default) - toggle them with the eye icon and paint the mask to include them.
 """
 import argparse
 import numpy as np
 import tifffile
+
+
+def _highpass(vol, small=(0.5, 1, 1), big=(2, 6, 6)):
+    from scipy.ndimage import gaussian_filter
+    e = gaussian_filter(vol, small) - gaussian_filter(vol, big)
+    e[e < 0] = 0
+    return e
 
 
 def main():
@@ -45,6 +55,10 @@ def main():
                     help="rotate the volume this many degrees around X (long axis) for the session, "
                          "to see/edit a branch hidden in XY/XZ; painted edits are rotated back and "
                          "unioned onto the mask on save (add-only in this mode)")
+    ap.add_argument("--segments", action="store_true",
+                    help="segment-painting mode: show the given labelmap as faint context and paint "
+                         "segment numbers (1,2,3...) on a fresh layer with the SAME 3D/slice controls; "
+                         "saves *_segments_labelmap.tif clamped to the mask (for STEP5 traces)")
     args = ap.parse_args()
 
     import sys
@@ -61,6 +75,13 @@ def main():
     stack = tifffile.imread(args.stack)
     labels = tifffile.imread(args.labelmap).astype(np.uint16) if args.labelmap else None
     scale3 = tuple(args.voxel)
+
+    # activity reference volumes to reveal episodically-firing branches (4D only)
+    act_vols = {}
+    if stack.ndim == 4:
+        vmax_a = stack.max(0).astype(np.float32)
+        transient_a = _highpass(np.clip(vmax_a - stack.mean(0).astype(np.float32), 0, None))
+        act_vols = {"activity (max)": vmax_a, "transient branches": transient_a}
 
     mask_info = (f"mask {labels.shape}, voxels {int((labels>0).sum())}"
                  if labels is not None else "no mask")
@@ -94,6 +115,8 @@ def main():
     if rot and not args.movie:
         from scipy.ndimage import rotate as nd_rotate
         img = nd_rotate(img, rot, axes=(0, 1), reshape=False, order=1)
+        for k in list(act_vols):
+            act_vols[k] = nd_rotate(act_vols[k], rot, axes=(0, 1), reshape=False, order=1)
         if show_mask:
             orig_labels = labels.copy()
             labels = (nd_rotate(labels.astype(np.float32), rot, axes=(0, 1),
@@ -103,24 +126,57 @@ def main():
     viewer = napari.Viewer(ndisplay=args.ndisplay)
     viewer.add_image(img, name="structure", scale=img_scale, colormap="gray",
                      rendering=args.rendering, contrast_limits=clim)
+    # branch-revealing reference layers (mask stays on top for painting)
+    for nm, cmap, vis, blend in [("activity (max)", "gray", False, "translucent"),
+                                 ("transient branches", "magma", True, "additive")]:
+        if nm in act_vols:
+            va = act_vols[nm]
+            lo, hi = (np.percentile(va[va > 0], (2, 99.7)) if (va > 0).any() else (0.0, 1.0))
+            viewer.add_image(va, name=nm, scale=scale3, colormap=cmap, visible=vis,
+                             blending=blend, rendering=args.rendering, contrast_limits=(lo, hi))
     if show_mask:
-        lbl_layer = viewer.add_labels(labels, name="dendrite mask", scale=scale3, opacity=0.5)
         import os
-        edit_out = os.path.splitext(args.labelmap)[0] + "_edited.tif"
+        if args.segments:
+            # mask = faint context; paint segment numbers on a fresh editable layer
+            viewer.add_labels(labels, name="mask (context)", scale=scale3, opacity=0.25)
+            lbl_layer = viewer.add_labels(np.zeros_like(labels), name="segments (paint 1,2,3...)",
+                                          scale=scale3, opacity=0.6)
+            lbl_layer.mode = "paint"
+            edit_out = args.labelmap.rsplit(".", 1)[0].replace("_labelmap", "") + "_segments_labelmap.tif"
 
-        @viewer.bind_key("Control-s")
-        def _save_mask(v):
-            m = lbl_layer.data.astype(np.uint16)
-            if rot and orig_labels is not None:
-                from scipy.ndimage import rotate as nd_rotate
-                back = nd_rotate(m.astype(np.float32), -rot, axes=(0, 1),
-                                 reshape=False, order=0) > 0.5
-                m = (orig_labels.astype(bool) | back).astype(np.uint16)
-            tifffile.imwrite(edit_out, m)
-            print(f"saved edited mask -> {edit_out}", flush=True)
+            @viewer.bind_key("Control-s")
+            def _save_seg(v):
+                s = lbl_layer.data.astype(np.uint16)
+                mref = labels.astype(bool)
+                if rot and orig_labels is not None:
+                    from scipy.ndimage import rotate as nd_rotate
+                    s = nd_rotate(s.astype(np.float32), -rot, axes=(0, 1),
+                                  reshape=False, order=0).astype(np.uint16)
+                    mref = orig_labels.astype(bool)
+                s[~mref] = 0                      # segments stay inside the mask
+                tifffile.imwrite(edit_out, s)
+                ids = [int(i) for i in np.unique(s) if i > 0]
+                print(f"saved segments -> {edit_out}  labels={ids}", flush=True)
 
-        print("EDIT: select 'dendrite mask' layer, use paint (brush) / erase / fill tools;\n"
-              "      press Ctrl+S to save your corrected mask ->", edit_out, flush=True)
+            print("SEGMENTS: on the 'segments' layer set the label number (1,2,3...) and paint each "
+                  "part; erase to fix; a/j/k slice views, d=2D/3D; Ctrl+S saves ->", edit_out, flush=True)
+        else:
+            lbl_layer = viewer.add_labels(labels, name="dendrite mask", scale=scale3, opacity=0.5)
+            edit_out = os.path.splitext(args.labelmap)[0] + "_edited.tif"
+
+            @viewer.bind_key("Control-s")
+            def _save_mask(v):
+                m = lbl_layer.data.astype(np.uint16)
+                if rot and orig_labels is not None:
+                    from scipy.ndimage import rotate as nd_rotate
+                    back = nd_rotate(m.astype(np.float32), -rot, axes=(0, 1),
+                                     reshape=False, order=0) > 0.5
+                    m = (orig_labels.astype(bool) | back).astype(np.uint16)
+                tifffile.imwrite(edit_out, m)
+                print(f"saved edited mask -> {edit_out}", flush=True)
+
+            print("EDIT: select 'dendrite mask' layer, use paint (brush) / erase / fill tools;\n"
+                  "      press Ctrl+S to save your corrected mask ->", edit_out, flush=True)
     viewer.scale_bar.visible = True
     viewer.scale_bar.unit = "um"
 
@@ -147,6 +203,9 @@ def main():
         viewer.bind_key("d", _toggle3d, overwrite=True)                      # flip 2D <-> 3D (drag to rotate)
         print("KEYS: a=rotate around X (XY<->XZ),  j=XY top,  k=XZ side,  d=toggle 2D/3D,  Ctrl+S=save",
               flush=True)
+        if act_vols:
+            print("BRANCHES: 'transient branches' (magenta) + 'activity (max)' layers show branches "
+                  "the mask may miss — toggle via the eye icon and paint them into the mask.", flush=True)
 
     tip = " (press the play button on the time slider to run the movie)" if args.movie else ""
     print(f"[4/4] napari window opening{tip} — drag to rotate; close window to exit.", flush=True)

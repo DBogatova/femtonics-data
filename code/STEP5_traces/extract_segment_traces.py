@@ -46,6 +46,8 @@ def main():
     ap.add_argument("--min-dist", type=int, default=5, help="min frames between events")
     ap.add_argument("--proj-axis", choices=["z", "y", "x"], default="z",
                     help="projection for the segment map: z=XY, y=XZ, x=ZY")
+    ap.add_argument("--exclude", nargs="*", type=int, default=[], metavar="LABEL",
+                    help="segment label(s) to drop (e.g. --exclude 3); others keep their numbers")
     ap.add_argument("--mask", default=None,
                     help="full dendrite mask labelmap to draw semi-transparently under the segments")
     ap.add_argument("--out-dir", default=None)
@@ -56,6 +58,10 @@ def main():
     T = stack.shape[0]
     lm = tifffile.imread(args.labelmap)
     assert lm.shape == stack.shape[1:], f"mask {lm.shape} != vol {stack.shape[1:]}"
+    if args.exclude:
+        lm = lm.copy()
+        lm[np.isin(lm, args.exclude)] = 0
+        print(f"excluded segment label(s): {sorted(set(args.exclude))}")
 
     stem = Path(args.stack).with_suffix("")
     outdir = Path(args.out_dir) if args.out_dir else Path(args.stack).parent
@@ -86,6 +92,7 @@ def main():
         print(f"auto PCA split into {N} segments along the dendrite axis")
 
     N = len(seg_labels)
+    maxlbl = max(seg_labels)
     tifffile.imwrite(f"{stem}_segments{N}.tif", seg_vol)
 
     # --- per-segment dF/F ---
@@ -144,20 +151,21 @@ def main():
         ax[0].imshow(np.ma.masked_where(~full_mip, full_mip), cmap="gray_r", alpha=0.25,
                      aspect=aspect_map, interpolation="nearest")
     ax[0].imshow(np.ma.masked_where(segmip == 0, segmip), cmap="turbo", alpha=0.75,
-                 aspect=aspect_map, vmin=1, vmax=max(2, N), interpolation="nearest")
+                 aspect=aspect_map, vmin=1, vmax=max(2, maxlbl), interpolation="nearest")
     ax[0].set_title(f"segments on the cell ({view} MIP), {N} segment(s)"); ax[0].axis("off")
 
     off = 1.1 * max([float(t.max() - t.min()) for t in traces] + [1e-6])
     cmap = plt.get_cmap("turbo")
     for i, lbl in enumerate(seg_labels):
         shift = i * off                               # seg1 at bottom, highest label on top
-        ax[1].plot(traces[i] + shift, color=cmap((i + 0.5) / N), lw=0.7)
+        col = cmap((lbl - 0.5) / max(2, maxlbl))      # color by label value (matches the map)
+        ax[1].plot(traces[i] + shift, color=col, lw=0.7)
         ev = [e for e in events if e[0] == lbl]
         if ev:
             fr = [e[1] for e in ev]
             ax[1].plot(fr, [traces[i][x] + shift for x in fr], ".", color="k", ms=4)
         ax[1].text(-0.01 * T, shift + float(traces[i].mean()), f"seg{lbl}",
-                   ha="right", va="center", fontsize=8, color=cmap((i + 0.5) / N))
+                   ha="right", va="center", fontsize=8, color=col)
     # dF/F scale bar in a clear band below the lowest (seg1) trace
     rng = np.median([float(t.max() - t.min()) for t in traces]) or 1.0
     cand = np.array([0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0])
