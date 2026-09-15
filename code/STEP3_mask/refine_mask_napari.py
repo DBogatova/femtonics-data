@@ -59,6 +59,10 @@ def main():
                     help="segment-painting mode: show the given labelmap as faint context and paint "
                          "segment numbers (1,2,3...) on a fresh layer with the SAME 3D/slice controls; "
                          "saves *_segments_labelmap.tif clamped to the mask (for STEP5 traces)")
+    ap.add_argument("--no-refs", action="store_true",
+                    help="don't add the temporal 'activity (max)' / 'transient branches' reference "
+                         "layers (they are temporal-max based and can look noisy on some recordings; "
+                         "use with --frame N for a clean single-frame view)")
     args = ap.parse_args()
 
     import sys
@@ -78,7 +82,7 @@ def main():
 
     # activity reference volumes to reveal episodically-firing branches (4D only)
     act_vols = {}
-    if stack.ndim == 4:
+    if stack.ndim == 4 and not args.no_refs:
         vmax_a = stack.max(0).astype(np.float32)
         transient_a = _highpass(np.clip(vmax_a - stack.mean(0).astype(np.float32), 0, None))
         act_vols = {"activity (max)": vmax_a, "transient branches": transient_a}

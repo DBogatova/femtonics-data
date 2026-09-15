@@ -60,7 +60,7 @@ def scan_mesc(filepath, n_z=14):
     return units
 
 
-def extract_unit(filepath, unit_info, out_dir, n_z=14):
+def extract_unit(filepath, unit_info, out_dir, n_z=14, out_name=None):
     """Extract a single MUnit to a 4D TIFF."""
     with h5py.File(filepath, "r") as f:
         data = f[unit_info["path"]][:]
@@ -68,14 +68,54 @@ def extract_unit(filepath, unit_info, out_dir, n_z=14):
     n_t, nz, Y, X = unit_info["shape_4d"]
     stack_4d = data.reshape(n_t, nz, Y, X)
 
-    stem = Path(filepath).stem
-    unit_name = unit_info["unit"]
-    comment_tag = f"_{unit_info['comment'].replace(' ', '_')}" if unit_info["comment"] else ""
-    out_path = Path(out_dir) / f"{stem}_{unit_name}{comment_tag}_4D.tif"
+    if out_name:
+        out_path = Path(out_dir) / f"{out_name}.tif"
+    else:
+        stem = Path(filepath).stem
+        unit_name = unit_info["unit"]
+        comment_tag = (f"_{unit_info['comment'].replace(' ', '_')}"
+                       if unit_info["comment"] else "")
+        out_path = Path(out_dir) / f"{stem}_{unit_name}{comment_tag}_4D.tif"
 
     tifffile.imwrite(str(out_path), stack_4d, photometric="minisblack",
                      metadata={"axes": "TZYX"})
     return out_path
+
+
+def find_unit(filepath, unit, n_z):
+    """Locate one specific unit, bypassing the auto-detect heuristics.
+
+    `unit` may be "MUnit_7" or "MSession_0/MUnit_7". Needed for files whose
+    units were acquired with different slice counts, where a single --nz for
+    the whole file is wrong.
+    """
+    want_sess, _, want_unit = unit.rpartition("/")
+    with h5py.File(filepath, "r") as f:
+        for sess_key in sorted(f.keys()):
+            if want_sess and sess_key != want_sess:
+                continue
+            session = f[sess_key]
+            if not isinstance(session, h5py.Group) or want_unit not in session:
+                continue
+            ds = session[want_unit].get("Channel_0")
+            if ds is None:
+                continue
+            if ds.shape[0] % n_z:
+                sys.exit(f"{sess_key}/{want_unit}: {ds.shape[0]} raw frames is not "
+                         f"divisible by --nz {n_z}")
+            comment = session[want_unit].attrs.get("Comment", "")
+            if isinstance(comment, bytes):
+                comment = comment.decode("utf-8", errors="replace")
+            T_raw, Y, X = ds.shape
+            return {
+                "session": sess_key,
+                "unit": want_unit,
+                "path": f"{sess_key}/{want_unit}/Channel_0",
+                "raw_shape": ds.shape,
+                "shape_4d": (T_raw // n_z, n_z, Y, X),
+                "comment": comment.strip(),
+            }
+    sys.exit(f"Unit not found in {filepath}: {unit}")
 
 
 def main():
@@ -85,6 +125,11 @@ def main():
     parser.add_argument("--nz", type=int, default=14, help="Number of Z-planes (default: 14)")
     parser.add_argument("--out", type=str, default=None, help="Output directory")
     parser.add_argument("--info", action="store_true", help="Just print structure, don't extract")
+    parser.add_argument("--unit", type=str, default=None,
+                        help="Extract only this unit, e.g. MUnit_7 or MSession_0/MUnit_7 "
+                             "(use with --nz for that unit's own slice count)")
+    parser.add_argument("--out-name", type=str, default=None,
+                        help="Output file stem, e.g. run53d -> run53d.tif (with --unit)")
     args = parser.parse_args()
 
     filepath = Path(args.mesc_file)
@@ -93,6 +138,17 @@ def main():
 
     out_dir = Path(args.out) if args.out else filepath.parent
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.unit:
+        u = find_unit(filepath, args.unit, args.nz)
+        print(f"{filepath.name}  {u['session']}/{u['unit']}  "
+              f"raw{u['raw_shape']} -> 4D{u['shape_4d']}  '{u['comment']}'")
+        if args.info:
+            return
+        out_path = extract_unit(filepath, u, out_dir, n_z=args.nz,
+                                out_name=args.out_name)
+        print(f"  wrote {out_path}")
+        return
 
     print(f"Scanning: {filepath.name}")
     units = scan_mesc(filepath, n_z=args.nz)

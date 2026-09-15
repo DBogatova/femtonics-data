@@ -74,7 +74,7 @@ def find_runs(roots):
 
 
 def main():
-    roots = sys.argv[1:] or ["rbp4_141_phpeb", "rbp4ach"]
+    roots = sys.argv[1:] or ["rbp4_141_phpeb", "rbp4_phpebach"]
     runs = find_runs(roots)
     print(f"found {len(runs)} runs\n")
 

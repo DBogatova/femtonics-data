@@ -1,17 +1,47 @@
-# Ignore everything by default (data, movies, images, plots, .mesc, venv, caches...)
+# Deny-by-default allowlist: ignore everything, then re-admit only what is
+# small, hard to regenerate, or needed to read and run the project.
+#
+# NOTE: git only treats '#' as a comment at the START of a line. Trailing
+# comments become part of the pattern and silently break the rule.
 *
 
-# --- Keep only what's needed to read and run the project ---
-!.gitignore
-!README.md
-!requirements.txt          # needed to recreate the environment
+# Descend into directories so the allowlist rules below can be reached.
+# Without this, git stops at the ignored top-level dirs and never looks inside.
+!*/
 
-# Keep the Python scripts (any depth under code/)
-!code/
-!code/**/
-!code/**/*.py
-
-# Never keep compiled Python or macOS cruft, even under code/
+# --- Never descend into these -----------------------------------------------
+.venv/
 __pycache__/
 *.py[cod]
 .DS_Store
+
+# --- Project entry points ---------------------------------------------------
+!.gitignore
+!README.md
+# needed to recreate the environment
+!requirements.txt
+!code/**/*.py
+
+# --- Metadata tables derived from the .mesc files: the only CSVs kept -------
+# canonical imaging<->behavior join, all 92 rows
+!behavior_imaging_master.csv
+# 44 usable runs, ranked best first
+!ranked_runs.csv
+# per-.mesc metadata sidecar, 11 files
+!**/*.summary.csv
+
+# --- Hand-drawn segmentations, ~13 MB, largest file 340 KB ------------------
+# Irreproducible: hours of manual napari work, no way to recompute.
+# Delete this block if you would rather back these up outside git.
+!**/*labelmap*.tif
+!**/*segments[0-9]*.tif
+
+# --- Deliberately ignored ---------------------------------------------------
+# *.mesc                  raw acquisition, GB each
+# *_accel.csv             44 files, 948 MB  (raw 1 kHz accelerometer)
+# *_trigger.csv           44 files, 326 MB  (raw 1 kHz trigger traces)
+# *_behavior.csv          44 files,  13 MB  (per-frame pupil/whisking)
+# *_behavior.mat          MATLAB source of the above
+# trace/event/coherence/segment CSVs        derived, regenerable
+# *3d.tif, *_clean.tif    extracted / cleaned 4D stacks, GB each
+# *.avi *.mp4 *.pdf *.png renders and figures, all regenerable

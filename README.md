@@ -39,9 +39,21 @@ and pass it as `--voxel Z Y X` to every step below (e.g. `--voxel 0.8 0.9 0.9`).
 **`extract_mesc.py`** — reshape a recording's raw frames into a 4D `(T,Z,Y,X)` TIFF.
 ```bash
 python code/STEP1_extract/extract_mesc.py path/to/file.mesc --nz 19 --out out_dir/
+# one specific unit, with that unit's own slice count and an explicit name:
+python code/STEP1_extract/extract_mesc.py file.mesc --unit MUnit_7 --nz 19 \
+       --out .../preprocessed/run5 --out-name run53d
 ```
 - `--nz N` number of Z-planes per volume (must match acquisition; check STEP 1b).
 - `--info` just prints the unit list without extracting.
+- `--unit MUnit_N` extract a single unit, `--out-name STEM` name the output. Needed
+  when one `.mesc` mixes slice counts (a single `--nz` for the whole file is then
+  wrong); it aborts if the raw frame count is not divisible by `--nz`.
+
+**Getting `--nz` wrong is silent.** The frame count still divides, so you get a
+plausible-looking stack with the planes interleaved incorrectly. Always take `--nz`
+from `snake_n_slices` in the summary CSV. `match_behavior_imaging.py` cross-checks
+every extracted TIFF against the metadata shape and reports offenders in
+`extracted_tif_suspect_nz`.
 
 **`summarize_mesc.py`** — write a metadata CSV (`*.summary.csv`) next to the `.mesc`,
 including recording dims, comments, laser, and **pixel size** (`pixel_x_um`,
@@ -49,7 +61,71 @@ including recording dims, comments, laser, and **pixel size** (`pixel_x_um`,
 ```bash
 python code/STEP1_extract/summarize_mesc.py path/to/file.mesc
 ```
-Use this to find which MUnit = which run and its voxel size.
+Use this to find which MUnit = which run and its voxel size. It also prints a recap of the
+real recordings (snapshots excluded) and marks explicitly:
+- `scan_type` — `snake` / `ribbon_transverse` / `zstack` / `timeseries` / `snapshot` / `camera_*`.
+- `frame_rate_hz` — stored timepoints per second (`1000 / t_step_ms`); for a snake this is
+  the **volume** rate, also repeated in `volume_rate_hz`, and `slice_rate_hz`
+  (= rate × slices) is the individual-plane rate.
+- `snake_n_slices` — Z-planes per volume, filled in only for snake runs; this is the
+  `--nz` to pass to `extract_mesc.py` (`n_z`/`z_extent_um`/`z_step_um` give the depth span).
+- `pixel_average` — samples averaged per pixel at acquisition (affects the stored data)
+  vs `display_average` — the MESc viewer's running average, which does **not**.
+  (Checked: `t_step_ms` = pixels-per-timepoint / `pixel_clock_hz` exactly, i.e. every
+  scanned line is stored.)
+- `duration_calc_s` — length implied by the data (`n_t × t_step_ms`). Prefer it over
+  `duration_s` (= `MeasurementLengthInMs`), which is only per frame on some aborted or
+  free-running raster series.
+- `zstack_n_planes` / `z_step_um` / `frame_loop` / `z_mode` — for `zStack` anatomy units,
+  whose frame axis is Z, not time (so they show `n_t = 1`).
+- one row **per channel**, so dual-detector units (UG + UR) appear twice.
+
+**`match_behavior_imaging.py`** — pair the behavior recordings to the imaging runs and
+write one master table (`behavior_imaging_master.csv` at the project root).
+```bash
+python code/STEP1_extract/match_behavior_imaging.py .            # scans every mouse/date
+```
+The pairing key is a hard count, not a guess: the behavior `*_info.txt` reports
+**`AndorXylaTrigger` rising edges**, and that is the same pulse train as
+**`n_t × snake_n_slices`** in the `.mesc` (one pulse per scanned plane). Equal counts ⇒
+same recording. Cross-checked against the behavior `imaging window` length vs
+`duration_calc_s` (agrees to <15 ms on every pair).
+
+When several runs in one session share the same count (identical settings repeated),
+the tie is broken by (1) a run number written in the `.mesc` comment (`"good run7"`),
+else (2) acquisition order — those rows carry `match_confidence =
+fingerprint+comment_run` / `fingerprint+order` and an explicit `flags` entry, plus
+`order_based_alternative` showing what pure ordering would have said.
+
+Each row also gets `imaging_quality` (parsed from your comment), `rank` (1 = best
+usable run), `priority` **P1**→**P4** and `priority_reason`, so sorting by `rank` gives
+the usable runs first and pushes bad / behavior-less / ambiguous ones to the bottom.
+Rows with no partner are kept and flagged (`no_behavior` / `no_imaging`) rather than
+dropped. `extracted_tif` is filled only when an existing TIFF both matches the unit's
+`(T,Z,Y,X)` metadata shape *and* is identifiable by filename or run folder — folder
+numbering alone is not trusted, since some sessions number `run<N>` by MUnit and
+others by behavior run.
+
+**One `.mesc` holding two mice** (e.g. `rbp4_140_141_2026_06_23.mesc`): keep the real
+file in one mouse's `raw/` and symlink it (plus its `.summary.csv`) into the other's.
+The script detects the shared file and assigns each unit to whichever mouse's behavior
+its trigger count matches, so neither session is polluted by the other's runs.
+Add folder-name aliases (behavior and `.mesc` filed under different mouse names) to
+`FOLDER_ALIASES` at the top of the script.
+
+
+**`extract_mesc_snapshots.py`** — extract the **single-frame units** (snapshots: camera
+overview, 2p reference images taken while hunting for a cell) as 2D TIFFs and the
+**`zStack` anatomy volumes** as 3D TIFFs; multi-frame time series are skipped.
+```bash
+python code/STEP1_extract/extract_mesc_snapshots.py path/to/file.mesc          # writes ../snapshots/
+python code/STEP1_extract/extract_mesc_snapshots.py path/to/file.mesc --info   # list only
+```
+Output: `<date>/snapshots/<stem>_S<session>_MUnit_N_<channel>[_zstack][_comment].tif` with
+the pixel size (and z spacing for stacks) stored in ImageJ metadata (µm, so Fiji scale bars
+are right), plus `*_snapshots_index.csv` (dims, px size, z step, depth below the labeling
+origin, objective, time). Dual-detector units give one TIFF per channel (UG and UR).
+`--out DIR` changes the destination, `--max-frames N` also treats short N-frame units as pictures.
 
 ---
 
@@ -91,6 +167,20 @@ paths for branches). `b` = build (footprint shows on the MIP), `Ctrl+S` = save
   percentile, so episodically-active branches aren't lost (default `0` = structure only).
   The magenta **transient branches (max−mean)** layer highlights where those are, to guide
   your tracing.
+- **Structure guide layer.** A green **structure guide** layer (the thresholding score,
+  projected) is shown so you can trace right along the detected structure.
+- **Structure reference (experimental).** By default the structure is detected from the
+  **temporal max** (each branch caught at its own brightest moment). `--struct-agg cofire`
+  instead averages the `--cofire-n` brightest *co-firing* frames (the moments the whole
+  dendrite lights up), `--struct-frame N` uses one specific frame you picked (e.g. the
+  single clearest frame in the movie), and `--vesselness W` (e.g. `0.5`) adds a Sato
+  tubular term to the score. Note: on our test recordings temporal max gave the cleanest
+  structure/background separation, and vesselness tends to suppress the soma/thick trunk
+  (which belong in the mask) — so these are opt-in knobs to try per-recording, not defaults.
+- **Sharpen the guide.** If the structure guide looks blurred, lower `--hp-small` (the
+  high-pass low-pass sigma, default `0.5 1 1`) to `0 0.6 0.6` (or `0 0.4 0.4`) for a
+  thinner, crisper backbone; raise it to smooth. On our noisier recordings
+  `--struct-agg cofire --cofire-n 5 --hp-small 0 0.6 0.6` gave the cleanest guide.
 
 **`refine_mask_napari.py`** — *fix the mask.* Paint to add / erase to remove,
 editing 2D slices in any orientation and flipping to 3D to check.
@@ -106,7 +196,9 @@ onto the mask on save (add-only in that mode).
 - **See what the mask misses.** For 4D input, two reference layers are added from the
   stack: **activity (max)** and the magenta **transient branches** (`max − mean` high-pass,
   on by default). Toggle them with the eye icon and paint the mask to include branches
-  that only light up briefly.
+  that only light up briefly. `--no-refs` skips them (they are temporal-max based and can
+  look noisy); combine with **`--frame N`** to show one clean frame (e.g. the same frame
+  you traced in the guideline step) as the structure instead of the temporal max.
 - **Paint segments here too.** `--segments` turns this into a segment painter: it shows
   the given mask as faint context and lets you paint segment numbers (1,2,3…) on a fresh
   layer with the same slice/3D controls, saving `*_segments_labelmap.tif` clamped to the
@@ -116,8 +208,27 @@ onto the mask on save (add-only in that mode).
 
 ### STEP 4 — Pick segments  (`code/STEP4_segments/`)
 
-**`segment_mask_napari.py`** — paint 3–5 segments on the mask footprint; they extrude
-through the projection axis onto the 3D mask and accumulate across views.
+**`segment_skeleton_napari.py`** — *recommended.* Segment by **clicking, not drawing.**
+The mask is skeletonized and auto-broken into many pieces (one per inter-bifurcation
+branch); each piece is inflated back to fill the mask by geodesic (through-the-mask,
+anisotropic) nearest-seed, so branches that pass close in space but are far along the
+dendrite never bleed together. Every piece starts as its own part — a valid
+segmentation already — and you just click pieces to group them.
+```bash
+python code/STEP4_segments/segment_skeleton_napari.py runN_clean.tif runN_edited_labelmap.tif \
+    --voxel 0.8 0.9 0.9 --min-branch 4
+```
+napari (3D): pick a segment number (**`1`..`9`**, **`m`** = new segment), then **click**
+a branch to add it to that segment; drag = rotate. Keys: **`u`** undo click, **`r`** reset,
+**`[`/`]`** coarser/finer decomposition (fewer/more pieces), **`n`** preview final ids,
+**`s`** save → `*_segments_labelmap.tif`. Pieces you never click stay as distinct parts;
+grouped pieces share a label; labels are renumbered 1..N and clamped to the mask.
+- `--min-branch` drops skeleton spurs shorter than N voxels (absorbed into a neighbour);
+  raise it for fewer/larger pieces (or use `[`/`]` live). `--agg`, `--ndisplay {3,2}`.
+
+**`segment_mask_napari.py`** — *paint-based alternative.* Paint 3–5 segments on the mask
+footprint; they extrude through the projection axis onto the 3D mask and accumulate across
+views.
 ```bash
 python code/STEP4_segments/segment_mask_napari.py runN_clean.tif runN_edited_labelmap.tif --voxel 0.8 0.9 0.9
 ```

@@ -21,6 +21,10 @@ Workflow
   --activity-pct N (e.g. 90) also pulls in corridor voxels that only fire briefly
     (transient max-mean), so episodically-active branches aren't lost. The magenta
     "transient branches" layer shows where those are, to help you trace them.
+  --struct-agg cofire / --vesselness W (experimental) change the structure reference to
+    the brightest co-firing frames / add a Sato tubular term. --struct-frame N uses one
+    specific frame as the guide. Default (temporal max) gave the cleanest structure on our
+    test data; vesselness can suppress the soma/thick trunk. --hp-small sharpens the guide.
 """
 import argparse
 import numpy as np
@@ -61,6 +65,21 @@ def main():
                          "The corridor is built in that plane and extruded along the projection axis.")
     ap.add_argument("--radius", type=int, default=5, help="corridor half-width in XY px (thinness)")
     ap.add_argument("--thr-pct", type=float, default=80.0, help="structure high-pass percentile")
+    ap.add_argument("--struct-agg", choices=["max", "cofire"], default="max",
+                    help="structure reference: 'max' = temporal max (default); 'cofire' = average of "
+                         "the brightest co-firing frame(s) (the moment the whole dendrite lights up), "
+                         "which has the structure bright and the background low (4D only)")
+    ap.add_argument("--cofire-n", type=int, default=3,
+                    help="number of top co-firing frames to average for --struct-agg cofire")
+    ap.add_argument("--struct-frame", type=int, default=None,
+                    help="use THIS single frame index as the structure reference (overrides "
+                         "--struct-agg; e.g. the one frame where the dendrite is clearest)")
+    ap.add_argument("--vesselness", type=float, default=0.0,
+                    help="weight of Sato vesselness added to the structure score so the tubular "
+                         "dendrite is favoured over blobby background (0 = off; try 0.5-1.0)")
+    ap.add_argument("--hp-small", nargs=3, type=float, default=[0.5, 1.0, 1.0], metavar=("Z", "Y", "X"),
+                    help="low-pass sigma of the structure high-pass (smaller = SHARPER, thinner "
+                         "structure; default 0.5 1 1). Try '0 0.6 0.6' if the guide looks blurred.")
     ap.add_argument("--activity-pct", type=float, default=0.0,
                     help="also include corridor voxels whose TRANSIENT activity (max-mean over time) "
                          "exceeds this percentile - catches branches that only fire briefly "
@@ -81,16 +100,10 @@ def main():
         vmean = stack.mean(0).astype(np.float32)
     else:
         vmax = vmean = stack.astype(np.float32)
-    vol = vmax                                        # structure detection from temporal max
-    Z, Y, X = vol.shape
+    Z, Y, X = vmax.shape
     pa = {"z": 0, "y": 1, "x": 2}[args.proj_axis]     # projection axis (extrude along this)
     view = {"z": "XY (top)", "y": "XZ (side)", "x": "ZY (end-on)"}[args.proj_axis]
     plane_shape = tuple(s for i, s in enumerate((Z, Y, X)) if i != pa)
-    hp = highpass(vol)
-    bright = hp > np.percentile(hp, args.thr_pct)     # (Z,Y,X)
-    transient = np.clip(vmax - vmean, 0, None)        # per-voxel episodic brightening
-    hp_act = highpass(transient)                      # emphasizes thin transiently-firing branches
-    out = args.out or args.stack.rsplit(".", 1)[0] + "_guided_labelmap.tif"
 
     def znorm(a):
         lo, hi = np.percentile(a, (2, 99.7))
@@ -98,13 +111,46 @@ def main():
 
     from skimage.filters import sato
     from scipy.ndimage import binary_closing, generate_binary_structure
-    vess3 = sato(highpass(vmean), sigmas=[0.5, 1, 2, 3], black_ridges=False)  # cell only, ~0 in bg
+
+    # --- structure reference: a single chosen frame, temporal max, or brightest co-firing frame(s) ---
+    if args.struct_frame is not None and stack.ndim == 4:
+        fi = int(np.clip(args.struct_frame, 0, stack.shape[0] - 1))
+        ref = stack[fi].astype(np.float32)
+        print(f"structure guide: single frame {fi} of {stack.shape[0]}", flush=True)
+    elif args.struct_agg == "cofire" and stack.ndim == 4:
+        act = np.clip(stack.astype(np.float32) - vmean, 0, None)
+        fscore = act.reshape(stack.shape[0], -1).sum(1)          # total transient signal per frame
+        nsel = max(1, min(args.cofire_n, stack.shape[0]))
+        top = np.sort(np.argsort(fscore)[-nsel:])                # brightest co-firing frames
+        ref = stack[top].astype(np.float32).mean(0)
+        print(f"structure guide: brightest co-firing frame(s) {list(map(int, top))} "
+              f"of {stack.shape[0]}", flush=True)
+    else:
+        ref = vmax
+        if args.struct_agg == "cofire":
+            print("structure guide: --struct-agg cofire needs a 4D stack; using temporal max.", flush=True)
+
+    # --- structure score: high-pass, optionally boosted by Sato vesselness (tubular, ~0 in bg) ---
+    hp = highpass(ref, small=tuple(args.hp_small))
+    if args.vesselness > 0:
+        vhp = sato(hp, sigmas=[0.5, 1, 2, 3], black_ridges=False)
+        struct = znorm(hp) + args.vesselness * znorm(vhp)
+    else:
+        struct = hp
+    bright = struct > np.percentile(struct, args.thr_pct)        # (Z,Y,X) structure selection
+
+    transient = np.clip(vmax - vmean, 0, None)        # per-voxel episodic brightening
+    hp_act = highpass(transient)                      # emphasizes thin transiently-firing branches
+    out = args.out or args.stack.rsplit(".", 1)[0] + "_guided_labelmap.tif"
+
+    vess3 = sato(highpass(vmean), sigmas=[0.5, 1, 2, 3], black_ridges=False)  # anatomy bg enhance
 
     def mip_set(a):                                    # znorm'd MIPs projected along axis a
         mm = znorm(vmean.max(a))
         return {"anatomy (enhanced)": znorm(mm + args.enhance * znorm(vess3.max(a))),
                 "soma/trunk (mean)": mm,
                 "activity (max)": znorm(vmax.max(a)),
+                "structure guide": znorm(struct.max(a)),
                 "transient branches (max-mean)": znorm(hp_act.max(a))}
 
     axname = {0: "XY (top)", 1: "XZ (side)", 2: "ZY (end-on)"}
@@ -114,6 +160,8 @@ def main():
     v.add_image(ms["anatomy (enhanced)"], name="anatomy (enhanced)", colormap="gray")
     v.add_image(ms["soma/trunk (mean)"], name="soma/trunk (mean)", colormap="gray", visible=False)
     v.add_image(ms["activity (max)"], name="activity (max)", colormap="gray", visible=False)
+    v.add_image(ms["structure guide"], name="structure guide", colormap="green",
+                visible=True, blending="additive")
     v.add_image(ms["transient branches (max-mean)"], name="transient branches (max-mean)",
                 colormap="magma", visible=True, blending="additive")
     shapes = {a: v.add_shapes(name=f"trace {['XY', 'XZ', 'ZY'][a]}", shape_type="path",
