@@ -29,6 +29,9 @@ Workflow
 import argparse
 import numpy as np
 import tifffile
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+from common.voxel import add_voxel_arg, resolve_voxel
 
 
 def highpass(vol, small=(0.5, 1, 1), big=(2, 6, 6)):
@@ -58,7 +61,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stack", help="4D (T,Z,Y,X) or 3D (Z,Y,X) stack")
-    ap.add_argument("--voxel", nargs=3, type=float, default=[1.0, 1.0, 1.0], metavar=("Z", "Y", "X"))
+    add_voxel_arg(ap)
     ap.add_argument("--agg", choices=["max", "mean"], default="max")
     ap.add_argument("--proj-axis", choices=["z", "y", "x"], default="z",
                     help="projection to trace on: z=XY (top), y=XZ (side), x=ZY (end-on). "
@@ -90,6 +93,7 @@ def main():
     ap.add_argument("--min-vox", type=int, default=200, help="drop components smaller than this")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    args.voxel = resolve_voxel(args.stack, args.voxel)
 
     import napari
     from skimage.measure import label

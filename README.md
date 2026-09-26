@@ -30,6 +30,44 @@ rbp4_141_phpeb/06-25-2026/
 **Voxel size matters** and differs per recording. Get it from the metadata (STEP 1b)
 and pass it as `--voxel Z Y X` to every step below (e.g. `--voxel 0.8 0.9 0.9`).
 
+### File naming convention
+
+One convention everywhere, applied by
+`code/STEP1_extract/rename_runs_consistently.py`:
+
+```
+<mouse>/<date>/preprocessed/run<NN>/run<NN>_<stage>.<ext>
+```
+
+`NN` is the **behavior run number**, zero-padded to two digits so `run02` sorts
+before `run10`. Every file in the folder shares the `run<NN>` stem, so the stage
+is all that varies:
+
+```
+run05_4d.tif                    STEP 1  extracted volume (T,Z,Y,X)
+run05_clean.tif                 STEP 2  scan lines cleaned
+run05_clean_denoised.tif        STEP 2b
+run05_clean_ref3d.tif           reference volume
+run05_clean_autoseg_labelmap.tif
+run05_clean_segments*.tif       STEP 4
+run05_clean_seg01.csv ...       STEP 5
+run05_clean_coherence*.png      STEP 7
+```
+
+The `.mesc` MUnit is deliberately **not** in the filename — it lives in
+`run_identity.csv`, `behavior_imaging_master.csv` and `ranked_runs.csv`.
+
+**The folder number is the behavior run, never the MUnit.** This used to vary per
+session and silently mispaired runs: `rbp4_141_phpeb/06-17` `run2` actually held
+MUnit_2, which is behavior **Run001**. `code/STEP1_extract/identify_run_folders.py`
+resolves each folder's true unit by comparing pixels against the `.mesc` (shape
+alone is not enough — consecutive runs with identical settings have identical
+`(T,Z,Y,X)`), and writes `run_identity.csv`. Folders it cannot resolve are left
+untouched rather than guessed.
+
+Files in `raw/` keep their MUnit-based export names (`*_MUnit_7_*.tif`), since
+there the unit, not the run, is the natural key.
+
 ---
 
 ## Pipeline

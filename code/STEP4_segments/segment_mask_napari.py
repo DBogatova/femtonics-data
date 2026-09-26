@@ -46,6 +46,9 @@ Then:
 import argparse
 import numpy as np
 import tifffile
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+from common.voxel import add_voxel_arg, resolve_voxel
 
 AX = {"z": 0, "y": 1, "x": 2}
 
@@ -55,7 +58,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stack")
     ap.add_argument("labelmap")
-    ap.add_argument("--voxel", nargs=3, type=float, default=[1.0, 1.0, 1.0], metavar=("Z", "Y", "X"))
+    add_voxel_arg(ap)
     ap.add_argument("--axis", choices=["z", "y", "x"], default="z", help="starting projection axis")
     ap.add_argument("--agg", choices=["max", "mean"], default="max",
                     help="temporal projection for the anatomy background (max matches refine)")
@@ -68,7 +71,7 @@ def main():
     mask = tifffile.imread(args.labelmap) > 0
     bgvol = (stack.max(0) if args.agg == "max" else stack.mean(0)).astype(np.float32) \
         if stack.ndim == 4 else stack.astype(np.float32)
-    vox = list(args.voxel)
+    vox = list(resolve_voxel(args.stack, args.voxel))
     out = args.out or args.labelmap.rsplit(".", 1)[0].replace("_labelmap", "") + "_segments_labelmap.tif"
 
     S = {"seg3d": np.zeros(mask.shape, np.uint8), "a": AX[args.axis]}

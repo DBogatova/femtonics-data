@@ -100,12 +100,14 @@ def scan_type_of(method, tech, n_t):
     m = (method or '').lower()
     if 'snake' in m:
         return 'snake'
-    if 'transverseribbon' in m:
+    # check the orientation-qualified names before the bare 'ribbon' test,
+    # otherwise 'multiROILongitudinalRibbonScan' would fall through to 'ribbon'
+    if 'transverseribbon' in m or ('transverse' in m and 'ribbon' in m):
         return 'ribbon_transverse'
-    if 'ribbon' in m:
-        return 'ribbon'
     if 'longitudinal' in m:
         return 'ribbon_longitudinal'
+    if 'ribbon' in m:
+        return 'ribbon'
     if 'zstack' in m:
         return 'zstack'
     if (tech or '').lower() == 'camera':
@@ -115,9 +117,19 @@ def scan_type_of(method, tech, n_t):
     return method or 'timeseries'
 
 
-def summarize_mesc(mesc_path):
+def summarize_mesc(mesc_path, out_path=None):
     mesc_path = Path(mesc_path)
-    csv_path = mesc_path.with_suffix('.summary.csv')
+    if out_path is None:
+        csv_path = mesc_path.with_suffix('.summary.csv')
+    else:
+        out_path = Path(out_path)
+        # a path ending in .csv is the file itself, anything else is a directory
+        if out_path.suffix.lower() == '.csv':
+            csv_path = out_path
+        else:
+            out_path.mkdir(parents=True, exist_ok=True)
+            csv_path = out_path / (mesc_path.stem + '.summary.csv')
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
     rows = []
 
     with h5py.File(mesc_path, 'r') as f:
@@ -287,8 +299,15 @@ def summarize_mesc(mesc_path):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) >= 2:
-        mesc_file = Path(sys.argv[1])
+    args = [a for a in sys.argv[1:]]
+    out = None
+    if '--out' in args:
+        i = args.index('--out')
+        out = args[i + 1]
+        del args[i:i + 2]
+
+    if args:
+        mesc_file = Path(args[0])
     else:
         mesc_file = Path(__file__).parent / "rbp4_132_2026-05-20.mesc"
 
@@ -296,4 +315,6 @@ if __name__ == '__main__':
         print(f"File not found: {mesc_file}")
         sys.exit(1)
 
-    summarize_mesc(mesc_file)
+    # --out DIR (or FILE) writes the CSV somewhere else, e.g. when the folder
+    # holding the .mesc is read-only (someone else's project space).
+    summarize_mesc(mesc_file, out)

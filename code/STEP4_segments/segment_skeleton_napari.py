@@ -36,6 +36,9 @@ Then:
 import argparse
 import numpy as np
 import tifffile
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+from common.voxel import add_voxel_arg, resolve_voxel
 
 
 def decompose(mask, voxel, min_branch=4):
@@ -99,7 +102,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stack")
     ap.add_argument("labelmap")
-    ap.add_argument("--voxel", nargs=3, type=float, default=[1.0, 1.0, 1.0], metavar=("Z", "Y", "X"))
+    add_voxel_arg(ap)
     ap.add_argument("--min-branch", type=int, default=4,
                     help="drop skeleton pieces shorter than this many voxels (absorbed into a neighbour)")
     ap.add_argument("--agg", choices=["max", "mean"], default="max",
@@ -115,7 +118,7 @@ def main():
     mask = tifffile.imread(args.labelmap) > 0
     bgvol = (stack.max(0) if args.agg == "max" else stack.mean(0)).astype(np.float32) \
         if stack.ndim == 4 else stack.astype(np.float32)
-    vox = tuple(args.voxel)
+    vox = tuple(resolve_voxel(args.stack, args.voxel))
     out = args.out or args.labelmap.rsplit(".", 1)[0].replace("_labelmap", "") + "_segments_labelmap.tif"
 
     print(f"[1/2] decomposing mask ({int(mask.sum())} voxels) into skeleton pieces ...", flush=True)

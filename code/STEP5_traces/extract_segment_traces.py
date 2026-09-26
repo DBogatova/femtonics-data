@@ -27,6 +27,9 @@ import numpy as np
 import tifffile
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+from common.voxel import add_voxel_arg, resolve_voxel
 
 
 def main():
@@ -38,8 +41,7 @@ def main():
                     help="segments for AUTO split (used only if the mask has a single label)")
     ap.add_argument("--force-split", action="store_true",
                     help="force automatic PCA split even if the mask has multiple labels")
-    ap.add_argument("--voxel", nargs=3, type=float, default=[2.9, 0.85, 0.85],
-                    metavar=("Z", "Y", "X"))
+    add_voxel_arg(ap)
     ap.add_argument("--f0-pct", type=float, default=10.0, help="percentile for F0 baseline")
     ap.add_argument("--prom-frac", type=float, default=0.2,
                     help="event prominence as fraction of each segment's dF/F range")
@@ -52,6 +54,7 @@ def main():
                     help="full dendrite mask labelmap to draw semi-transparently under the segments")
     ap.add_argument("--out-dir", default=None)
     args = ap.parse_args()
+    args.voxel = resolve_voxel(args.stack, args.voxel)
 
     stack = tifffile.imread(args.stack)
     assert stack.ndim == 4, f"expected 4D, got {stack.shape}"

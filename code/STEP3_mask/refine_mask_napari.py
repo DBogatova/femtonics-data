@@ -25,6 +25,9 @@ on by default) - toggle them with the eye icon and paint the mask to include the
 import argparse
 import numpy as np
 import tifffile
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+from common.voxel import add_voxel_arg, resolve_voxel
 
 
 def _highpass(vol, small=(0.5, 1, 1), big=(2, 6, 6)):
@@ -39,8 +42,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stack", help="4D (T,Z,Y,X) or 3D (Z,Y,X) structural stack")
     ap.add_argument("labelmap", nargs="?", default=None, help="optional 3D (Z,Y,X) mask labelmap")
-    ap.add_argument("--voxel", nargs=3, type=float, default=[3.9, 1.0, 1.2],
-                    metavar=("Z", "Y", "X"), help="voxel size (um) for correct aspect ratio")
+    add_voxel_arg(ap)
     ap.add_argument("--agg", choices=["max", "mean"], default="max",
                     help="temporal projection for the structural volume")
     ap.add_argument("--frame", type=int, default=None,
@@ -78,7 +80,7 @@ def main():
 
     stack = tifffile.imread(args.stack)
     labels = tifffile.imread(args.labelmap).astype(np.uint16) if args.labelmap else None
-    scale3 = tuple(args.voxel)
+    scale3 = tuple(resolve_voxel(args.stack, args.voxel))
 
     # activity reference volumes to reveal episodically-firing branches (4D only)
     act_vols = {}

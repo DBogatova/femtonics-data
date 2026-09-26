@@ -36,7 +36,23 @@ from collections import defaultdict
 #     Empty = every session is already filed under one mouse folder.
 FOLDER_ALIASES = {}
 
-REAL_SCAN_TYPES = ("snake", "ribbon_transverse")
+REAL_SCAN_TYPES = ("snake", "ribbon_transverse", "ribbon_longitudinal",
+                   "ribbon")
+
+# Femtonics writes the same HDF5 container under either extension: MESc saves
+# `.mesc`, but an exported / re-saved file can land as `.hdf`. Globbing only
+# `*.mesc` silently loses whole sessions, so always look for both.
+CONTAINER_EXTS = (".mesc", ".hdf", ".hdf5")
+
+
+def find_containers(directory, recursive=False):
+    """Every Femtonics raw container in `directory`, any accepted extension."""
+    hits = []
+    for ext in CONTAINER_EXTS:
+        pat = os.path.join(directory, "**", "*" + ext) if recursive \
+            else os.path.join(directory, "*" + ext)
+        hits += glob.glob(pat, recursive=recursive)
+    return sorted(set(hits))
 MIN_TIMESERIES_S = 20.0  # raster timeSeries shorter than this = reference snapshot
 
 NEG_STRONG = [
@@ -99,7 +115,7 @@ def load_summaries(root):
                 "file": r.get("file", ""),
             })
         units.sort(key=lambda u: (u["timestamp"], u["unit"]))
-        mescs = glob.glob(os.path.join(os.path.dirname(summary), "*.mesc"))
+        mescs = find_containers(os.path.dirname(summary))
         sessions[(mouse, date)] = {
             "summary": summary,
             "summary_real": os.path.realpath(summary),
@@ -109,8 +125,8 @@ def load_summaries(root):
             "raw_dir": os.path.dirname(summary),
             "units": units,
         }
-    # sessions with a .mesc but no summary at all
-    for mesc in glob.glob(os.path.join(root, "**", "*.mesc"), recursive=True):
+    # sessions with a raw container but no summary at all
+    for mesc in find_containers(root, recursive=True):
         rel = os.path.relpath(mesc, root).split(os.sep)
         if len(rel) < 2:
             continue
@@ -320,6 +336,8 @@ def priority(row):
     if row["mesc_present"] != "yes":
         return "P4", "imaging .mesc file missing"
     if not row["behavior_base"]:
+        if row["match_confidence"] == "raw_behavior_unprocessed":
+            return "P4", "behavior recorded but not yet processed"
         return "P4", "no matching behavior recording"
     if not row["munit"]:
         return "P4", "no matching imaging run"
@@ -398,26 +416,34 @@ def find_extracted(raw_dir, session_dir, unit, run_number=None, expect=None):
     """
     n = unit.split("_")[-1]
     cands = []
-    for pat in ("*.tif", os.path.join("*", "*.tif"), os.path.join("*", "*", "*.tif")):
-        for d in (raw_dir, session_dir, os.path.join(session_dir, "preprocessed")):
-            cands += glob.glob(os.path.join(d, pat))
+    for ext in ("tif", "tiff"):
+        for pat in (f"*.{ext}", os.path.join("*", f"*.{ext}"),
+                    os.path.join("*", "*", f"*.{ext}")):
+            for d in (raw_dir, session_dir, os.path.join(session_dir, "preprocessed")):
+                cands += glob.glob(os.path.join(d, pat))
     cands = sorted(set(cands))
 
     def named(p):
         b = os.path.basename(p).lower()
-        return f"munit_{n}_" in b or b.endswith(f"munit_{n}.tif") or f"munit{n}" in b
+        return (f"munit_{n}_" in b or f"munit{n}_" in b
+                or b.endswith(f"munit_{n}.tif") or b.endswith(f"munit_{n}.tiff")
+                or b.endswith(f"munit{n}.tif") or b.endswith(f"munit{n}.tiff"))
 
     def in_run_folder(p):
         if run_number is None:
             return False
         segs = os.path.relpath(p, session_dir).split(os.sep)
-        return f"run{run_number}" in segs
+        # canonical zero-padded folders (run05) plus legacy unpadded (run5)
+        return (f"run{int(run_number):02d}" in segs
+                or f"run{int(run_number)}" in segs)
 
     if expect is None:
         hits = [c for c in cands if named(c)]
         return (os.path.relpath(hits[0], session_dir) if hits else ""), "", ""
 
     expect = tuple(expect)
+    # a ribbon scan has no Z axis, so its stack is stored 3D (T,Y,X)
+    expect_sq = tuple(d for d in expect if d != 1)
     total = 1
     for d in expect:
         total *= d
@@ -426,7 +452,7 @@ def find_extracted(raw_dir, session_dir, unit, run_number=None, expect=None):
         sh = _tif_shape(c)
         if sh is None:
             continue
-        if tuple(sh) == expect:
+        if tuple(sh) == expect or tuple(sh) == expect_sq:
             fits.append(c)
         elif len(sh) == 4 and sh[0] * sh[1] * sh[2] * sh[3] == total \
                 and sh[2:] == expect[2:] and (named(c) or in_run_folder(c)):
@@ -577,6 +603,14 @@ def main():
         mesc_present = bool(img["mesc"])
         mesc_name = os.path.basename(img["mesc"]) if img["mesc"] else (
             "MISSING (summary.csv present)" if img["summary"] else "MISSING")
+        # raw, not-yet-processed behavior (trigger .mat + camera frames only)
+        raw_beh = sorted(glob.glob(os.path.join(session_dir, "behavior_raw",
+                                                "trigger", "*.mat")))
+        raw_beh_note = ""
+        if raw_beh and not bhv:
+            raw_beh_note = (f"raw behavior present but NOT processed: "
+                            f"{len(raw_beh)} trigger .mat in behavior_raw/ "
+                            f"- see behavior_imaging_match.csv for the pairing")
         is_shared = img.get("mesc_real") in shared_real
         others = sorted("%s/%s" % k for k in shared_real.get(img.get("mesc_real"), set())
                         if k != (mouse, date))
@@ -694,8 +728,10 @@ def main():
                 continue
             if is_shared and not owner and not img.get("owns_mesc"):
                 continue
-            r = base_row(u, None, "no_behavior", "")
-            r["flags"] = "NO BEHAVIOR FILE for this imaging run"
+            r = base_row(u, None,
+                         "raw_behavior_unprocessed" if raw_beh_note else "no_behavior", "")
+            r["flags"] = (raw_beh_note if raw_beh_note
+                          else "NO BEHAVIOR FILE for this imaging run")
             if is_shared:
                 r["flags"] += (" | this .mesc holds two mice ("
                                + ", ".join(others) + "); which animal this unit "
@@ -713,10 +749,13 @@ def main():
                 else "session .mesc missing entirely")
             rows.append(r)
 
+        if raw_beh_note:
+            notes.append(f"{mouse}/{date}: {len(raw_beh)} raw trigger .mat in "
+                         f"behavior_raw/ awaiting the behavior pipeline.")
         if bhv and not units and not img["summary"]:
             notes.append(f"{mouse}/{date}: {len(bhv)} behavior run(s) but NO .mesc "
                          f"and no summary.csv -> imaging data missing.")
-        if units and not bhv:
+        if units and not bhv and not raw_beh:
             notes.append(f"{mouse}/{date}: {len(units)} imaging run(s) but NO behavior folder.")
         if img["summary"] and not mesc_present:
             notes.append(f"{mouse}/{date}: summary.csv exists but the .mesc itself is missing.")
