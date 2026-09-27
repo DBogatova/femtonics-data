@@ -44,6 +44,7 @@ from skimage.morphology import skeletonize
 _sys_root = _pl.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_sys_root))
 from common.voxel import add_voxel_arg, resolve_voxel        # noqa: E402
+from common.napari_panel import ActionPanel                  # noqa: E402
 
 __version__ = "0.1.0"
 CELL_OFFSET = 10
@@ -299,8 +300,6 @@ def save(paths, mask, arcs, params, voxel):
 def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_x=1.5, pad=0,
            dim_pct=15.0, ndisplay=2, seed="reference", seed_z=5.0):
     import napari
-    from qtpy.QtWidgets import (QWidget, QVBoxLayout, QLabel, QSlider, QPushButton, QScrollArea)
-    from qtpy.QtCore import Qt
 
     paths = derive_paths(stack_path)
     voxel = resolve_voxel(stack_path, voxel_cli)
@@ -324,28 +323,40 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     pts_layer = v.add_points(np.zeros((0, 3)), name="trace clicks", scale=voxel, size=2,
                              face_color="cyan")
 
-    # ---- dock
-    panel = QScrollArea(); panel.setWidgetResizable(True)
-    panel.setMinimumWidth(200); panel.setMaximumWidth(300)
-    w = QWidget(); lay = QVBoxLayout(w); panel.setWidget(w)
-    status = QLabel(""); status.setWordWrap(True); lay.addWidget(status)
+    # ---- dock: shared action panel (buttons mirror the keys)
+    P = ActionPanel(v, title="trace mask")
+    S["mode"] = None                                   # sticky click mode: None | "trace" | "delete"
+    class _Status:                                     # keep the old status.setText() call sites
+        def setText(self, t): P.status(t)
+    status = _Status()
 
-    def slider(label, lo, hi, val, scale, key):
-        lab = QLabel(); lay.addWidget(lab)
-        s = QSlider(Qt.Horizontal); s.setRange(lo, hi); s.setValue(int(round(val * scale)))
-        lay.addWidget(s)
-        def on(val_i, lab=lab, key=key, scale=scale, label=label):
-            S[key] = val_i / scale; lab.setText(f"{label}: {S[key]:.2f}"); regrow()
-        s.valueChanged.connect(on); lab.setText(f"{label}: {val:.2f}")
-        return s
-    slider("alpha (relative threshold)", 5, 95, alpha, 100, "alpha")
-    slider("radius x local", 50, 400, radius_x, 100, "rx")
-    slider("pad (voxels)", 0, 3, pad, 1, "pad")
-    help_lbl = QLabel("t+click: trace between last two clicks\nx+click: delete arc\n"
-                      "u: undo   r: reseed   c: channel   d: 2D/3D\nCtrl+S: save")
-    help_lbl.setWordWrap(True); lay.addWidget(help_lbl)
-    btn = QPushButton("Save reviewed mask (Ctrl+S)"); lay.addWidget(btn); lay.addStretch(1)
-    v.window.add_dock_widget(panel, name="trace mask", area="right")
+    def set_mode(m):
+        S["mode"] = None if S["mode"] == m else m
+        S["pending"] = None; pts_layer.data = np.zeros((0, 3))
+        P.set_toggle("t", S["mode"] == "trace"); P.set_toggle("x", S["mode"] == "delete")
+        P.hint({"trace": "TRACE: click the FIRST point of the new arc",
+                "delete": "DELETE: click an arc to remove it",
+                None: "Drag the sliders until the halo is gone; trace missing branches with [t]"}[S["mode"]])
+
+    P.section("1. thickness (live)")
+    P.slider("alpha - relative threshold", 5, 95, alpha, 100,
+             lambda val: (S.__setitem__("alpha", val), regrow()))
+    P.note("higher alpha = thinner mask: keeps voxels brighter than alpha x the local centreline")
+    P.slider("radius x local", 50, 400, radius_x, 100, lambda val: (S.__setitem__("rx", val), regrow()))
+    P.slider("pad (voxels)", 0, 3, pad, 1, lambda val: (S.__setitem__("pad", val), regrow()), fmt="{:.0f}")
+    P.section("2. edit the centreline")
+    P.button("Trace arc between 2 clicks", key="t", cb=lambda: set_mode("trace"), toggle=True,
+             tooltip="Click two points; the brightest path between them becomes a centreline arc")
+    P.button("Delete arc under click", key="x", cb=lambda: set_mode("delete"), toggle=True)
+    P.button("Undo", key="u", cb=lambda: undo())
+    P.button("Re-seed centreline", key="r", cb=lambda: reseed())
+    P.section("3. view")
+    P.button("Next reference channel", key="c", cb=lambda: cycle_channel())
+    P.button("2D / 3D", key="d", cb=lambda: toggle_dims())
+    P.note("Orange = centreline where the reference is dim (uncertain). Decide by eye; nothing is auto-bridged.")
+    P.section("4. done")
+    btn = P.button("Save mask", key="Ctrl+S")
+    P.finish()
 
     # ---- core updates
     def rebuild_cache():
@@ -374,7 +385,9 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     # ---- mouse: t+click trace, x+click delete
     def on_click(layer, event):
         mods = set(event.modifiers) if event.modifiers else set()
-        held = S.get("held", set())
+        held = set(S.get("held", set()))
+        if S.get("mode") == "trace": held.add("t")
+        if S.get("mode") == "delete": held.add("x")
         pos = world_to_vox(v.cursor.position)
         if not all(0 <= p < n for p, n in zip(pos, ref.shape)):
             return
@@ -395,13 +408,14 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             loc = np.unravel_index(np.argmax(S["ref"][sl]), S["ref"][sl].shape)
             pos = tuple(int(sl[i].start + loc[i]) for i in range(3))
             if S["pending"] is None:
-                S["pending"] = pos; pts_layer.data = np.array([pos]); status.setText("first point set - t+click the second")
+                S["pending"] = pos; pts_layer.data = np.array([pos]); P.hint("TRACE: now click the SECOND point")
             else:
                 path = geodesic_path(S["cost"], S["pending"], pos, voxel)
                 S["pending"] = None; pts_layer.data = np.zeros((0, 3))
                 if path is None or len(path) < 2:
                     status.setText("no path found"); return
                 push_hist(); S["arcs"].append(path); rebuild_cache(); regrow()
+                P.hint("TRACE: click the FIRST point of the next arc (or press [t] to stop)")
     for lyr in (ref_layer, mask_layer, cl_layer, unc_layer):
         lyr.mouse_drag_callbacks.append(on_click)
 
@@ -440,7 +454,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     v.bind_key("c", cycle_channel, overwrite=True); v.bind_key("d", toggle_dims, overwrite=True)
     v.bind_key("Control-s", do_save, overwrite=True); btn.clicked.connect(lambda: do_save())
 
-    rebuild_cache(); regrow()
+    rebuild_cache(); regrow(); set_mode(None)
     napari.run()
 
 

@@ -86,6 +86,7 @@ from skimage.morphology import skeletonize
 import sys as _sys, pathlib as _pl
 _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
 from common.voxel import add_voxel_arg, resolve_voxel
+from common.napari_panel import ActionPanel
 from skimage.graph import MCP_Geometric
 
 DEFAULT_VOXEL = (0.85, 0.8, 0.8)          # fallback only; real value read from autoseg JSON
@@ -680,6 +681,23 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         title = f"cells in: {acc} | {mode} | wraps: {wr}"
         v.title = title
         print(title, flush=True)
+        if S.get("panel") is not None:
+            P = S["panel"]
+            P.set_toggle("w", S["wrap_mode"] and not S["interval_mode"])
+            P.set_toggle("i", S["interval_mode"])
+            if S["interval_mode"]:
+                P.hint("Click the SECOND point along the dendrite" if S["pending"] is not None
+                       else "INTERVAL: click the FIRST point along the dendrite")
+            elif S["wrap_mode"]:
+                P.hint("WRAP: click a piece of dendrite to make it a region")
+            elif not S["wraps"]:
+                P.hint("Press [w] (or the button) and click the soma")
+            else:
+                P.hint("Refine mode: paint/erase the mask. [w] to go back to wrapping")
+            lines = [f"{k+1}. {w['name']}  (label {w['label']}, {w['size']} vox"
+                     + (f", {w['length_um']:.0f} um" if w.get("kind") == "interval" else "") + ")"
+                     for k, w in enumerate(S["wraps"])]
+            P.status("cells in: " + acc + "\n" + ("\n".join(lines) if lines else "no regions yet"))
 
     def ensure_cache():
         m = working_mask()
@@ -892,6 +910,30 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
               f"'{saved['tif']}' --voxel {vox[0]} {vox[1]} {vox[2]}", flush=True)
 
     print(__doc__.split("Usage")[0].split("KEYBINDINGS")[1] if "KEYBINDINGS" in __doc__ else "")
+
+    # ---- side panel: every key as a button, same callbacks ----
+    P = ActionPanel(v, title="pick regions")
+    P.section("1. select regions")
+    P.button("Wrap whole piece (click)", key="w", cb=lambda: toggle_wrap(v), toggle=True,
+             tooltip="One click selects the junction-to-junction piece under the cursor")
+    P.button("Interval between two clicks", key="i", cb=lambda: toggle_interval(v), toggle=True,
+             tooltip="Click two points; the stretch between them becomes a region")
+    P.section("2. label the last region")
+    P.button("Last = soma", key="s", cb=lambda: _relabel_last(1))
+    P.button("Last = trunk", key="t", cb=lambda: _relabel_last(2))
+    P.button("Last = next branch", key="b",
+             cb=lambda: _relabel_last(next_branch_label([w["label"] for w in S["wraps"][:-1]])))
+    P.button("Name last region...", key="n", cb=lambda: name_last(v))
+    P.section("3. fix")
+    P.button("Merge last two regions", key="m", cb=lambda: merge_last_two(v))
+    P.button("Undo last region", key="u", cb=lambda: _undo(v))
+    P.note("Cells: keys 1-9 toggle a proposed cell in/out. [a] rotates the anatomy view. "
+           "Paint/erase the mask with napari's brush when wrap mode is off.")
+    P.section("4. done")
+    P.button("Save regions", key="Ctrl+S", cb=lambda: _save(v))
+    P.finish()
+    S["panel"] = P
+
     status()
     napari.run()
 
