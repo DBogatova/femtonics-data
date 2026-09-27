@@ -14,7 +14,7 @@ THE WORKFLOW LADDER (per run)
   not_local          no local 4D stack (<stem>_clean.tif absent)   -> fetch it
   stack              <stem>_clean.tif present                        -> make_reference_volume.py
   reference          <stem>_clean_ref3d.tif                          -> auto_segment.py
-  auto_segmented     <stem>_clean_autoseg_labelmap.tif               -> review_autoseg_napari.py (GUI)
+  auto_segmented     <stem>_clean_autoseg_labelmap.tif               -> trace_mask_napari.py (GUI; review_autoseg_napari.py = cell-toggle alternative)
   mask_reviewed      <stem>_clean_autoseg_labelmap_reviewed.tif      -> wrap_segments_napari.py (GUI)
   segments_located   <stem>_clean_segments_final.tif  OR hand-made
                      <stem>_clean_segments*.tif                      -> coherence_with_behavior.py
@@ -371,10 +371,10 @@ def next_action(run: dict, stage: str) -> dict:
         return {"label": "auto-segment cells", "gui": False, "runnable": True,
                 "cmd": [VENV_PY, "code/STEP3_auto/auto_segment.py", stack_s]}
     if stage == "auto_segmented":
-        cmd = [VENV_PY, "code/STEP3_auto/review_autoseg_napari.py", stack_s]
+        cmd = [VENV_PY, "code/STEP3_auto/trace_mask_napari.py", stack_s]
         if vx:
             cmd += ["--voxel", *vx]
-        return {"label": "review autoseg mask (napari GUI)", "cmd": cmd, "gui": True, "runnable": False}
+        return {"label": "trace + grow mask (napari GUI)", "cmd": cmd, "gui": True, "runnable": False}
     if stage == "mask_reviewed":
         cmd = [VENV_PY, "code/STEP7_workflow/wrap_segments_napari.py", stack_s]
         if vx:

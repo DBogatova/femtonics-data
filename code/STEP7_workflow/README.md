@@ -23,7 +23,7 @@ $PY code/STEP7_workflow/femto_gui.py
 | 1 | register | `code/STEP2_clean/clean_register_3d.py <4D.tif> --out <dir>/runN_clean.tif` | no |
 | 2 | reference volume | `code/STEP3_auto/make_reference_volume.py <dir>/runN_clean.tif` (add `--register-blocks` if it refuses on drift) | no |
 | 3 | cell proposal | `code/STEP3_auto/auto_segment.py <dir>/runN_clean.tif` | no |
-| 4 | review cells | `code/STEP3_auto/review_autoseg_napari.py <dir>/runN_clean.tif` — number keys toggle cells, paint/erase, Ctrl+S | ~1 min GUI |
+| 4 | trace + grow mask | `code/STEP3_auto/trace_mask_napari.py <dir>/runN_clean.tif` — centreline seeded from reference ridges; `t`+click two points traces a geodesic path, `x`+click deletes an arc; **alpha slider** = relative threshold (keep voxels ≥ alpha × local centreline intensity: removes halo around trunk and faint branch alike), radius-x and pad sliders; orange = dim centreline (uncertain, never auto-bridged); Ctrl+S. (`review_autoseg_napari.py` remains as the cell-toggle alternative.) | ~2 min GUI |
 | 5 | wrap anatomy | `code/STEP7_workflow/wrap_segments_napari.py <dir>/runN_clean.tif` — `w`+click soma/trunk/branches, `s`/`t`/`b` override, Ctrl+S | ~1 min GUI |
 | 6 | figure | `code/STEP7_workflow/coherence_with_behavior.py --run <behavior_base>` | no |
 

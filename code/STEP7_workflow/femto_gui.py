@@ -9,7 +9,7 @@ step for the selected run:
                              executed as a subprocess with live log output;
                              chains until the run needs a human or is complete
                              (checkbox controls chaining).
-  [Open review GUI]          launches review_autoseg_napari.py detached
+  [Open review GUI]          launches trace_mask_napari.py detached (path-guided mask)
   [Open wrap GUI]            launches wrap_segments_napari.py detached
   [Build figure]             coherence + behaviour composite for the run
   [Refresh]                  re-scan the disk, update stages
@@ -64,8 +64,8 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
         return ("auto-segment cells",
                 [PYEXE, str(ROOT / "code/STEP3_auto/auto_segment.py"), str(stack)], False)
     if stage == "auto_segmented":
-        return ("review autoseg mask (napari)",
-                [PYEXE, str(ROOT / "code/STEP3_auto/review_autoseg_napari.py"), str(stack)], True)
+        return ("trace + grow mask (napari)",
+                [PYEXE, str(ROOT / "code/STEP3_auto/trace_mask_napari.py"), str(stack)], True)
     if stage == "mask_reviewed":
         return ("one-click wrap soma/trunk/branches (napari)",
                 [PYEXE, str(ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], True)

@@ -115,9 +115,31 @@ def build(stack_path: Path, args) -> Path:
     corr[:, :-1, :] = np.maximum(corr[:, :-1, :],
                                  (covy[:, :-1, :] / T) / (sd[:, :-1, :] * sd[:, 1:, :]))
 
+    # co-firing channel: mean of the top-N distinct network-event frames, i.e. the
+    # moments the whole tree lights up at once. Unlike the percentile channel (each
+    # voxel at its own brightest instant) this is a physically consistent snapshot,
+    # so branch boundaries stay crisp. Global trace = mean over structure voxels
+    # (top 5% of the percentile map); peaks >= 5 frames apart.
+    from scipy.signal import find_peaks
+    struct = amax > np.percentile(amax, 95)
+    trace = np.zeros(T, np.float32)
+    for a in range(0, T, args.tchunk):
+        b = min(a + args.tchunk, T)
+        trace[a:b] = load_aligned(a, b)[:, struct].mean(1)
+    f0 = np.percentile(trace, 10); dff = (trace - f0) / max(f0, 1e-6)
+    pk, _ = find_peaks(dff, distance=5)
+    if len(pk) == 0:
+        pk = np.arange(T)
+    top = np.sort(pk[np.argsort(dff[pk])[::-1][:args.cofire_n]])
+    cofire = np.zeros((Z, Y, X), np.float64)
+    for t in top:
+        cofire += load_aligned(int(t), int(t) + 1)[0]
+    cofire /= len(top)
+    cofire_frames = [int(t) for t in top]
+
     chans, scale = [], {}
     for name, v in (("anatomy_mean", mean), ("activity_p%g" % args.pct, amax),
-                    ("neighbour_corr", np.clip(corr, 0, 1))):
+                    ("neighbour_corr", np.clip(corr, 0, 1)), ("cofire_mean", cofire)):
         lo, hi = float(np.min(v)), float(np.max(v))
         u = ((v - lo) / (hi - lo + 1e-12) * 65535).astype(np.uint16)
         chans.append(u)
@@ -136,6 +158,7 @@ def build(stack_path: Path, args) -> Path:
         {"source": str(stack_path), "T_frames_aggregated": int(T),
          "drift_zyx": [int(v) for v in d],
          "block_shifts_zyx": zshift_per_block, "channels": scale,
+         "cofire_frames": cofire_frames,
          "noise_reduction_vs_single_frame": f"~{np.sqrt(T):.0f}x (mean channel)"},
         indent=2))
     print(f"  wrote {out}  ({out.stat().st_size/1e6:.0f} MB, 3ch x {Z}x{Y}x{X})")
@@ -149,6 +172,9 @@ def main() -> int:
     ap.add_argument("--pct", type=float, default=99.5)
     ap.add_argument("--max-drift", type=float, default=1.5,
                     help="refuse if early-vs-late drift exceeds this (voxels)")
+    ap.add_argument("--cofire-n", type=int, default=12,
+                    help="number of distinct network-event frames averaged into the "
+                         "cofire_mean channel (default 12)")
     ap.add_argument("--register-blocks", action="store_true",
                     help="rigid per-block drift correction before aggregating")
     ap.add_argument("--n-blocks", type=int, default=8)
