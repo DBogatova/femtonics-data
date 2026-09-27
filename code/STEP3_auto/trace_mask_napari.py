@@ -498,8 +498,11 @@ def run_check(stack_path, voxel_cli=None) -> bool:
         lm = tifffile.imread(t)
         rep("saved labelmap uint8 with label 2 only", lm.dtype == np.uint8 and set(np.unique(lm)) <= {0, 2})
         rep("reviewed json has a review record", "reviews" in json.load(open(j)))
-        rep("original autoseg untouched", os.path.exists(paths["autoseg"]) and
-            not os.path.exists(os.path.join(tmp, os.path.basename(paths["autoseg"]))))
+        if os.path.exists(paths["autoseg"]):
+            rep("original autoseg untouched",
+                not os.path.exists(os.path.join(tmp, os.path.basename(paths["autoseg"]))))
+        else:
+            rep("no autoseg present - tool runs from the reference alone", True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n==== --check {'PASS' if ok else 'FAIL'} ====")
