@@ -28,6 +28,11 @@ KEYBINDINGS (interactive)
   s           re-label the LAST wrap as soma  (label 1).
   t           re-label the LAST wrap as trunk (label 2).
   b           re-label the LAST wrap as the next free branch label (>= 3).
+  i           toggle INTERVAL mode: click TWO points along the dendrite and the stretch
+              between them (along the skeleton, bounded by the two cross-sections) becomes
+              a region - e.g. 'proximal 20 um of branch 2' or 'trunk 50-80 um from soma'.
+  m           merge the last two wraps into one region (fixes skeleton over-splits).
+  n           name the last wrap (dialog); names go into the JSON sidecar and figures.
   u           undo the last wrap.
   Ctrl+S      save  <stem>_clean_segments_final.tif (uint8, labels 1..N) + JSON sidecar.
 
@@ -239,6 +244,72 @@ def wrap_from_click(mask: np.ndarray, click_zyx, voxel, cache: dict = None,
         "n_arcs": cache["n_arcs"],
         "n_skel": cache["n_skel"],
     }
+
+
+def interval_from_clicks(mask: np.ndarray, a_zyx, b_zyx, voxel, cache: dict = None,
+                         min_arc_vox: int = 1) -> dict:
+    """TWO-CLICK INTERVAL: the piece of dendrite BETWEEN two points along the skeleton.
+
+    1. snap both clicks to the nearest skeleton voxel;
+    2. geodesic shortest path along the skeleton between them (MCP on skeleton voxels
+       only, anisotropic sampling) -> the interval's centreline;
+    3. every mask voxel whose geodesic-nearest skeleton voxel (measured THROUGH the mask)
+       lies on that centreline belongs to the interval. Growth therefore stops exactly at
+       the two clicked cross-sections, not at junctions - so 'proximal 20 um of branch 2'
+       or 'trunk 50-80 um from the soma' are one gesture each.
+    Returns dict(region, size, path (N,3), length_um, endpoints)."""
+    if cache is None:
+        cache = build_wrap_cache(mask, voxel, min_arc_vox)
+    mask, skel = cache["mask"], cache["skel"]
+    sk = np.argwhere(skel)
+    def snap(pt):
+        pt = np.clip(np.round(np.asarray(pt)).astype(int), 0, np.array(mask.shape) - 1)
+        d2 = (((sk - pt) * np.asarray(voxel, float)) ** 2).sum(1)
+        return tuple(int(x) for x in sk[int(d2.argmin())])
+    a, b = snap(a_zyx), snap(b_zyx)
+    if a == b:
+        raise ValueError("both clicks snapped to the same skeleton voxel")
+    cost = np.where(skel, 1.0, np.inf)
+    mcp = MCP_Geometric(cost, sampling=tuple(voxel))
+    cum, _ = mcp.find_costs([a], [b])
+    if not np.isfinite(cum[b]):
+        raise ValueError("the two points are not connected along the skeleton")
+    path = np.array(mcp.traceback(b), int)
+    on_path = np.zeros(mask.shape, bool); on_path[tuple(path.T)] = True
+    # nearest skeleton voxel for every mask voxel, through the mask
+    if "skel_owner" not in cache:
+        c2 = np.where(mask, 1.0, np.inf)
+        m2 = MCP_Geometric(c2, sampling=tuple(voxel))
+        d, tb = m2.find_costs([tuple(q) for q in sk])
+        offs = np.array(m2.offsets)
+        idx = np.indices(mask.shape).reshape(3, -1).T
+        cur = idx.copy(); tbf = tb.reshape(-1); src = skel.reshape(-1)
+        for _ in range(int(np.linalg.norm(mask.shape)) + 5):
+            fl = np.ravel_multi_index(cur.T, mask.shape)
+            done = src[fl]
+            if done.all():
+                break
+            st = tbf[fl]; mv = (~done) & (st >= 0)
+            cur[mv] = cur[mv] - offs[st[mv]]
+        cache["skel_owner"] = np.ravel_multi_index(cur.T, mask.shape).reshape(mask.shape)
+    owner = cache["skel_owner"]
+    region = mask & on_path.reshape(-1)[owner]
+    seglen = np.linalg.norm(np.diff(path, axis=0) * np.asarray(voxel, float), axis=1).sum()
+    return {"region": region, "size": int(region.sum()), "path": path,
+            "length_um": float(seglen), "endpoints": (a, b)}
+
+
+def merge_wraps(wraps, i: int, j: int) -> list:
+    """Merge wrap j into wrap i (union of regions, i's label/name kept). Returns new list."""
+    if i == j or not (0 <= i < len(wraps) and 0 <= j < len(wraps)):
+        return wraps
+    wi, wj = wraps[i], wraps[j]
+    merged = dict(wi); merged["region"] = wi["region"] | wj["region"]
+    merged["size"] = int(merged["region"].sum())
+    merged["merged_from"] = wi.get("merged_from", []) + [wj.get("name", str(j))]
+    out = [w for k, w in enumerate(wraps) if k not in (i, j)]
+    out.insert(min(i, j), merged)
+    return out
 
 
 def suggest_label(soma_suggested: bool, used_labels) -> int:
@@ -457,6 +528,39 @@ def run_check(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR) ->
         ok = False
         print("  FAIL: soma auto-suggestion did not fire on the max-radius region")
 
+    # ---- INTERVAL MATH: two clicks along the longest skeleton arc ----
+    print("-" * 78)
+    print("INTERVAL MATH (two-click stretch selection)")
+    arc_ids, counts = np.unique(cache["arc_labels"][cache["arc_labels"] > 0], return_counts=True)
+    longest = int(arc_ids[counts.argmax()])
+    pts = np.argwhere(cache["arc_labels"] == longest)
+    # two points ~ at 25% and 75% along the arc's principal axis
+    axis = pts[:, np.argmax(np.ptp(pts, axis=0))]
+    order = np.argsort(axis); a_pt = pts[order[len(order) // 4]]; b_pt = pts[order[3 * len(order) // 4]]
+    try:
+        iv = interval_from_clicks(mask, a_pt, b_pt, voxel, cache=cache)
+        whole_arc = int((cache["partition"] == longest).sum())
+        print(f"  longest arc {longest}: {len(pts)} skel vox, territory {whole_arc} vox")
+        print(f"  interval {iv['endpoints'][0]} -> {iv['endpoints'][1]}: path {len(iv['path'])} vox, "
+              f"{iv['length_um']:.1f} um, region {iv['size']} vox")
+        sub = 0 < iv["size"] < whole_arc
+        inside = bool((iv["region"] & ~mask).sum() == 0)
+        path_in = bool(iv["region"][tuple(iv["path"].T)].all())
+        print(f"  strict sub-region of the arc : {sub}")
+        print(f"  region inside mask           : {inside}")
+        print(f"  centreline inside region     : {path_in}")
+        if not (sub and inside and path_in):
+            ok = False; print("  FAIL: interval region invalid")
+        # merge: interval + the soma wrap -> union, size adds up minus overlap
+        merged = merge_wraps([{"region": res["region"], "label": 1, "name": "soma", "size": res["size"]},
+                              {"region": iv["region"], "label": 3, "name": "iv", "size": iv["size"]}], 0, 1)
+        exp = int((res["region"] | iv["region"]).sum())
+        print(f"  merge soma+interval          : {len(merged)} wrap(s), {merged[0]['size']} vox (expected {exp})")
+        if not (len(merged) == 1 and merged[0]["size"] == exp):
+            ok = False; print("  FAIL: merge_wraps wrong")
+    except Exception as e:
+        ok = False; print(f"  FAIL: interval raised {type(e).__name__}: {e}")
+
     # ---- rough agreement vs the user's hand segments labelmap (soma = label 1) ----
     print("-" * 78)
     print("ROUGH AGREEMENT vs hand segments (honest, un-tuned)")
@@ -534,7 +638,7 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         "wraps": [],                                         # list of dict(region,label,name,meta)
         "cache": None,                                       # wrap cache; None => stale
         "cache_mask": None,                                  # mask snapshot the cache was built on
-        "wrap_mode": False,
+        "wrap_mode": False, "interval_mode": False, "pending": None,
         "axis": 0,
     }
 
@@ -571,7 +675,8 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         acc = ",".join(str(c) for c in sorted(S["accepted"])) or "none"
         wr = "  ".join(f"{label_name(w['label'])}={w['label']}({w['size']}vx)"
                        for w in S["wraps"]) or "none yet"
-        mode = "WRAP (click=wrap)" if S["wrap_mode"] else "refine (paint/erase)"
+        mode = ("INTERVAL (2 clicks)" if S["interval_mode"] else
+                "WRAP (click=wrap)" if S["wrap_mode"] else "refine (paint/erase)")
         title = f"cells in: {acc} | {mode} | wraps: {wr}"
         v.title = title
         print(title, flush=True)
@@ -624,6 +729,42 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         status()
     v.bind_key("w", toggle_wrap, overwrite=True)
 
+    # ---- INTERVAL mode: two clicks select the stretch of dendrite between them ----
+    def toggle_interval(vw):
+        S["interval_mode"] = not S["interval_mode"]; S["pending"] = None
+        if S["interval_mode"] and not S["wrap_mode"]:
+            toggle_wrap(vw)                                    # needs click-to-select active
+        print(f"interval mode {'ON: click two points along the dendrite' if S['interval_mode'] else 'OFF'}",
+              flush=True)
+        status()
+    v.bind_key("i", toggle_interval, overwrite=True)
+
+    # ---- merge the last two wraps into one region ----
+    def merge_last_two(vw):
+        if len(S["wraps"]) < 2:
+            print("need two wraps to merge", flush=True); return
+        n = len(S["wraps"])
+        S["wraps"] = merge_wraps(S["wraps"], n - 2, n - 1)
+        refresh_segments()
+        print(f"merged into {S['wraps'][-1]['name']} ({S['wraps'][-1]['size']} vox)", flush=True)
+        status()
+    v.bind_key("m", merge_last_two, overwrite=True)
+
+    # ---- name the last wrap (recorded in the JSON sidecar and the figure legend) ----
+    def name_last(vw):
+        if not S["wraps"]:
+            print("no wraps yet", flush=True); return
+        try:
+            from qtpy.QtWidgets import QInputDialog
+            txt, ok = QInputDialog.getText(None, "name this region",
+                                           f"name for label {S['wraps'][-1]['label']}:",
+                                           text=S["wraps"][-1]["name"])
+            if ok and txt.strip():
+                S["wraps"][-1]["name"] = txt.strip(); status()
+        except Exception as e:
+            print(f"naming dialog unavailable: {e}", flush=True)
+    v.bind_key("n", name_last, overwrite=True)
+
     def _click_to_voxel(mask, event):
         """Best-effort cursor -> data voxel. In 3D, march the view ray to the first mask hit."""
         try:
@@ -663,6 +804,26 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         m = working_mask()
         cache = ensure_cache()
         click = _click_to_voxel(m, event)
+        if S["interval_mode"]:
+            if S["pending"] is None:
+                S["pending"] = click
+                print(f"interval: first point {click} - click the second point", flush=True)
+                return
+            try:
+                res = interval_from_clicks(m, S["pending"], click, vox, cache=cache)
+            except ValueError as e:
+                print(f"interval failed: {e}", flush=True); S["pending"] = None; return
+            S["pending"] = None
+            label = next_branch_label([w["label"] for w in S["wraps"]])
+            w = {"region": res["region"], "label": label, "name": f"interval{len(S['wraps'])+1}",
+                 "size": res["size"], "arc": -1, "click": res["endpoints"][0],
+                 "click2": res["endpoints"][1], "length_um": res["length_um"],
+                 "region_max_radius": 0.0, "soma_suggested": False, "kind": "interval"}
+            S["wraps"].append(w); refresh_segments()
+            print(f"interval {res['endpoints'][0]} -> {res['endpoints'][1]}: {res['length_um']:.1f} um along "
+                  f"the skeleton, {res['size']} vox -> label {label}. (s/t/b relabel, n name, m merge, u undo)",
+                  flush=True)
+            status(); return
         res = wrap_from_click(m, click, vox, cache=cache, soma_factor=soma_factor)
         label = suggest_label(res["soma_suggested"], [w["label"] for w in S["wraps"]])
         w = {"region": res["region"], "label": label, "name": label_name(label),
@@ -683,7 +844,8 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
             print("no wraps yet", flush=True)
             return
         S["wraps"][-1]["label"] = new_label
-        S["wraps"][-1]["name"] = label_name(new_label)
+        if S["wraps"][-1].get("kind") != "interval" or S["wraps"][-1]["name"].startswith("interval"):
+            S["wraps"][-1]["name"] = label_name(new_label)
         refresh_segments()
         status()
     v.bind_key("s", lambda vw: _relabel_last(1), overwrite=True)
@@ -715,7 +877,11 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
             "wrap_clicks": [{"click_zyx": list(w["click"]), "arc": int(w["arc"]),
                              "label": int(w["label"]), "name": w["name"],
                              "size": int(w["size"]),
-                             "soma_suggested": bool(w["soma_suggested"])}
+                             "soma_suggested": bool(w["soma_suggested"]),
+                             "kind": w.get("kind", "arc"),
+                             **({"click2_zyx": list(w["click2"]), "length_um": round(w["length_um"], 2)}
+                                if w.get("kind") == "interval" else {}),
+                             **({"merged_from": w["merged_from"]} if w.get("merged_from") else {})}
                             for w in S["wraps"]],
         }
         saved = save_segments(inp["out"], seg, vox, sidecar_extra=extra)

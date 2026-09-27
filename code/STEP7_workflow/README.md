@@ -24,7 +24,7 @@ $PY code/STEP7_workflow/femto_gui.py
 | 2 | reference volume | `code/STEP3_auto/make_reference_volume.py <dir>/runN_clean.tif` (add `--register-blocks` if it refuses on drift) | no |
 | 3 | cell proposal | `code/STEP3_auto/auto_segment.py <dir>/runN_clean.tif` | no |
 | 4 | trace + grow mask | `code/STEP3_auto/trace_mask_napari.py <dir>/runN_clean.tif` — centreline seeded from reference ridges; `t`+click two points traces a geodesic path, `x`+click deletes an arc; **alpha slider** = relative threshold (keep voxels ≥ alpha × local centreline intensity: removes halo around trunk and faint branch alike), radius-x and pad sliders; orange = dim centreline (uncertain, never auto-bridged); Ctrl+S. (`review_autoseg_napari.py` remains as the cell-toggle alternative.) | ~2 min GUI |
-| 5 | wrap anatomy | `code/STEP7_workflow/wrap_segments_napari.py <dir>/runN_clean.tif` — `w`+click soma/trunk/branches, `s`/`t`/`b` override, Ctrl+S | ~1 min GUI |
+| 5 | pick regions | `code/STEP7_workflow/wrap_segments_napari.py <dir>/runN_clean.tif` — `w` then click: whole junction-to-junction piece becomes a region (soma/trunk/branch auto-guessed; `s`/`t`/`b` override). `i` = **interval mode**: click two points and the stretch between them along the skeleton becomes a region (e.g. trunk 50–80 µm from soma, proximal 20 µm of a branch). `m` merges the last two regions, `n` names the last one (names go to the JSON and figures), `u` undo, Ctrl+S | ~1–2 min GUI |
 | 6 | figure | `code/STEP7_workflow/coherence_with_behavior.py --run <behavior_base>` | no |
 
 Stage detection is by disk presence (which files exist), so
