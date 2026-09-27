@@ -17,6 +17,8 @@ WORKFLOW (napari)
     empty) so on a good run you only confirm. Delete an arc by clicking it with 'x' held; add an arc
     by clicking two points with the 'trace' tool ('t' held): the tool finds the
     brightest-ridge path between them THROUGH the reference (geodesic, cost ~ 1/I).
+    Clicks in the 2D top view snap through the whole Z column, so one pair of clicks
+    connects structure across slices - never trace slice by slice.
   * Growth sliders (dock panel, live):
       alpha       relative threshold: keep voxels >= alpha x local centreline intensity
       radius x    cap on distance from the centreline, as a multiple of the local
@@ -396,15 +398,22 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             if cl[pos] == 0:                                # snap to nearest centreline voxel
                 pts = np.argwhere(cl > 0)
                 if len(pts) == 0: return
-                d = (((pts - np.array(pos)) * np.asarray(voxel)) ** 2).sum(1)
+                w = np.asarray(voxel, float).copy()
+                if v.dims.ndisplay == 2:
+                    w[0] = 0.0                              # 2D view: ignore depth, pick by XY
+                d = (((pts - np.array(pos)) * w) ** 2).sum(1)
                 pos = tuple(pts[d.argmin()])
             k = int(cl[pos]) - 1
             if 0 <= k < len(S["arcs"]):
                 push_hist(); S["arcs"].pop(k); rebuild_cache(); regrow()
         elif "t" in held:
-            # snap the click to the brightest voxel within 1 vox (clicks are approximate)
+            # snap the click to the brightest voxel within +-1 in Y/X and, in 2D slice
+            # view, through the WHOLE Z column: you click on the top view and the path
+            # is found in 3D, so a connection never has to be drawn slice by slice.
+            # (In 3D view the click already carries a depth, so only +-1 in Z.)
             z, y, x = pos
-            sl = tuple(slice(max(0, c-1), c+2) for c in pos)
+            zs = slice(0, S["ref"].shape[0]) if v.dims.ndisplay == 2 else slice(max(0, z-1), z+2)
+            sl = (zs, slice(max(0, y-1), y+2), slice(max(0, x-1), x+2))
             loc = np.unravel_index(np.argmax(S["ref"][sl]), S["ref"][sl].shape)
             pos = tuple(int(sl[i].start + loc[i]) for i in range(3))
             if S["pending"] is None:
