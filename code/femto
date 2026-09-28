@@ -7,6 +7,7 @@
 #   femto trace  <stack>     open the mask tool on a stack
 #   femto regions <stack>    open the region tool on a stack
 #   femto figure <run>       build the coherence+behaviour composite for a behavior_base
+#   femto movies <run> [--kinds dual time structure] [--force]   3D movies from the regions
 #
 # Everything runs from the project root with the project virtualenv; a log of the last
 # panel session is kept at /tmp/femto_gui.log.
@@ -29,6 +30,7 @@ case "${1:-panel}" in
   trace)   shift; "$PY" code/STEP3_auto/trace_mask_napari.py "$@" ;;
   regions) shift; "$PY" code/STEP7_workflow/wrap_segments_napari.py "$@" ;;
   figure)  shift; "$PY" code/STEP7_workflow/coherence_with_behavior.py --run "$@" ;;
-  -h|--help|help) sed -n '2,12p' "$0" ;;
-  *) echo "unknown command: $1"; sed -n '2,12p' "$0"; exit 1 ;;
+  movies)  shift; b="$1"; shift; "$PY" code/STEP7_workflow/make_movies.py --run "$b" "$@" ;;
+  -h|--help|help) sed -n '2,13p' "$0" ;;
+  *) echo "unknown command: $1"; sed -n '2,13p' "$0"; exit 1 ;;
 esac

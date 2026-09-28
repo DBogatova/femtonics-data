@@ -11,7 +11,8 @@ step for the selected run:
                              (checkbox controls chaining).
   [Open review GUI]          launches trace_mask_napari.py detached (path-guided mask)
   [Open wrap GUI]            launches wrap_segments_napari.py detached
-  [Build figure]             coherence + behaviour composite for the run
+  [Build figure + movies]    coherence + behaviour composite, then the ticked movies
+  [Build movies only]        just the ticked 3D movies (dual / dynamic / structural)
   [Refresh]                  re-scan the disk, update stages
 
 GUI steps are launched as separate processes so napari's own event loop never
@@ -121,15 +122,28 @@ def run_gui() -> int:
             btns = QtWidgets.QHBoxLayout()
             self.b_auto = QtWidgets.QPushButton("Run next automatic step")
             self.b_gui = QtWidgets.QPushButton("Open GUI step")
-            self.b_fig = QtWidgets.QPushButton("Build figure")
+            self.b_fig = QtWidgets.QPushButton("Build figure + movies")
+            self.b_mov = QtWidgets.QPushButton("Build movies only")
             self.b_ref = QtWidgets.QPushButton("Refresh")
             self.chain = QtWidgets.QCheckBox("chain automatic steps")
             self.chain.setChecked(True)
-            for b in (self.b_auto, self.b_gui, self.b_fig, self.b_ref):
+            for b in (self.b_auto, self.b_gui, self.b_fig, self.b_mov, self.b_ref):
                 btns.addWidget(b)
             btns.addWidget(self.chain)
             btns.addStretch()
             lay.addLayout(btns)
+
+            movs = QtWidgets.QHBoxLayout()
+            movs.addWidget(QtWidgets.QLabel("movies:"))
+            self.mv = {}
+            for key, label in (("dual", "dual (structure + activity)"),
+                               ("time", "dynamic (activity in 3D)"),
+                               ("structure", "structural rotation")):
+                cb = QtWidgets.QCheckBox(label); cb.setChecked(True)
+                self.mv[key] = cb; movs.addWidget(cb)
+            self.mv_force = QtWidgets.QCheckBox("rebuild even if up to date")
+            movs.addWidget(self.mv_force); movs.addStretch()
+            lay.addLayout(movs)
 
             self.log = QtWidgets.QPlainTextEdit()
             self.log.setReadOnly(True)
@@ -141,7 +155,8 @@ def run_gui() -> int:
             self.b_ref.clicked.connect(self.refresh)
             self.b_auto.clicked.connect(lambda: self.dispatch(gui_ok=False))
             self.b_gui.clicked.connect(lambda: self.dispatch(gui_ok=True))
-            self.b_fig.clicked.connect(self.build_figure)
+            self.b_fig.clicked.connect(lambda: self.build_figure(with_movies=True))
+            self.b_mov.clicked.connect(lambda: self.build_figure(with_movies=True, figure=False))
             self.log_signal.connect(self.log.appendPlainText)
             self.refresh_signal.connect(self.refresh)
             self.busy = False
@@ -210,14 +225,25 @@ def run_gui() -> int:
                 return
             threading.Thread(target=self._run_auto, args=(r,), daemon=True).start()
 
-        def build_figure(self):
+        def build_figure(self, with_movies=True, figure=True):
             r = self.selected()
             if r is None or self.busy:
                 return
             base = r.get("behavior_base", "")
-            argv = [PYEXE, str(ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
-                    "--run", base]
-            threading.Thread(target=self._run_argv_seq, args=([argv],), daemon=True).start()
+            seq = []
+            if figure:
+                seq.append([PYEXE, str(ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
+                            "--run", base])
+            kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
+            if with_movies and kinds:
+                mv = [PYEXE, str(ROOT / "code/STEP7_workflow/make_movies.py"), "--run", base,
+                      "--kinds", *kinds]
+                if self.mv_force.isChecked():
+                    mv.append("--force")
+                seq.append(mv)
+            if not seq:
+                self.logline("nothing selected to build"); return
+            threading.Thread(target=self._run_argv_seq, args=(seq,), daemon=True).start()
 
         def _run_auto(self, r):
             """Run automatic steps, optionally chaining until GUI/complete."""
