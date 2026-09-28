@@ -18,14 +18,13 @@ It orchestrates the two existing, unmodified tools and then composes their PNGs:
       below, same width, one title block with mouse/date/run, frame rate and the
       quality flags e.g. behaviour frame loss).
 
-SAFETY (hard rule): it NEVER overwrites an existing coherence or behaviour figure
-or the hand-made labelmaps. If a component figure already exists and is up to
-date it is reused as-is. If a rebuild is genuinely needed but a figure with the
-canonical name already exists, the rebuild is rendered into a private temp dir,
-byte-compared, and used for the composite WITHOUT touching the on-disk original
-(a warning is printed). Only when the canonical figure is ABSENT is it written
-into the run directory. The composite <stem>_coherence_full.* is this tool's own
-output and is the only thing normally written into the run dir.
+SAFETY (hard rule): nothing is ever deleted or silently overwritten. Up-to-date
+components are reused as-is. When a component is stale (the regions changed) or
+--force is given, the existing files are MOVED to <run_dir>/old/ with a timestamp
+(<name>.YYYYmmdd-HHMMSS.<ext>) and the component is rebuilt in place, so the run
+folder always holds one consistent set derived from the current regions. Hand-made
+labelmaps are only ever read. Region names from <stem>_segments_final.json label the
+coherence figure, ordered proximal -> distal from a region named soma*.
 
 CLI
 ---
@@ -37,6 +36,8 @@ CLI
 from __future__ import annotations
 
 import argparse
+import json
+import time
 import hashlib
 import os
 import re
@@ -118,6 +119,10 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
                 cmd += ["--frame-ms", f"{1000.0/float(fr):.3f}"]
             except ValueError:
                 pass
+        order, names = region_names_and_order(Path(lm))
+        if order:
+            cmd += ["--order", *[str(o) for o in order], "--names", *names]
+            print(f"  coherence: region names (proximal->distal): {', '.join(names)}")
         cmd += ["--out-prefix", str(out_prefix)]
         run_subprocess(cmd, root, "segment_event_coherence")
 
@@ -127,19 +132,72 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
         build(run_dir / f"{stem}_coherence")
         return coh_png, events, run_dir, True
 
-    # canonical figure EXISTS but is stale/forced -> never overwrite it
-    print(f"  coherence: rebuild needed but '{coh_png.name}' exists -> rendering to temp, "
-          f"will NOT overwrite")
-    tmp_prefix = scratch / f"{stem}_coherence"
-    build(tmp_prefix)
-    tmp_png = scratch / f"{stem}_coherence.png"
-    tmp_events = scratch / f"{stem}_coherence_network_events.csv"
-    if sha256(tmp_png) == sha256(coh_png):
-        print("  coherence: rebuild is byte-identical to existing -> reuse existing")
-        return coh_png, events, run_dir, False
-    print("  coherence: WARNING rebuild DIFFERS from existing; existing figure PRESERVED, "
-          "composite uses the temp rebuild")
-    return tmp_png, tmp_events, scratch, True
+    # canonical figure exists but is stale (regions changed) or forced: archive the old
+    # outputs into old/ (timestamped, nothing is deleted) and rebuild in place, so the
+    # run folder always holds one consistent set derived from the current regions.
+    print(f"  coherence: rebuilding (labelmap {lm.name} newer, or --force)")
+    archive([coh_png, coh_pdf, events], run_dir)
+    build(run_dir / f"{stem}_coherence")
+    return coh_png, events, run_dir, True
+
+
+# ---------------------------------------------------------------------------
+# helpers: region names, archiving superseded outputs
+# ---------------------------------------------------------------------------
+def region_names_and_order(lm_path: Path):
+    """(order, names) for the coherence tool, or (None, None).
+
+    Names come from <stem>_segments_final.json: 'segment_names' {final_id: name} when
+    present, else reconstructed from 'wrap_clicks' (sorted surviving labels -> 1..N, the
+    same renumbering the region tool applies). Order: proximal -> distal. If a region is
+    named soma*, regions are ordered by distance along the tube from it (so the soma is
+    always first, whichever end of the scan it sits at); otherwise by mean X."""
+    import numpy as np, tifffile
+    js = lm_path.with_suffix(".json")
+    if not lm_path.name.endswith("_segments_final.tif") or not js.exists():
+        return None, None
+    try:
+        j = json.loads(js.read_text())
+    except Exception:
+        return None, None
+    lm = tifffile.imread(str(lm_path))
+    final = sorted(int(v) for v in np.unique(lm) if v > 0)
+    names = {}
+    if isinstance(j.get("segment_names"), dict):
+        names = {int(k): str(v) for k, v in j["segment_names"].items()}
+    else:
+        clicks = j.get("wrap_clicks", [])
+        last = {}
+        for w in clicks:
+            last[int(w["label"])] = w.get("name") or f"seg{w['label']}"
+        pre = sorted(last)
+        if len(pre) == len(final):
+            names = {f: last[p_] for f, p_ in zip(final, pre)}
+    if set(names) != set(final):
+        return None, None
+    xm = {l: float(np.argwhere(lm == l)[:, 2].mean()) for l in final}
+    soma = [l for l in final if names[l].lower().startswith("soma")]
+    if soma:
+        s0 = xm[soma[0]]
+        order = sorted(final, key=lambda l: (abs(xm[l] - s0), l))
+    else:
+        order = sorted(final, key=lambda l: xm[l])
+    return order, [names[l] for l in order]
+
+
+def archive(paths, run_dir: Path):
+    """Move existing generated outputs into run_dir/old/ with a timestamp (never delete)."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    old = run_dir / "old"
+    moved = []
+    for pth in paths:
+        pth = Path(pth)
+        if pth.exists():
+            old.mkdir(exist_ok=True)
+            dest = old / f"{pth.stem}.{stamp}{pth.suffix}"
+            shutil.move(str(pth), str(dest)); moved.append(dest.name)
+    if moved:
+        print(f"  archived superseded outputs -> old/: {', '.join(moved)}")
 
 
 # ---------------------------------------------------------------------------
@@ -177,12 +235,11 @@ def ensure_behavior(run, root, scratch: Path, coh_source_dir: Path, events_csv: 
         out_stem = run_dir / f"{stem}_coherence_behavior"
         status = "written"
     else:
-        # canonical companion exists but a rebuild is forced -> render to temp,
-        # never overwrite the on-disk figure
+        # stale or forced: archive the existing companion into old/, rebuild in place
+        archive([beh_png, beh_png.with_suffix(".pdf")], run_dir)
         beh_run_dir = run_dir
-        out_stem = scratch / f"{stem}_coherence_behavior"
-        status = "temp"
-        print(f"  behaviour: rebuild forced but '{beh_png.name}' exists -> temp, will NOT overwrite")
+        out_stem = run_dir / f"{stem}_coherence_behavior"
+        status = "written"
 
     cmd = [sys.executable, BEHAVIOR_TOOL,
            "--run-dir", str(beh_run_dir),
@@ -277,6 +334,7 @@ def process_run(run, root, force: bool, dpi: int) -> dict:
 
         out_png = run_dir / f"{stem}_coherence_full.png"
         out_pdf = run_dir / f"{stem}_coherence_full.pdf"
+        archive([out_png, out_pdf], run_dir)
         out_h, ch, bh = compose(coh_png, beh_png, out_png, out_pdf, title_lines(run), dpi)
         written += [out_png, out_pdf]
 

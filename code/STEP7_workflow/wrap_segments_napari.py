@@ -446,6 +446,22 @@ def relabel_sequential(seg: np.ndarray) -> np.ndarray:
     return out
 
 
+def segment_name_map(wraps, shape, final_seg) -> dict:
+    """{final_label: name} for the saved labelmap. build_labelmap paints wraps in click
+    order (later wins) and then renumbers the surviving labels 1..N in ascending order;
+    this replays that so each final id gets the name of the last wrap painted with it."""
+    raw = np.zeros(shape, np.int32)
+    name_of = {}
+    for w in wraps:
+        raw[w["region"]] = w["label"]
+        name_of[int(w["label"])] = w.get("name") or label_name(w["label"])
+    out = {}
+    for new, old in enumerate(sorted(int(v) for v in np.unique(raw) if v > 0), start=1):
+        if (final_seg == new).any():
+            out[str(new)] = name_of.get(old, f"seg{new}")
+    return out
+
+
 def build_labelmap(wraps, shape) -> np.ndarray:
     """Rebuild the segment labelmap by applying wraps in click order (later overrides
     earlier where regions overlap), then relabel to a contiguous 1..N."""
@@ -1036,6 +1052,7 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
             "source_clean": str(inp["clean"]),
             "source_autoseg": str(inp["autoseg"]),
             "accepted_cells": sorted(S["accepted"]),
+            "segment_names": segment_name_map(S["wraps"], cellvol.shape, seg),
             "islands_removed": [{"label": lb, "components": n, "voxels": v} for lb, n, v in rep],
             "min_island_voxels": MIN_ISLAND_VOX,
             "wrap_clicks": [{"click_zyx": list(w["click"]), "arc": int(w["arc"]),
