@@ -34,6 +34,8 @@ KEYBINDINGS (interactive)
   k           toggle CUT mode: click on an existing region and it is split in two at the
               cross-section through the click (perpendicular to the local dendrite). The
               boundary is exactly where you clicked - correct any automatic boundary.
+  e           toggle ERASE mode: napari brush on the mask removes voxels; regions covering
+              them shrink immediately. ([ ] brush size.) Any other mode switches it off.
   m           merge the last two wraps into one region (fixes skeleton over-splits).
   n           name the last wrap (dialog); names go into the JSON sidecar and figures.
   u           undo the last wrap.
@@ -740,7 +742,7 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         "wraps": [],                                         # list of dict(region,label,name,meta)
         "cache": None,                                       # wrap cache; None => stale
         "cache_mask": None,                                  # mask snapshot the cache was built on
-        "wrap_mode": False, "interval_mode": False, "pending": None, "cut_mode": False,
+        "wrap_mode": False, "interval_mode": False, "pending": None, "cut_mode": False, "erase_mode": False,
         "axis": 0,
     }
 
@@ -777,7 +779,8 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         acc = ",".join(str(c) for c in sorted(S["accepted"])) or "none"
         wr = "  ".join(f"{label_name(w['label'])}={w['label']}({w['size']}vx)"
                        for w in S["wraps"]) or "none yet"
-        mode = ("CUT (click=split)" if S["cut_mode"] else
+        mode = ("ERASE (brush)" if S.get("erase_mode") else
+                "CUT (click=split)" if S["cut_mode"] else
                 "INTERVAL (2 clicks)" if S["interval_mode"] else
                 "WRAP (click=wrap)" if S["wrap_mode"] else "refine (paint/erase)")
         title = f"cells in: {acc} | {mode} | wraps: {wr}"
@@ -787,7 +790,10 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
             P = S["panel"]
             P.set_toggle("w", S["wrap_mode"] and not S["interval_mode"] and not S["cut_mode"])
             P.set_toggle("i", S["interval_mode"]); P.set_toggle("k", S["cut_mode"])
-            if S["cut_mode"]:
+            P.set_toggle("e", S.get("erase_mode", False))
+            if S.get("erase_mode"):
+                P.hint("ERASE: brush over the mask to remove voxels; regions shrink with it. [ ] brush size")
+            elif S["cut_mode"]:
                 P.hint("CUT: click on a region where it should be split in two")
             elif S["interval_mode"]:
                 P.hint("Click the SECOND point along the dendrite" if S["pending"] is not None
@@ -840,6 +846,8 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
 
     # ---- WRAP mode toggle ----
     def toggle_wrap(vw):
+        if S.get("erase_mode"):
+            S["erase_mode"] = False; mask_layer.mode = "pan_zoom"
         S["wrap_mode"] = not S["wrap_mode"]
         if S["wrap_mode"]:
             ensure_cache()
@@ -1049,6 +1057,39 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
 
     print(__doc__.split("Usage")[0].split("KEYBINDINGS")[1] if "KEYBINDINGS" in __doc__ else "")
 
+    # ---- ERASE mode: brush on the mask layer removes voxels from the mask AND from any
+    #      region covering them (regions are clamped to the mask at save anyway, but the
+    #      display should agree immediately) ----
+    def toggle_erase(vw=None):
+        S["erase_mode"] = not S.get("erase_mode", False)
+        if S["erase_mode"]:
+            S["wrap_mode"] = False; S["interval_mode"] = False; S["cut_mode"] = False; S["pending"] = None
+            v.layers.selection.active = mask_layer
+            mask_layer.mode = "erase"; mask_layer.brush_size = 2; mask_layer.n_edit_dimensions = 3
+            print("ERASE: brush over mask voxels to remove them ([ ] = brush size). Regions follow.", flush=True)
+        else:
+            mask_layer.mode = "pan_zoom"
+        status()
+
+    @mask_layer.mouse_drag_callbacks.append
+    def _after_mask_edit(layer, event):
+        if not S.get("erase_mode"):
+            return
+        yield
+        while event.type == "mouse_move":
+            yield
+        m = working_mask()
+        changed = False
+        for w in S["wraps"]:                                 # trim regions to the edited mask
+            if (w["region"] & ~m).any():
+                w["region"] = w["region"] & m; w["size"] = int(w["region"].sum()); changed = True
+        S["cache"] = None                                    # skeleton is stale
+        if changed:
+            refresh_segments()
+        status()
+
+    v.bind_key("e", toggle_erase, overwrite=True)
+
     # ---- side panel: every key as a button, same callbacks ----
     P = ActionPanel(v, title="pick regions")
     P.section("1. select regions")
@@ -1065,6 +1106,8 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
              cb=lambda: _relabel_last(next_branch_label([w["label"] for w in S["wraps"][:-1]])))
     P.button("Name last region...", key="n", cb=lambda: name_last(v))
     P.section("3. fix")
+    P.button("Erase with brush (mask + regions)", key="e", cb=lambda: toggle_erase(v), toggle=True,
+             tooltip="Brush removes voxels from the mask; any region covering them shrinks too")
     P.button("Merge last two regions", key="m", cb=lambda: merge_last_two(v))
     P.button("Undo last region", key="u", cb=lambda: _undo(v))
     P.note("Cells: keys 1-9 toggle a proposed cell in/out. [a] rotates the anatomy view. "

@@ -24,6 +24,9 @@ WORKFLOW (napari)
       radius x    cap on distance from the centreline, as a multiple of the local
                   radius estimated at each centreline point (soma large, branch small)
       pad (vox)   final dilation, for when you want a safety margin
+  * Erase by hand ('e' / button): paint on the red 'erase' layer; those voxels are
+    removed from the mask and STAY removed when you move the sliders (the mask is
+    regenerated from the centreline, then your erasures are subtracted).
   * 'uncertain' layer (orange): centreline points where the reference itself is dim
     (below --dim-pct of centreline intensities) - a path was found but the structure
     is not clearly there. Shown, never auto-bridged. Decide by eye.
@@ -323,6 +326,10 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     ref_layer = v.add_image(ref, name=f"reference [{names[ci]}]", scale=voxel, colormap="gray",
                             contrast_limits=(0, 1))
     mask_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="mask", scale=voxel, opacity=0.45)
+    erase_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="erase (paint here to remove)",
+                               scale=voxel, opacity=0.6)
+    erase_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.2, 0.2, 1.0)}   # red = erased
+    erase_layer.brush_size = 2; erase_layer.selected_label = 1; erase_layer.n_edit_dimensions = 3
     cl_layer = v.add_labels(np.zeros(ref.shape, np.int32), name="centreline", scale=voxel, opacity=1.0)
     unc_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="uncertain (dim centreline)",
                              scale=voxel, opacity=1.0)
@@ -338,6 +345,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     status = _Status()
 
     def set_mode(m):
+        if S.get("erasing"):
+            set_erase(False)
         S["mode"] = None if S["mode"] == m else m
         S["pending"] = None; pts_layer.data = np.zeros((0, 3))
         P.set_toggle("t", S["mode"] == "trace"); P.set_toggle("x", S["mode"] == "delete")
@@ -357,6 +366,10 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     P.button("Delete arc under click", key="x", cb=lambda: set_mode("delete"), toggle=True)
     P.button("Undo", key="u", cb=lambda: undo())
     P.button("Re-seed centreline", key="r", cb=lambda: reseed())
+    P.section("2b. erase by hand")
+    P.button("Erase with brush", key="e", cb=lambda: set_erase(not S.get("erasing", False)), toggle=True,
+             tooltip="Paint on the red layer; those voxels are removed from the mask and stay removed")
+    P.button("Clear all erasures", cb=lambda: clear_erase())
     P.section("3. view")
     P.button("Next reference channel", key="c", cb=lambda: cycle_channel())
     P.button("2D / 3D", key="d", cb=lambda: toggle_dims())
@@ -378,6 +391,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         if m is None:
             mask_layer.data = np.zeros(ref.shape, np.uint8); unc_layer.data = np.zeros(ref.shape, np.uint8)
             status.setText("no centreline - hold t and click two points"); return
+        er = np.asarray(erase_layer.data) > 0
+        m = m & ~er                                         # manual erasures always win
         mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
         status.setText(f"{len(S['arcs'])} arcs | mask {int(m.sum()):,} vox | "
                        f"uncertain centreline pts: {int(unc.sum())}")
@@ -433,6 +448,27 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     for lyr in (ref_layer, mask_layer, cl_layer, unc_layer):
         lyr.mouse_drag_callbacks.append(on_click)
 
+    @erase_layer.mouse_drag_callbacks.append
+    def _after_erase(layer, event):
+        yield
+        while event.type == "mouse_move":
+            yield
+        regrow()                                            # stroke finished -> subtract it
+
+    def set_erase(on):
+        """Erase mode: select the erase layer with the brush; off: back to pan/zoom."""
+        S["erasing"] = on
+        if on:
+            S["mode"] = None; P.set_toggle("t", False); P.set_toggle("x", False)
+            v.layers.selection.active = erase_layer; erase_layer.mode = "paint"
+            P.hint("ERASE: paint over voxels to remove them (brush size: [ ]). Erasures survive slider changes.")
+        else:
+            erase_layer.mode = "pan_zoom"; v.layers.selection.active = mask_layer
+            P.hint("Drag the sliders until the halo is gone; trace missing branches with [t]")
+        P.set_toggle("e", on)
+    def clear_erase():
+        erase_layer.data = np.zeros(ref.shape, np.uint8); regrow()
+
     # napari key events: track held keys
     S["held"] = set()
     def held(key):
@@ -460,12 +496,14 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         if not m.any():
             status.setText("nothing to save"); return
         params = {"alpha": S["alpha"], "radius_x": S["rx"], "pad": S["pad"], "dim_pct": dim_pct,
-                  "reference_channel": names[S["ci"]]}
+                  "reference_channel": names[S["ci"]],
+                  "manually_erased_voxels": int((np.asarray(erase_layer.data) > 0).sum())}
         t, j = save(paths, m, S["arcs"], params, voxel)
         status.setText(f"saved {os.path.basename(t)}  ({int(m.sum()):,} vox)\nclose napari, then Refresh the panel")
         print(f"[trace] saved {t}\n[trace] record appended to {j}")
     v.bind_key("u", undo, overwrite=True); v.bind_key("r", reseed, overwrite=True)
     v.bind_key("c", cycle_channel, overwrite=True); v.bind_key("d", toggle_dims, overwrite=True)
+    v.bind_key("e", lambda vw: set_erase(not S.get("erasing", False)), overwrite=True)
     v.bind_key("Control-s", do_save, overwrite=True); btn.clicked.connect(lambda: do_save())
 
     rebuild_cache(); regrow(); set_mode(None)
