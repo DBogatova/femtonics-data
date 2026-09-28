@@ -80,7 +80,7 @@ class ActionPanel:
         return b
 
     def slider(self, label, lo, hi, value, scale, cb, fmt="{:.2f}"):
-        """Labelled horizontal slider; cb(float_value) on change. Returns (slider, label)."""
+        """Labeled horizontal slider; cb(float_value) on change. Returns (slider, label)."""
         from qtpy.QtWidgets import QLabel, QSlider
         lab = QLabel(f"{label}: {fmt.format(value)}"); self.lay.addWidget(lab)
         s = QSlider(self._Qt.Horizontal); s.setRange(int(lo), int(hi)); s.setValue(int(round(value * scale)))

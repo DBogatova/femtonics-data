@@ -52,7 +52,7 @@ def decompose(mask, voxel, min_branch=4):
     skel = skeletonize(mask)
     if not skel.any():
         raise SystemExit("skeleton is empty - is the mask non-empty?")
-    # neighbour count on the skeleton (26-connectivity); degree>=3 -> bifurcation
+    # neighbor count on the skeleton (26-connectivity); degree>=3 -> bifurcation
     nb = convolve(skel.astype(np.uint8), np.ones((3, 3, 3), np.uint8), mode="constant") - skel
     nodes = skel & (nb * skel >= 3)
     edges = skel & ~nodes                                  # cut junctions -> disjoint branch pieces
@@ -104,7 +104,7 @@ def main():
     ap.add_argument("labelmap")
     add_voxel_arg(ap)
     ap.add_argument("--min-branch", type=int, default=4,
-                    help="drop skeleton pieces shorter than this many voxels (absorbed into a neighbour)")
+                    help="drop skeleton pieces shorter than this many voxels (absorbed into a neighbor)")
     ap.add_argument("--agg", choices=["max", "mean"], default="max",
                     help="temporal projection for the anatomy background (max matches refine)")
     ap.add_argument("--ndisplay", type=int, default=3, choices=[2, 3],
@@ -129,7 +129,7 @@ def main():
     # mutable state (K/pieces change when the granularity is re-dialled live)
     S = {"pieces": pieces, "K": K, "group_of": np.zeros(K + 1, np.int32),
          "cur": 1, "history": [], "min_branch": args.min_branch}
-    OFF = 1000                                # ungrouped pieces get distinct display colours
+    OFF = 1000                                # ungrouped pieces get distinct display colors
 
     def display_array():
         K = S["K"]

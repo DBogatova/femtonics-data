@@ -2,7 +2,7 @@
 """
 coherence_with_behavior.py - ONE command per run to produce the target output:
 the segment-event COHERENCE figure (correlation matrix + cell MIP + per-segment
-dF/F with network events) stacked over the ALIGNED BEHAVIOUR panel (pupil /
+dF/F with network events) stacked over the ALIGNED BEHAVIOR panel (pupil /
 whisking / accelerometer on the same imaging-frame axis), under one title block.
 
 It orchestrates the two existing, unmodified tools and then composes their PNGs:
@@ -12,11 +12,11 @@ It orchestrates the two existing, unmodified tools and then composes their PNGs:
       labelmap (priority: *_segments_final.tif > newest hand *_segments*.tif >
       autoseg reviewed > autoseg). Skipped if the coherence outputs are already
       newer than that labelmap (and --force was not given).
-  (b) behavior-tracking-daria/batch/coherence_behavior.py -> the behaviour panel
+  (b) behavior-tracking-daria/batch/coherence_behavior.py -> the behavior panel
       on the coherence frame axis, identity fields derived from the master CSV.
-  (c) compose -> <stem>_coherence_full.png + .pdf (coherence on top, behaviour
+  (c) compose -> <stem>_coherence_full.png + .pdf (coherence on top, behavior
       below, same width, one title block with mouse/date/run, frame rate and the
-      quality flags e.g. behaviour frame loss).
+      quality flags e.g. behavior frame loss).
 
 SAFETY (hard rule): nothing is ever deleted or silently overwritten. Up-to-date
 components are reused as-is. When a component is stale (the regions changed) or
@@ -201,7 +201,7 @@ def archive(paths, run_dir: Path):
 
 
 # ---------------------------------------------------------------------------
-# component (b): behaviour panel  ->  behaviour_png
+# component (b): behavior panel  ->  behavior_png
 # ---------------------------------------------------------------------------
 def ensure_behavior(run, root, scratch: Path, coh_source_dir: Path, events_csv: Path, force: bool):
     run_dir, stem = run["run_dir"], run["stem"]
@@ -212,12 +212,12 @@ def ensure_behavior(run, root, scratch: Path, coh_source_dir: Path, events_csv: 
     beh_png = run_dir / f"{stem}_coherence_behavior.png"
     up_to_date = beh_png.exists() and beh_png.stat().st_mtime >= events_csv.stat().st_mtime
 
-    # If the coherence used is the (private) rebuild, behaviour MUST be rendered
+    # If the coherence used is the (private) rebuild, behavior MUST be rendered
     # against that rebuilt events CSV, so it cannot reuse the on-disk companion.
     coh_is_scratch = (coh_source_dir != run_dir)
 
     if up_to_date and not force and not coh_is_scratch:
-        print(f"  behaviour: reuse existing (newer than events CSV)")
+        print(f"  behavior: reuse existing (newer than events CSV)")
         return beh_png, "reused"
 
     # choose the directory coherence_behavior will read (needs events + a
@@ -248,7 +248,7 @@ def ensure_behavior(run, root, scratch: Path, coh_source_dir: Path, events_csv: 
            "--out", str(out_stem), "--formats", "png", "pdf"]
     if fr:
         cmd += ["--imaging-rate", str(fr)]
-    print(f"  behaviour: rendering ({out_stem.name})")
+    print(f"  behavior: rendering ({out_stem.name})")
     run_subprocess(cmd, root, "coherence_behavior")
     return out_stem.with_suffix(".png"), status
 
@@ -262,14 +262,14 @@ def title_lines(run) -> list[str]:
     flags = []
     fl = run.get("behavior_frame_loss_pct", "")
     if fl and fl not in ("0", "0.0"):
-        flags.append(f"behaviour frame loss {fl}%")
+        flags.append(f"behavior frame loss {fl}%")
     if run.get("suspect_nz"):
         flags.append("suspect nz (re-extract)")
     warn = run.get("behavior_warnings", "")
     l1 = f"{mouse}   {run['date']}   {run_id}   ({run['munit']})"
-    l2 = f"imaging {fr} Hz    quality: {run['imaging_quality']}  [{run['priority']}, score {run['quality_score']}]"
-    l3 = ("flags: " + "; ".join(flags)) if flags else "flags: none"
-    lines = [l1, l2, l3]
+    l2 = f"imaging {fr} Hz"
+    l3 = ("flags: " + "; ".join(flags)) if flags else None      # shown only when something is flagged
+    lines = [l1, l2] + ([l3] if l3 else [])
     if warn:
         lines.append("warn: " + (warn if len(warn) < 120 else warn[:117] + "..."))
     return lines
@@ -307,11 +307,53 @@ def compose(coh_png: Path, beh_png: Path, out_png: Path, out_pdf: Path,
     fig.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.0)
 
     fig.savefig(out_png, dpi=dpi)
-    fig.savefig(out_pdf)
     plt.close(fig)
+
+    # PDF: stack the component PDFs themselves (vector), under a vector title block,
+    # instead of embedding the PNG renders. Falls back to a raster PDF only if a
+    # component PDF is missing.
+    coh_pdf, beh_pdf = coh_png.with_suffix(".pdf"), beh_png.with_suffix(".pdf")
+    if coh_pdf.exists() and beh_pdf.exists():
+        vector_stack_pdf([coh_pdf, beh_pdf], titles, out_pdf)
+    else:
+        print("  compose: component PDF missing -> raster PDF fallback")
+        fig = plt.figure(figsize=(fig_w, fig_h))
+        ax = fig.add_axes([0, 0, 1, 1]); ax.imshow(mpimg.imread(out_png)); ax.axis("off")
+        fig.savefig(out_pdf); plt.close(fig)
 
     out_h = mpimg.imread(out_png).shape[0]
     return out_h, ch, bh
+
+
+def vector_stack_pdf(parts, titles, out_pdf: Path, width_pt: float = 864.0):
+    """One-page PDF: a vector title block, then each part's first page scaled to a common
+    width and stacked top-to-bottom. Text, lines and traces stay vector; only genuine
+    images inside the parts (e.g. the cell MIP) remain images."""
+    import io
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from pypdf import PdfReader, PdfWriter, Transformation
+
+    title_h = 72.0 * (0.28 * len(titles) + 0.35)
+    fig = plt.figure(figsize=(width_pt / 72.0, title_h / 72.0))
+    fig.text(0.008, 0.92, titles[0], ha="left", va="top", fontsize=13, fontweight="bold")
+    fig.text(0.008, 0.40, "\n".join(titles[1:]), ha="left", va="top", fontsize=9.5, family="monospace")
+    buf = io.BytesIO(); fig.savefig(buf, format="pdf"); plt.close(fig); buf.seek(0)
+
+    pages = [PdfReader(buf).pages[0]] + [PdfReader(str(pp)).pages[0] for pp in parts]
+    scales = [width_pt / float(pg.mediabox.width) for pg in pages]
+    heights = [float(pg.mediabox.height) * sc for pg, sc in zip(pages, scales)]
+    total = sum(heights)
+    w = PdfWriter()
+    page = w.add_blank_page(width=width_pt, height=total)
+    y = total
+    for pg, sc, h in zip(pages, scales, heights):
+        y -= h
+        x0, y0 = float(pg.mediabox.left), float(pg.mediabox.bottom)
+        page.merge_transformed_page(pg, Transformation().translate(-x0, -y0).scale(sc, sc).translate(0, y))
+    with open(out_pdf, "wb") as fh:
+        w.write(fh)
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +381,7 @@ def process_run(run, root, force: bool, dpi: int) -> dict:
         written += [out_png, out_pdf]
 
         print(f"  composed: {out_png.name}  (height {out_h}px vs coherence {ch}px, "
-              f"behaviour {bh}px)  {'OK taller' if out_h > ch else 'WARNING not taller'}")
+              f"behavior {bh}px)  {'OK taller' if out_h > ch else 'WARNING not taller'}")
         return {"ok": True, "composite": out_png, "composite_h": out_h,
                 "coherence_h": ch, "behavior_h": bh, "written": written, "reused": reused}
     finally:

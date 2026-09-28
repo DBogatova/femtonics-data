@@ -261,7 +261,7 @@ a branch to add it to that segment; drag = rotate. Keys: **`u`** undo click, **`
 **`[`/`]`** coarser/finer decomposition (fewer/more pieces), **`n`** preview final ids,
 **`s`** save → `*_segments_labelmap.tif`. Pieces you never click stay as distinct parts;
 grouped pieces share a label; labels are renumbered 1..N and clamped to the mask.
-- `--min-branch` drops skeleton spurs shorter than N voxels (absorbed into a neighbour);
+- `--min-branch` drops skeleton spurs shorter than N voxels (absorbed into a neighbor);
   raise it for fewer/larger pieces (or use `[`/`]` live). `--agg`, `--ndisplay {3,2}`.
 
 **`segment_mask_napari.py`** — *paint-based alternative.* Paint 3–5 segments on the mask

@@ -1,4 +1,4 @@
-"""One source of truth for voxel size (Z, Y, X) in micrometres.
+"""One source of truth for voxel size (Z, Y, X) in micrometers.
 
 Every script that needs physical distances should call `resolve_voxel(stack_path,
 cli_value)`. Resolution order:

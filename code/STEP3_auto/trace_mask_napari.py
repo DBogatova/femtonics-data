@@ -4,15 +4,15 @@
 WHY
   Thresholding a reference volume cannot separate a faint branch from the scattered-
   light halo of the bright trunk: in absolute intensity they are the same. This tool
-  instead defines the mask RELATIVE to a traced centreline: a voxel belongs to the
-  dendrite when it is brighter than alpha x the intensity of the nearest centreline
+  instead defines the mask RELATIVE to a traced centerline: a voxel belongs to the
+  dendrite when it is brighter than alpha x the intensity of the nearest centerline
   point. Halo (~30 % of its source) drops out at alpha ~ 0.5 for trunk and branch
   alike, while the faint branch itself stays. Thickness is then one number you drag.
 
 WORKFLOW (napari)
   * The reference volume is shown (default channel: cofire_mean, the tree at the
     moments it fires together; 'c' cycles channels).
-  * Centreline seeding: the bright ridges of the reference are skeletonized into the
+  * Centerline seeding: the bright ridges of the reference are skeletonized into the
     initial trace (--seed autoseg uses the autoseg skeleton instead; --seed none starts
     empty) so on a good run you only confirm. Delete an arc by clicking it with 'x' held; add an arc
     by clicking two points with the 'trace' tool ('t' held): the tool finds the
@@ -20,15 +20,15 @@ WORKFLOW (napari)
     Clicks in the 2D top view snap through the whole Z column, so one pair of clicks
     connects structure across slices - never trace slice by slice.
   * Growth sliders (dock panel, live):
-      alpha       relative threshold: keep voxels >= alpha x local centreline intensity
-      radius x    cap on distance from the centreline, as a multiple of the local
-                  radius estimated at each centreline point (soma large, branch small)
+      alpha       relative threshold: keep voxels >= alpha x local centerline intensity
+      radius x    cap on distance from the centerline, as a multiple of the local
+                  radius estimated at each centerline point (soma large, branch small)
       pad (vox)   final dilation, for when you want a safety margin
   * Erase by hand ('e' / button): paint on the red 'erase' layer; those voxels are
     removed from the mask and STAY removed when you move the sliders (the mask is
-    regenerated from the centreline, then your erasures are subtracted).
-  * 'uncertain' layer (orange): centreline points where the reference itself is dim
-    (below --dim-pct of centreline intensities) - a path was found but the structure
+    regenerated from the centerline, then your erasures are subtracted).
+  * 'uncertain' layer (orange): centerline points where the reference itself is dim
+    (below --dim-pct of centerline intensities) - a path was found but the structure
     is not clearly there. Shown, never auto-bridged. Decide by eye.
   * Ctrl+S writes <stem>_autoseg_labelmap_reviewed.tif (cell 1, class 2 = structure,
     label 2) + a record in <stem>_autoseg_reviewed.json, so femto_status advances to
@@ -132,7 +132,7 @@ def _skeleton_arcs(mask, min_arc=3, prune_radius=None):
     With prune_radius (= voxel size): inside thick regions the skeleton of a blob is a
     tangle of short arcs between clustered junctions (the soma). Arcs shorter than the
     local tube radius that end at a junction are removed and their junction cluster is
-    left as a single point so neighbouring arcs still connect through it."""
+    left as a single point so neighboring arcs still connect through it."""
     skel = skeletonize(mask)
     if skel.sum() == 0:
         return []
@@ -173,7 +173,7 @@ def _skeleton_arcs(mask, min_arc=3, prune_radius=None):
 
 
 def seed_from_reference(ref, z=5.0, min_component=50, min_arc=3, voxel=None):
-    """Initial centreline from the reference's own bright ridges: robust-z threshold
+    """Initial centerline from the reference's own bright ridges: robust-z threshold
     (median + z * MAD) -> drop specks -> skeleton split at junctions. Independent of
     autoseg quality (which on some runs degenerates to most of the volume)."""
     sm = ndi.gaussian_filter(ref, sigma=(0.5, 0.8, 0.8))
@@ -186,7 +186,7 @@ def seed_from_reference(ref, z=5.0, min_component=50, min_arc=3, voxel=None):
 
 
 def seed_from_autoseg(paths, shape, min_arc=3):
-    """Optional: centreline from the autoseg labelmap skeleton."""
+    """Optional: centerline from the autoseg labelmap skeleton."""
     if not os.path.exists(paths["autoseg"]):
         return []
     lm = tifffile.imread(paths["autoseg"])
@@ -197,8 +197,8 @@ def seed_from_autoseg(paths, shape, min_arc=3):
 def grow_cache(ref, arcs, voxel, max_radius_um=12.0):
     """Everything the sliders need, computed once per trace edit.
 
-    Returns dict with, per voxel: nearest-centreline intensity, geodesic distance from the
-    centreline (um), local radius at the nearest centreline point (um), and per-arc data.
+    Returns dict with, per voxel: nearest-centerline intensity, geodesic distance from the
+    centerline (um), local radius at the nearest centerline point (um), and per-arc data.
     Geodesic distance is measured with cost = 1/(ref+eps) so the territory follows the
     structure rather than a Euclidean ball; capped at max_radius_um for speed.
     """
@@ -208,23 +208,23 @@ def grow_cache(ref, arcs, voxel, max_radius_um=12.0):
         cl[tuple(pts.T)] = k
     if cl.max() == 0:
         return None
-    # per-centreline-point intensity (smoothed along the arc so a single dim voxel does not
+    # per-centerline-point intensity (smoothed along the arc so a single dim voxel does not
     # punch a hole) and local radius via the reference's own half-max extent
     smooth = ndi.gaussian_filter(ref, sigma=(0.5, 0.8, 0.8))
     cl_int = np.zeros(shape, np.float32)
     cl_int[cl > 0] = smooth[cl > 0]
-    # local radius: distance transform of ref > 0.5*local intensity, read at the centreline
+    # local radius: distance transform of ref > 0.5*local intensity, read at the centerline
     half = smooth >= 0.5 * np.maximum(ndi.maximum_filter(cl_int, size=5), 1e-3)
     edt = ndi.distance_transform_edt(half, sampling=tuple(voxel))
     cl_rad = np.zeros(shape, np.float32)
     cl_rad[cl > 0] = np.maximum(edt[cl > 0], float(min(voxel)))
-    # geodesic nearest-centreline: propagate intensity and radius via MCP from all
-    # centreline points at once, with per-source values carried by the traceback labels
+    # geodesic nearest-centerline: propagate intensity and radius via MCP from all
+    # centerline points at once, with per-source values carried by the traceback labels
     cost = (1.0 / (smooth + 0.05)).astype(float)
     mcp = MCP_Geometric(cost, sampling=tuple(voxel))
     src = np.argwhere(cl > 0)
     dist, trace = mcp.find_costs([tuple(p) for p in src], max_cumulative_cost=None)
-    # follow tracebacks to assign each voxel its source centreline voxel (vectorised via
+    # follow tracebacks to assign each voxel its source centerline voxel (vectorised via
     # offsets: walk the traceback field until reaching a source)
     offsets = np.array(mcp.offsets)
     idx = np.indices(shape).reshape(3, -1).T
@@ -242,26 +242,26 @@ def grow_cache(ref, arcs, voxel, max_radius_um=12.0):
     flat = np.ravel_multi_index(cur.T, shape)
     near_int = cl_int.reshape(-1)[flat].reshape(shape)
     near_rad = cl_rad.reshape(-1)[flat].reshape(shape)
-    # euclidean distance to the assigned centreline voxel (um), for the radius cap
+    # euclidean distance to the assigned centerline voxel (um), for the radius cap
     src_xyz = cur.reshape(shape + (3,)).astype(np.float32)
     own = np.indices(shape).transpose(1, 2, 3, 0).astype(np.float32)
     eucl = np.sqrt((((own - src_xyz) * np.asarray(voxel, np.float32)) ** 2).sum(-1))
-    # dim centreline points: structure not clearly present under the path
+    # dim centerline points: structure not clearly present under the path
     cl_vals = smooth[cl > 0]
     return {"cl": cl, "ref": ref, "smooth": smooth, "near_int": near_int, "near_rad": near_rad,
             "eucl": eucl, "geo": dist, "cl_vals": cl_vals}
 
 
 def grow(cache, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0):
-    """Mask + uncertain-centreline flags from the cache and the three slider values."""
+    """Mask + uncertain-centerline flags from the cache and the three slider values."""
     if cache is None:
         return None, None
     ref, ni, nr, eu = cache["smooth"], cache["near_int"], cache["near_rad"], cache["eucl"]
     m = (ref >= alpha * ni) & (eu <= radius_x * nr) & (ni > 0)
-    m |= cache["cl"] > 0                                    # centreline always inside
+    m |= cache["cl"] > 0                                    # centerline always inside
     # close one-voxel seams where arcs meet (junction voxels belong to no arc)
     m = ndi.binary_closing(m, structure=np.ones((1, 3, 3))) | m
-    # keep only components touching the centreline (kills detached halo islands)
+    # keep only components touching the centerline (kills detached halo islands)
     lab, n = ndi.label(m, structure=np.ones((3, 3, 3)))
     keep = np.unique(lab[cache["cl"] > 0]); keep = keep[keep > 0]
     m = np.isin(lab, keep)
@@ -330,8 +330,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
                                scale=voxel, opacity=0.6)
     erase_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.2, 0.2, 1.0)}   # red = erased
     erase_layer.brush_size = 2; erase_layer.selected_label = 1; erase_layer.n_edit_dimensions = 3
-    cl_layer = v.add_labels(np.zeros(ref.shape, np.int32), name="centreline", scale=voxel, opacity=1.0)
-    unc_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="uncertain (dim centreline)",
+    cl_layer = v.add_labels(np.zeros(ref.shape, np.int32), name="centerline", scale=voxel, opacity=1.0)
+    unc_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="uncertain (dim centerline)",
                              scale=voxel, opacity=1.0)
     unc_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.55, 0.0, 1.0)}   # orange; None = default (transparent)
     pts_layer = v.add_points(np.zeros((0, 3)), name="trace clicks", scale=voxel, size=2,
@@ -357,15 +357,15 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     P.section("1. thickness (live)")
     P.slider("alpha - relative threshold", 5, 95, alpha, 100,
              lambda val: (S.__setitem__("alpha", val), regrow()))
-    P.note("higher alpha = thinner mask: keeps voxels brighter than alpha x the local centreline")
+    P.note("higher alpha = thinner mask: keeps voxels brighter than alpha x the local centerline")
     P.slider("radius x local", 50, 400, radius_x, 100, lambda val: (S.__setitem__("rx", val), regrow()))
     P.slider("pad (voxels)", 0, 3, pad, 1, lambda val: (S.__setitem__("pad", val), regrow()), fmt="{:.0f}")
-    P.section("2. edit the centreline")
+    P.section("2. edit the centerline")
     P.button("Trace arc between 2 clicks", key="t", cb=lambda: set_mode("trace"), toggle=True,
-             tooltip="Click two points; the brightest path between them becomes a centreline arc")
+             tooltip="Click two points; the brightest path between them becomes a centerline arc")
     P.button("Delete arc under click", key="x", cb=lambda: set_mode("delete"), toggle=True)
     P.button("Undo", key="u", cb=lambda: undo())
-    P.button("Re-seed centreline", key="r", cb=lambda: reseed())
+    P.button("Re-seed centerline", key="r", cb=lambda: reseed())
     P.section("2b. erase by hand")
     P.button("Erase with brush", key="e", cb=lambda: set_erase(not S.get("erasing", False)), toggle=True,
              tooltip="Paint on the red layer; those voxels are removed from the mask and stay removed")
@@ -373,7 +373,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     P.section("3. view")
     P.button("Next reference channel", key="c", cb=lambda: cycle_channel())
     P.button("2D / 3D", key="d", cb=lambda: toggle_dims())
-    P.note("Orange = centreline where the reference is dim (uncertain). Decide by eye; nothing is auto-bridged.")
+    P.note("Orange = centerline where the reference is dim (uncertain). Decide by eye; nothing is auto-bridged.")
     P.section("4. done")
     btn = P.button("Save mask", key="Ctrl+S")
     P.finish()
@@ -390,12 +390,12 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         m, unc = grow(S["cache"], S["alpha"], S["rx"], S["pad"], dim_pct)
         if m is None:
             mask_layer.data = np.zeros(ref.shape, np.uint8); unc_layer.data = np.zeros(ref.shape, np.uint8)
-            status.setText("no centreline - hold t and click two points"); return
+            status.setText("no centerline - hold t and click two points"); return
         er = np.asarray(erase_layer.data) > 0
         m = m & ~er                                         # manual erasures always win
         mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
         status.setText(f"{len(S['arcs'])} arcs | mask {int(m.sum()):,} vox | "
-                       f"uncertain centreline pts: {int(unc.sum())}")
+                       f"uncertain centerline pts: {int(unc.sum())}")
 
     def push_hist():
         S["hist"].append([a.copy() for a in S["arcs"]])
@@ -415,7 +415,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             return
         if "x" in held:
             cl = cl_layer.data
-            if cl[pos] == 0:                                # snap to nearest centreline voxel
+            if cl[pos] == 0:                                # snap to nearest centerline voxel
                 pts = np.argwhere(cl > 0)
                 if len(pts) == 0: return
                 w = np.asarray(voxel, float).copy()
@@ -532,8 +532,8 @@ def run_check(stack_path, voxel_cli=None) -> bool:
     m5, _ = grow(cache, 0.5, 1.5, 0); m5b, _ = grow(cache, 0.5, 3.0, 0)
     rep("radius cap grows the mask", m5b.sum() >= m5.sum(), f"{int(m5.sum())} -> {int(m5b.sum())}")
     cl = cache["cl"] > 0
-    rep("centreline always inside mask", bool((m5 & cl).sum() == cl.sum()))
-    # one geodesic path between the two furthest centreline voxels of the longest arc
+    rep("centerline always inside mask", bool((m5 & cl).sum() == cl.sum()))
+    # one geodesic path between the two furthest centerline voxels of the longest arc
     longest = max(arcs, key=len); a, b = longest[0], longest[-1]
     path = geodesic_path(cost_volume(ref), a, b, voxel)
     rep("geodesic path found between arc ends", path is not None and len(path) >= 2,
@@ -569,10 +569,10 @@ def main(argv=None):
     ap.add_argument("--alpha", type=float, default=0.5); ap.add_argument("--radius-x", type=float, default=1.5)
     ap.add_argument("--pad", type=int, default=0)
     ap.add_argument("--dim-pct", type=float, default=15.0,
-                    help="centreline points below this percentile of centreline intensity are flagged uncertain")
+                    help="centerline points below this percentile of centerline intensity are flagged uncertain")
     ap.add_argument("--ndisplay", type=int, choices=(2, 3), default=2)
     ap.add_argument("--seed", choices=("reference", "autoseg", "none"), default="reference",
-                    help="initial centreline: bright ridges of the reference (default), the "
+                    help="initial centerline: bright ridges of the reference (default), the "
                          "autoseg skeleton, or nothing (trace everything by hand)")
     ap.add_argument("--seed-z", type=float, default=5.0,
                     help="robust-z threshold for reference seeding (higher = fewer, surer arcs)")

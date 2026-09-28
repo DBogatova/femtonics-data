@@ -6,7 +6,7 @@
 #   femto next               print the next step
 #   femto trace  <stack>     open the mask tool on a stack
 #   femto regions <stack>    open the region tool on a stack
-#   femto figure <run>       build the coherence+behaviour composite for a behavior_base
+#   femto figure <run>       build the coherence+behavior composite for a behavior_base
 #   femto movies <run> [--kinds dual time structure] [--force]   3D movies from the regions
 #
 # Everything runs from the project root with the project virtualenv; a log of the last

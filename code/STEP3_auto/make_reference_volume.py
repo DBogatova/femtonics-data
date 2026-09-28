@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
 ---------------
-Traces are analysed on the RAW dynamic data (denoisers can distort amplitudes,
+Traces are analyzed on the RAW dynamic data (denoisers can distort amplitudes,
 so they stay out of analysis). Reconstruction and masking, however, only need a
 static picture of the anatomy - and a static picture can average the ENTIRE
 recording: ~1400-1800 frames gives a ~37-42x noise reduction, far beyond what
@@ -18,7 +18,7 @@ OUTPUT: <stem>_ref3d.tif - a 3-channel 3D volume (C,Z,Y,X), ImageJ-compatible:
   C0 anatomy   : temporal MEAN (the sharp structural scaffold)
   C1 activity  : temporal 99.5th percentile (where activity EVER happened -
                  reveals dim branches that fire rarely; complements C0)
-  C2 coherence : max neighbour temporal correlation (structure vs haze:
+  C2 coherence : max neighbor temporal correlation (structure vs haze:
                  active processes co-fluctuate, scattered-light halo less so)
 All channels rescaled to uint16 full range, with the raw scaling factors saved
 in <stem>_ref3d.json for reproducibility.

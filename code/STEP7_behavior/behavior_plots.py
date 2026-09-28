@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Combined behaviour + calcium plots for FEMTONICS runs.
+"""Combined behavior + calcium plots for FEMTONICS runs.
 
 Adapted from apical-dendrites-2025/code/Behavior-Analysis/behavior_plots.py,
 which was written for the SCAPE/Andor rig. That original is left untouched; this
@@ -10,7 +10,7 @@ there are no hardcoded run constants.
 WHAT WAS WRONG FOR FEMTONICS IN THE ORIGINAL, AND WHAT THIS DOES INSTEAD
 -----------------------------------------------------------------------
 1. FRAME_RATE was a module constant (6 Hz).
-   The Femtonics volume rate varies PER RUN: across the 44 behaviour-matched runs
+   The Femtonics volume rate varies PER RUN: across the 44 behavior-matched runs
    it spans 4.523-10.836 Hz (median 5.871). Assuming 6 Hz puts the end of the Ca
    time axis off by a median of 23.3 s and up to 193.5 s; 37 of 44 runs would be
    off by more than 5 s. Here the rate comes from `frame_rate_hz` in the master
@@ -25,7 +25,7 @@ WHAT WAS WRONG FOR FEMTONICS IN THE ORIGINAL, AND WHAT THIS DOES INSTEAD
 3. THE CAMERA->IMAGING OFFSET was computed by globbing "*_trigger.csv" and taking
    the first match. In this layout every run of a session shares one trigger/
    folder, so that glob can return ANOTHER run's file; the within-session offset
-   spread reaches 6.8 s. Here it is read from the run's own behaviour .mat
+   spread reaches 6.8 s. Here it is read from the run's own behavior .mat
    (`settings.aligned_time_s`), which is exact and per-run:
        offset = -aligned_time_s[0]
    The offset IS required: pupil/whisker come off the .mat on the CAMERA clock
@@ -49,7 +49,7 @@ Usage
 -----
     python code/STEP7_behavior/behavior_plots.py --list
     python code/STEP7_behavior/behavior_plots.py --run rbp4_141_phpeb_26-06-25_Run007
-    python code/STEP7_behavior/behavior_plots.py --all --out-dir figures/behaviour
+    python code/STEP7_behavior/behavior_plots.py --all --out-dir figures/behavior
 """
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ mpl.rcParams["font.sans-serif"] = ["Arial", "Helvetica", "DejaVu Sans"]
 mpl.rcParams["pdf.fonttype"] = 42
 
 # ---- project-wide conventions (do not change casually) ----------------------
-BEHAVIOUR_HZ = 10.0     # Basler behaviour camera
+BEHAVIOR_HZ = 10.0     # Basler behavior camera
 ACCEL_YMAX = 0.25       # accelerometer y-limit, same in every plot script
 C_CA, C_PUPIL, C_WHISK, C_ACCEL = "green", "blue", "orange", "purple"
 MASTER_CSV = "behavior_imaging_master.csv"
@@ -91,18 +91,18 @@ def load_master(root: Path) -> pd.DataFrame:
     d = d[d["behavior_base"].notna()].copy()
     if d.empty:
         raise SystemExit(f"ERROR: {p} has no rows with a behavior_base "
-                         f"(no behaviour<->imaging matches).")
+                         f"(no behavior<->imaging matches).")
     return d
 
 
 def run_folder_name(run_number) -> str:
-    """behaviour run 7 -> imaging folder 'run7' (lowercase, unpadded)."""
+    """behavior run 7 -> imaging folder 'run7' (lowercase, unpadded)."""
     return f"run{int(float(run_number))}"
 
 
 def resolve_paths(root: Path, row: pd.Series) -> dict:
     """Turn a master-CSV row into concrete paths. The CSV stores BARE filenames
-    for the behaviour artefacts and a root-relative path for extracted_tif."""
+    for the behavior artefacts and a root-relative path for extracted_tif."""
     sess = root / str(row["mouse"]) / str(row["date"])
     return {
         "session": sess,
@@ -192,18 +192,18 @@ def load_calcium(paths: dict, fps: float, ca_source: str, crop_start: float):
 
 
 # =============================================================================
-# behaviour
+# behavior
 # =============================================================================
-def load_behaviour(paths: dict, crop_start: float, apply_offset: bool):
+def load_behavior(paths: dict, crop_start: float, apply_offset: bool):
     mat = paths["behavior_mat"]
     if not mat.exists():
-        print(f"  behaviour MAT not found: {mat}")
+        print(f"  behavior MAT not found: {mat}")
         return None, None, None
     md = loadmat(mat)
     pupil = gaussian_filter1d(md["pupil"]["pupil_raw"][0][0].flatten(), sigma=2)
     whisk = gaussian_filter1d(md["whisker"]["whisker_smooth_long"][0][0].flatten(), sigma=3)
     n = len(pupil)
-    time = np.arange(n) / BEHAVIOUR_HZ     # CAMERA clock -> hence the offset below
+    time = np.arange(n) / BEHAVIOR_HZ     # CAMERA clock -> hence the offset below
 
     offset = 0.0
     if apply_offset:
@@ -226,7 +226,7 @@ def load_behaviour(paths: dict, crop_start: float, apply_offset: bool):
     whisk = whisk / (wmax + 1e-6)
 
     m = time >= total
-    print(f"  behaviour: {n} samples at {BEHAVIOUR_HZ:.0f} Hz; {int(m.sum())} kept")
+    print(f"  behavior: {n} samples at {BEHAVIOR_HZ:.0f} Hz; {int(m.sum())} kept")
     return time[m] - total, pupil[m], whisk[m]
 
 
@@ -259,7 +259,7 @@ def plot_run(root: Path, row: pd.Series, args):
     print(f"  frame rate = {fps:.3f} Hz  [{src}]")
 
     t_ca, ca = load_calcium(paths, fps, args.ca_source, args.crop_start)
-    t_b, pupil, whisk = load_behaviour(paths, args.crop_start, not args.no_offset)
+    t_b, pupil, whisk = load_behavior(paths, args.crop_start, not args.no_offset)
     t_a, acc = load_accel(paths, args.crop_start)
 
     panels = []
@@ -277,20 +277,20 @@ def plot_run(root: Path, row: pd.Series, args):
 
     t_end = min(p[1][-1] for p in panels)
     cropped = []
-    for lab, t, v, colour, yl in panels:
+    for lab, t, v, color, yl in panels:
         k = (t >= 0) & (t <= t_end)
-        cropped.append((lab, t[k], v[k], colour, yl))
+        cropped.append((lab, t[k], v[k], color, yl))
     panels = cropped
 
     fig, axes = plt.subplots(len(panels), 1, figsize=(11, 1.6 * len(panels)), sharex=True)
     if len(panels) == 1:
         axes = [axes]
-    for ax, (lab, t, v, colour, yl) in zip(axes, panels):
-        ax.plot(t, v, color=colour, lw=1.8)
+    for ax, (lab, t, v, color, yl) in zip(axes, panels):
+        ax.plot(t, v, color=color, lw=1.8)
         if yl:
             ax.set_ylim(*yl)
         ax.text(0.008, 0.94, lab, transform=ax.transAxes, ha="left", va="top",
-                color=colour, fontweight="bold", fontsize=20)
+                color=color, fontweight="bold", fontsize=20)
         ax.set_ylabel("")
         ax.grid(False)
         ax.tick_params(labelsize=16)
@@ -324,7 +324,7 @@ def plot_run(root: Path, row: pd.Series, args):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Behaviour + Ca plots for Femtonics runs.")
+    ap = argparse.ArgumentParser(description="Behavior + Ca plots for Femtonics runs.")
     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[2]),
                     help="femtonics-data root (default: two levels above this file)")
     ap.add_argument("--run", help="behavior_base, e.g. rbp4_141_phpeb_26-06-25_Run007")

@@ -28,7 +28,7 @@ Ctrl+S → close napari → **Refresh** → repeat until the run reads `complete
 | 1 | register | `code/STEP2_clean/clean_register_3d.py <4D.tif> --out <dir>/runN_clean.tif` | no |
 | 2 | reference volume | `code/STEP3_auto/make_reference_volume.py <dir>/runN_clean.tif` (add `--register-blocks` if it refuses on drift) | no |
 | 3 | cell proposal | `code/STEP3_auto/auto_segment.py <dir>/runN_clean.tif` | no |
-| 4 | trace + grow mask | `code/STEP3_auto/trace_mask_napari.py <dir>/runN_clean.tif` — centreline seeded from reference ridges; `t`+click two points traces a geodesic path, `x`+click deletes an arc; **alpha slider** = relative threshold (keep voxels ≥ alpha × local centreline intensity: removes halo around trunk and faint branch alike), radius-x and pad sliders; `e` = erase by hand (erasures survive slider changes); orange = dim centreline (uncertain, never auto-bridged); Ctrl+S. (`review_autoseg_napari.py` remains as the cell-toggle alternative.) | ~2 min GUI |
+| 4 | trace + grow mask | `code/STEP3_auto/trace_mask_napari.py <dir>/runN_clean.tif` — centerline seeded from reference ridges; `t`+click two points traces a geodesic path, `x`+click deletes an arc; **alpha slider** = relative threshold (keep voxels ≥ alpha × local centerline intensity: removes halo around trunk and faint branch alike), radius-x and pad sliders; `e` = erase by hand (erasures survive slider changes); orange = dim centerline (uncertain, never auto-bridged); Ctrl+S. (`review_autoseg_napari.py` remains as the cell-toggle alternative.) | ~2 min GUI |
 | 5 | pick regions | `code/STEP7_workflow/wrap_segments_napari.py <dir>/runN_clean.tif` — `w` then click: whole junction-to-junction piece becomes a region (soma/trunk/branch auto-guessed; `s`/`t`/`b` override). `i` = **interval mode**: click two points and the stretch between them along the skeleton becomes a region (e.g. trunk 50–80 µm from soma, proximal 20 µm of a branch). `k` = **cut here**: click on a region to split it at that cross-section. `e` = erase with the brush (mask and regions together). `m` merges the last two regions, `n` names the last one (names go to the JSON and figures), `u` undo, Ctrl+S | ~1–2 min GUI |
 
 Both tools drop disconnected islands < 20 voxels (per label) at save.
@@ -76,7 +76,7 @@ script stops and tells you. The mice differ (0.70–0.90 um lateral, 0.80–1.00
 and the old per-script defaults ranged from 0.8 to 3.9 um in Z, which silently
 changed anatomical distances and skeleton splits.
 
-## Planned (deferred until several cells are re-analysed)
+## Planned (deferred until several cells are re-analyzed)
 
 **Interfering-cell exclusion + display masking** — requested 2026-09-28, build after
 Daria has processed some cells with the new tools so a real crossing-cell case exists.

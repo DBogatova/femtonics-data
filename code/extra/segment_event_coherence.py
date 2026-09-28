@@ -198,7 +198,10 @@ def main():
 
     # A: correlation heatmap
     axC = fig.add_subplot(gs[0, 0])
-    im = axC.imshow(C, cmap="magma", vmin=-0.2, vmax=1)
+    # pcolormesh (not imshow) so the matrix is vector cells in the PDF
+    im = axC.pcolormesh(np.arange(n + 1) - 0.5, np.arange(n + 1) - 0.5, C,
+                        cmap="magma", vmin=-0.2, vmax=1, shading="flat", edgecolors="none")
+    axC.set_xlim(-0.5, n - 0.5); axC.set_ylim(n - 0.5, -0.5); axC.set_aspect("equal")
     axC.set_xticks(range(n)); axC.set_yticks(range(n))
     axC.set_xticklabels(names, rotation=90, fontsize=7); axC.set_yticklabels(names, fontsize=7)
     axC.set_title(f"ΔF/F correlation (soma→branch)\nmean pair r={mean_pair:.2f}", fontsize=9)
@@ -249,10 +252,24 @@ def main():
         axR.plot(pk, traces[i][pk] + i * off, ".", color="k", ms=4)
         axR.text(-0.01 * T, i * off + traces[i].mean(), f"{names[i]}\n{role[i]}",
                  ha="right", va="center", fontsize=7, color=col[i])
-    axR.set_xlabel("frame"); axR.set_yticks([])
+    axR.set_xlabel("frame", fontsize=11); axR.set_yticks([])
+    axR.tick_params(axis="x", labelsize=11)            # same as the behavior panel
+    # fixed-size dF/F scale bar (same 0.5 dF/F on every run, so figures compare)
+    SB = 0.5
+    xb = T - 1 + 0.012 * T
+    axR.plot([xb, xb], [0, SB], color="k", lw=1.6, clip_on=False, solid_capstyle="butt")
+    axR.text(xb + 0.006 * T, SB / 2, f"{SB:g} ΔF/F", rotation=90, ha="left", va="center",
+             fontsize=8, clip_on=False)
     axR.set_title("per-segment ΔF/F (soma bottom → branch top); dots=events; "
                   "vlines=multi-seg events (red=soma-led, blue=branch-led)", fontsize=9)
     plt.tight_layout()
+    # Pin the trace axis to a fixed horizontal span of the figure and to the exact frame
+    # range, so the behavior panel (same span, same range, same figure width) lines up
+    # frame-for-frame when the two are stacked. Keep in sync with coherence_behavior.py.
+    TRACE_LEFT, TRACE_RIGHT = 0.10, 0.955
+    pos = axR.get_position()
+    axR.set_position([TRACE_LEFT, pos.y0, TRACE_RIGHT - TRACE_LEFT, pos.height])
+    axR.set_xlim(0, T - 1)
     plt.savefig(f"{tag}.png", dpi=180); plt.savefig(f"{tag}.pdf")
     print(f"saved: {tag}.png / .pdf  and  {tag}_network_events.csv\n")
 

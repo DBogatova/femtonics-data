@@ -11,7 +11,7 @@ step for the selected run:
                              (checkbox controls chaining).
   [Open review GUI]          launches trace_mask_napari.py detached (path-guided mask)
   [Open wrap GUI]            launches wrap_segments_napari.py detached
-  [Build figure + movies]    coherence + behaviour composite, then the ticked movies
+  [Build figure + movies]    coherence + behavior composite, then the ticked movies
   [Build movies only]        just the ticked 3D movies (dual / dynamic / structural)
   [Refresh]                  re-scan the disk, update stages
 
@@ -71,7 +71,7 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
         return ("one-click wrap soma/trunk/branches (napari)",
                 [PYEXE, str(ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], True)
     if stage in ("segments_located", "coherence_built", "behavior_added"):
-        return ("build coherence + behaviour composite",
+        return ("build coherence + behavior composite",
                 [PYEXE, str(ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
                  "--run", base], False)
     return ("complete - nothing to do", [], False)

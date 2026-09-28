@@ -2,7 +2,7 @@
 
 Self-supervised denoising of Femtonics 2P **volumetric** calcium stacks to raise
 SNR for every downstream step (activity-statistics mask, NMF cell split,
-skeleton labelling, and eventual real-time 3D visualization). DeepCAD-RT needs
+skeleton labeling, and eventual real-time 3D visualization). DeepCAD-RT needs
 **no clean ground truth** — it trains directly on the noisy movie.
 
 Everything cluster-side lives under `/projectnb/devorlab/daria/` only. Nothing

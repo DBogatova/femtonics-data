@@ -49,7 +49,7 @@ KEYBINDINGS (interactive)
 WRAP MATH (pure functions, numpy/scipy/skimage only - tested by --check)
 --------------------------------------------------------------------------------
   1. skeletonize the working mask (skimage.morphology.skeletonize), 3D.
-  2. count 26-neighbours on the skeleton; voxels with degree >= 3 are BRANCH POINTS.
+  2. count 26-neighbors on the skeleton; voxels with degree >= 3 are BRANCH POINTS.
   3. remove the branch points and connected-component label the remainder: each
      component is an ARC (one inter-junction branch of the skeleton).
   4. GEODESIC PARTITION: for every arc, flood its geodesic distance THROUGH the mask
@@ -313,9 +313,9 @@ def interval_from_clicks(mask: np.ndarray, a_zyx, b_zyx, voxel, cache: dict = No
 
     1. snap both clicks to the nearest skeleton voxel;
     2. geodesic shortest path along the skeleton between them (MCP on skeleton voxels
-       only, anisotropic sampling) -> the interval's centreline;
+       only, anisotropic sampling) -> the interval's centerline;
     3. every mask voxel whose geodesic-nearest skeleton voxel (measured THROUGH the mask)
-       lies on that centreline belongs to the interval. Growth therefore stops exactly at
+       lies on that centerline belongs to the interval. Growth therefore stops exactly at
        the two clicked cross-sections, not at junctions - so 'proximal 20 um of branch 2'
        or 'trunk 50-80 um from the soma' are one gesture each.
     Returns dict(region, size, path (N,3), length_um, endpoints)."""
@@ -661,7 +661,7 @@ def run_check(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR) ->
         path_in = bool(iv["region"][tuple(iv["path"].T)].all())
         print(f"  strict sub-region of the arc : {sub}")
         print(f"  region inside mask           : {inside}")
-        print(f"  centreline inside region     : {path_in}")
+        print(f"  centerline inside region     : {path_in}")
         if not (sub and inside and path_in):
             ok = False; print("  FAIL: interval region invalid")
         # cut: split the interval at its middle skeleton point -> two non-empty halves

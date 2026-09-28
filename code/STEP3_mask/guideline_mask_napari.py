@@ -79,7 +79,7 @@ def main():
                          "--struct-agg; e.g. the one frame where the dendrite is clearest)")
     ap.add_argument("--vesselness", type=float, default=0.0,
                     help="weight of Sato vesselness added to the structure score so the tubular "
-                         "dendrite is favoured over blobby background (0 = off; try 0.5-1.0)")
+                         "dendrite is favored over blobby background (0 = off; try 0.5-1.0)")
     ap.add_argument("--hp-small", nargs=3, type=float, default=[0.5, 1.0, 1.0], metavar=("Z", "Y", "X"),
                     help="low-pass sigma of the structure high-pass (smaller = SHARPER, thinner "
                          "structure; default 0.5 1 1). Try '0 0.6 0.6' if the guide looks blurred.")

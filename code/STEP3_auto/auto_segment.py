@@ -4,14 +4,14 @@ auto_segment.py - AUTOMATIC 3D neuron segmentation for Femtonics 2P volumetric
 calcium imaging (thin-slab 4D stacks, GCaMP in Rbp4 pyramidal neurons).
 
 Goal: replace the ~1 h/run of hand tracing (guideline_mask_napari.py) + hand
-labelling (segment_mask_napari.py) with a zero-click first pass whose output the
+labeling (segment_mask_napari.py) with a zero-click first pass whose output the
 human only has to *review* (~2 min accept/correct in review_autoseg_napari.py).
 
 Pipeline (validated on real data, then reproduced here):
 
   1. AUTO-MASK from three per-voxel temporal statistics, computed in a single
      memory-bounded streaming pass over time:
-        corr = max over the 4 x/y neighbour shifts of temporal Pearson
+        corr = max over the 4 x/y neighbor shifts of temporal Pearson
                correlation   (activity finds thin structure single frames miss)
         amax = temporal 99.5th percentile
         mean = temporal mean
@@ -30,11 +30,11 @@ Pipeline (validated on real data, then reproduced here):
      step merges. This is reported, not hidden.)
 
   3. PER-CELL ANATOMY by skeleton graph. skeletonize(cell mask); build the
-     26-neighbour skeleton graph (skan if importable, else neighbour-count).
+     26-neighbor skeleton graph (skan if importable, else neighbor-count).
      SOMA = skeleton region at the distance-transform peak (thickest point);
      TRUNK = longest/widest geodesic path from the soma; BRANCHES = the
      remaining skeleton sub-trees, largest first. Dense labels are grown to
-     every cell voxel by nearest labelled-skeleton assignment.
+     every cell voxel by nearest labeled-skeleton assignment.
      At this SNR / slab thickness the anatomy split is a heuristic; each cell
      carries an `anatomy_provisional` flag and the reasons behind it.
 
@@ -130,7 +130,7 @@ def activity_statistics(stack, tchunk=200, space_chunk=20000):
     """Streaming per-voxel temporal statistics on a (T,Z,Y,X) stack.
 
     Returns (corr, amax, mean) each (Z,Y,X) float32:
-      corr = max over the 4 x/y neighbour shifts of temporal Pearson correlation
+      corr = max over the 4 x/y neighbor shifts of temporal Pearson correlation
       amax = temporal 99.5th percentile
       mean = temporal mean
     Memory-bounded: one pass over time in chunks for mean/std/cross-products, one
@@ -340,15 +340,15 @@ def split_cells(stack, mask, k=6, merge_r=0.8, min_voxels=60, max_iter=300, seed
 
 
 # ----------------------------------------------------------------------------
-# step 3: per-cell skeleton anatomy labelling
+# step 3: per-cell skeleton anatomy labeling
 # ----------------------------------------------------------------------------
 
 
 def _build_skeleton_graph(skel, vox):
-    """26-neighbour graph of skeleton voxels.
+    """26-neighbor graph of skeleton voxels.
 
     Returns coords (M,3), adjacency list adj[i]=[(j,dist_um),...], degree (M,).
-    Uses skan if importable (for the summary), else a direct neighbour scan.
+    Uses skan if importable (for the summary), else a direct neighbor scan.
     """
     coords = np.argwhere(skel)
     M = coords.shape[0]
@@ -494,7 +494,7 @@ def label_anatomy(cellmask, vox, max_branches=7):
         # Keep only the largest `max_branches` sub-trees so per-cell labels stay
         # within 1..9 (soma=1, trunk=2, branches=3..2+max_branches) and never
         # collide with the next cell's +10 offset. Smaller fragments are left
-        # unlabelled on the skeleton and fold into the nearest kept compartment
+        # unlabeled on the skeleton and fold into the nearest kept compartment
         # during the dense nearest-skeleton grow below.
         n_branches = min(len(comps), max_branches)
         for bi, comp in enumerate(comps[:n_branches], start=3):
@@ -538,7 +538,7 @@ def _point_mask(shape, pt):
 
 
 def assemble_labelmap(cellvol, vox, max_branches=7):
-    """Per-cell anatomy labelling -> single uint8 labelmap with the offset scheme.
+    """Per-cell anatomy labeling -> single uint8 labelmap with the offset scheme.
 
     cell i (1-based): label = local + (i-1)*10, local 1=soma 2=trunk 3+=branch.
     Returns (labelmap uint8, per-cell anatomy info list).
@@ -812,7 +812,7 @@ def main(argv=None):
         ap.error("no input stacks (give positional path(s) or --glob)")
 
     _log(f"auto_segment v{__version__}  |  {len(inputs)} stack(s)  |  "
-         f"skan={'yes' if _skan_available() else 'no (neighbour-count fallback)'}")
+         f"skan={'yes' if _skan_available() else 'no (neighbor-count fallback)'}")
     ok, fail = 0, 0
     for p in inputs:
         try:

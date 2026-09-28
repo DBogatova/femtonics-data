@@ -89,7 +89,7 @@ def rising_edges(x, thresh=None):
     return int(np.count_nonzero(b[1:] & ~b[:-1]))
 
 
-def analyse(path):
+def analyze(path):
     """-> dict of channel_name -> (rising_edges, n_samples, rate_hz)."""
     with h5py.File(path, "r") as f:
         names_by_kind = channel_names(f)
@@ -152,7 +152,7 @@ def main():
     rows = []
     for p in files:
         try:
-            res, rate = analyse(p)
+            res, rate = analyze(p)
         except Exception as e:
             print(f"{os.path.basename(p)}: ERROR {e}")
             continue
