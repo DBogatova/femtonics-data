@@ -74,7 +74,7 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
         return ("build coherence + behavior composite",
                 [PYEXE, str(ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
                  "--run", base], False)
-    return ("complete - nothing to do", [], False)
+    return ("complete - use 'Edit mask' / 'Edit regions' to revise it, then 'Build figure + movies'", [], False)
 
 
 # ---------------------------------------------------------------------------
@@ -122,12 +122,16 @@ def run_gui() -> int:
             btns = QtWidgets.QHBoxLayout()
             self.b_auto = QtWidgets.QPushButton("Run next automatic step")
             self.b_gui = QtWidgets.QPushButton("Open GUI step")
+            self.b_emask = QtWidgets.QPushButton("Edit mask")
+            self.b_emask.setToolTip("Open the mask tool on this run, whatever its stage (resumes your saved session)")
+            self.b_ereg = QtWidgets.QPushButton("Edit regions")
+            self.b_ereg.setToolTip("Open the region tool on this run, whatever its stage")
             self.b_fig = QtWidgets.QPushButton("Build figure + movies")
             self.b_mov = QtWidgets.QPushButton("Build movies only")
             self.b_ref = QtWidgets.QPushButton("Refresh")
             self.chain = QtWidgets.QCheckBox("chain automatic steps")
             self.chain.setChecked(True)
-            for b in (self.b_auto, self.b_gui, self.b_fig, self.b_mov, self.b_ref):
+            for b in (self.b_auto, self.b_gui, self.b_emask, self.b_ereg, self.b_fig, self.b_mov, self.b_ref):
                 btns.addWidget(b)
             btns.addWidget(self.chain)
             btns.addStretch()
@@ -164,6 +168,8 @@ def run_gui() -> int:
             self.b_ref.clicked.connect(self.refresh)
             self.b_auto.clicked.connect(lambda: self.dispatch(gui_ok=False))
             self.b_gui.clicked.connect(lambda: self.dispatch(gui_ok=True))
+            self.b_emask.clicked.connect(lambda: self.reopen("mask"))
+            self.b_ereg.clicked.connect(lambda: self.reopen("regions"))
             self.b_fig.clicked.connect(lambda: self.build_figure(with_movies=True))
             self.b_mov.clicked.connect(lambda: self.build_figure(with_movies=True, figure=False))
             self.log_signal.connect(self.log.appendPlainText)
@@ -215,6 +221,12 @@ def run_gui() -> int:
                              f"({desc}) -> use 'Open GUI step'")
                 return
             if gui:
+                self.launch_gui(argv, desc)
+                return
+            threading.Thread(target=self._run_auto, args=(r,), daemon=True).start()
+
+        def launch_gui(self, argv, desc):
+            if True:
                 self.logline("launch: " + " ".join(argv))
                 # start_new_session detaches the child into its own process
                 # group: closing napari can never take this panel down, and
@@ -231,8 +243,31 @@ def run_gui() -> int:
                 threading.Thread(target=_watch, daemon=True).start()
                 self.logline("napari launched in its own window; press Refresh "
                              "after you Ctrl+S there.")
+
+        def reopen(self, which):
+            """Open the mask or region tool on ANY local run, whatever its stage (e.g. to
+            revise a completed cell). The tools resume the saved mask/session."""
+            r = self.selected()
+            if r is None:
                 return
-            threading.Thread(target=self._run_auto, args=(r,), daemon=True).start()
+            stack = self.stack_path(r)
+            if stack is None:
+                self.logline(f"[{r.get('behavior_base')}] no local stack - nothing to open"); return
+            if which == "mask":
+                if not Path(str(stack).replace(".tif", "_ref3d.tif")).exists():
+                    self.logline(f"[{r.get('behavior_base')}] no reference volume yet - run the automatic steps first"); return
+                self.launch_gui([PYEXE, str(ROOT / "code/STEP3_auto/trace_mask_napari.py"), str(stack)], "mask tool")
+            else:
+                if not Path(str(stack).replace(".tif", "_autoseg_labelmap_reviewed.tif")).exists():
+                    self.logline(f"[{r.get('behavior_base')}] no saved mask yet - use Edit mask first"); return
+                self.launch_gui([PYEXE, str(ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], "region tool")
+
+        def stack_path(self, r):
+            rd, st = r.get("run_dir"), r.get("stem")
+            if not rd or not st:
+                return None
+            pth = ROOT / rd / f"{st}.tif"
+            return pth if pth.exists() else None
 
         def display_args(self):
             return ([] if self.bg_black.isChecked() else ["--no-mask"]) + ["--edge-um", f"{self.edge.value():g}"]

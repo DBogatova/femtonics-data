@@ -20,6 +20,9 @@ after the first install.)
 In the panel: select the highlighted run → **Open GUI step** → work in napari →
 Ctrl+S → close napari → **Refresh** → repeat until the run reads `complete`.
 
+To revise any run, including a completed one: **Edit mask** or **Edit regions**
+(the mask tool resumes your saved session), then **Build figure + movies**.
+
 ## The stages
 
 | # | stage | command | manual? |
@@ -90,3 +93,10 @@ changed anatomical distances and skeleton splits.
   (um) field; CLI: `--no-mask`, `--edge-um`.
 - **Never used for analysis.** Traces, events and all numbers come from the
   unmodified stack and your regions.
+
+## Notes
+
+- 2026-09-28, rbp4_phpebach 06-26 run05: regions were picked with voxel Z = 0.85 um
+  (the old auto_segment default); the recording's true value is 0.80 um. Mask and
+  traces are correct; only the automatic region boundaries were placed with Z ~6% off.
+  Re-pick the regions (Edit regions) if exact boundaries matter.
