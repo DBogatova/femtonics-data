@@ -65,10 +65,14 @@ class ActionPanel:
         text = f"{label}   [{key}]" if key else label
         b = QPushButton(text)
         b.setStyleSheet("text-align: left; padding: 4px 6px;")
+        b.setFocusPolicy(self._Qt.NoFocus)        # never steal keyboard/scroll focus from the canvas
         if tooltip:
             b.setToolTip(tooltip)
         if cb is not None:
-            b.clicked.connect(lambda *_: cb())
+            def _run(*_, cb=cb):
+                cb()
+                self.refocus_canvas()
+            b.clicked.connect(_run)
         if toggle:
             b.setCheckable(True)
             self._toggles[key or label] = (b, label)
@@ -80,6 +84,8 @@ class ActionPanel:
         from qtpy.QtWidgets import QLabel, QSlider
         lab = QLabel(f"{label}: {fmt.format(value)}"); self.lay.addWidget(lab)
         s = QSlider(self._Qt.Horizontal); s.setRange(int(lo), int(hi)); s.setValue(int(round(value * scale)))
+        s.setFocusPolicy(self._Qt.ClickFocus)     # focus only while dragging; wheel over canvas still zooms
+        s.sliderReleased.connect(self.refocus_canvas)
         def on(v_i):
             val = v_i / scale; lab.setText(f"{label}: {fmt.format(val)}"); cb(val)
         s.valueChanged.connect(on); self.lay.addWidget(s)
@@ -90,6 +96,16 @@ class ActionPanel:
             b, label = self._toggles[key]
             b.blockSignals(True); b.setChecked(bool(state)); b.blockSignals(False)
             b.setText(f"{'● ' if state else '○ '}{label}   [{key}]")
+
+    def refocus_canvas(self):
+        """Give keyboard + wheel focus back to the napari canvas (so scroll = zoom, keys work)."""
+        try:
+            self.viewer.window._qt_viewer.canvas.native.setFocus()
+        except Exception:
+            try:
+                self.viewer.window._qt_window.activateWindow()
+            except Exception:
+                pass
 
     def finish(self):
         if not self._stretch_added:

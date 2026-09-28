@@ -31,6 +31,9 @@ KEYBINDINGS (interactive)
   i           toggle INTERVAL mode: click TWO points along the dendrite and the stretch
               between them (along the skeleton, bounded by the two cross-sections) becomes
               a region - e.g. 'proximal 20 um of branch 2' or 'trunk 50-80 um from soma'.
+  k           toggle CUT mode: click on an existing region and it is split in two at the
+              cross-section through the click (perpendicular to the local dendrite). The
+              boundary is exactly where you clicked - correct any automatic boundary.
   m           merge the last two wraps into one region (fixes skeleton over-splits).
   n           name the last wrap (dialog); names go into the JSON sidecar and figures.
   u           undo the last wrap.
@@ -353,6 +356,42 @@ def interval_from_clicks(mask: np.ndarray, a_zyx, b_zyx, voxel, cache: dict = No
             "length_um": float(seglen), "endpoints": (a, b)}
 
 
+def cut_region_at(mask: np.ndarray, region: np.ndarray, click_zyx, voxel, cache: dict = None) -> tuple:
+    """CUT HERE: split `region` (a boolean sub-volume of the mask) into two at the
+    cross-section through the click, perpendicular to the local dendrite direction.
+
+    1. snap the click to the nearest skeleton voxel inside the region;
+    2. local direction = principal axis of the skeleton voxels within ~4 um of it;
+    3. every region voxel is assigned to the side of the plane (through the snapped
+       point, normal = that direction) it falls on.
+    Returns (side_a, side_b) boolean volumes, both non-empty, or raises ValueError.
+    Nothing about this depends on skeleton arcs or junctions: the cut is exactly where
+    you clicked, so the user corrects an automatic boundary with one click."""
+    if cache is None:
+        cache = build_wrap_cache(mask, voxel)
+    skel = cache["skel"] & region
+    if not skel.any():
+        skel = cache["skel"]
+    sk = np.argwhere(skel)
+    pt = np.clip(np.round(np.asarray(click_zyx)).astype(int), 0, np.array(mask.shape) - 1)
+    w = np.asarray(voxel, float)
+    d2 = (((sk - pt) * w) ** 2).sum(1)
+    c = sk[int(d2.argmin())]
+    near = sk[np.sqrt((((sk - c) * w) ** 2).sum(1)) <= 4.0]
+    if len(near) < 3:
+        near = sk[np.argsort(d2)[:7]]
+    X = (near - c) * w
+    _, _, vt = np.linalg.svd(X - X.mean(0), full_matrices=False)
+    normal = vt[0]
+    rv = np.argwhere(region)
+    side = ((rv - c) * w) @ normal
+    a = np.zeros(mask.shape, bool); b = np.zeros(mask.shape, bool)
+    a[tuple(rv[side < 0].T)] = True; b[tuple(rv[side >= 0].T)] = True
+    if not a.any() or not b.any():
+        raise ValueError("cut plane does not split the region (click nearer its middle)")
+    return a, b, tuple(int(x) for x in c)
+
+
 def merge_wraps(wraps, i: int, j: int) -> list:
     """Merge wrap j into wrap i (union of regions, i's label/name kept). Returns new list."""
     if i == j or not (0 <= i < len(wraps) and 0 <= j < len(wraps)):
@@ -605,6 +644,13 @@ def run_check(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR) ->
         print(f"  centreline inside region     : {path_in}")
         if not (sub and inside and path_in):
             ok = False; print("  FAIL: interval region invalid")
+        # cut: split the interval at its middle skeleton point -> two non-empty halves
+        mid = iv["path"][len(iv["path"]) // 2]
+        ca, cb, cpt = cut_region_at(mask, iv["region"], mid, voxel, cache=cache)
+        print(f"  cut interval at {cpt}  : {int(ca.sum())} + {int(cb.sum())} vox "
+              f"(= {iv['size']}: {int(ca.sum()) + int(cb.sum()) == iv['size']}, disjoint: {not (ca & cb).any()})")
+        if not (ca.any() and cb.any() and int(ca.sum()) + int(cb.sum()) == iv["size"] and not (ca & cb).any()):
+            ok = False; print("  FAIL: cut_region_at invalid")
         # merge: interval + the soma wrap -> union, size adds up minus overlap
         merged = merge_wraps([{"region": res["region"], "label": 1, "name": "soma", "size": res["size"]},
                               {"region": iv["region"], "label": 3, "name": "iv", "size": iv["size"]}], 0, 1)
@@ -692,7 +738,7 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         "wraps": [],                                         # list of dict(region,label,name,meta)
         "cache": None,                                       # wrap cache; None => stale
         "cache_mask": None,                                  # mask snapshot the cache was built on
-        "wrap_mode": False, "interval_mode": False, "pending": None,
+        "wrap_mode": False, "interval_mode": False, "pending": None, "cut_mode": False,
         "axis": 0,
     }
 
@@ -729,16 +775,19 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         acc = ",".join(str(c) for c in sorted(S["accepted"])) or "none"
         wr = "  ".join(f"{label_name(w['label'])}={w['label']}({w['size']}vx)"
                        for w in S["wraps"]) or "none yet"
-        mode = ("INTERVAL (2 clicks)" if S["interval_mode"] else
+        mode = ("CUT (click=split)" if S["cut_mode"] else
+                "INTERVAL (2 clicks)" if S["interval_mode"] else
                 "WRAP (click=wrap)" if S["wrap_mode"] else "refine (paint/erase)")
         title = f"cells in: {acc} | {mode} | wraps: {wr}"
         v.title = title
         print(title, flush=True)
         if S.get("panel") is not None:
             P = S["panel"]
-            P.set_toggle("w", S["wrap_mode"] and not S["interval_mode"])
-            P.set_toggle("i", S["interval_mode"])
-            if S["interval_mode"]:
+            P.set_toggle("w", S["wrap_mode"] and not S["interval_mode"] and not S["cut_mode"])
+            P.set_toggle("i", S["interval_mode"]); P.set_toggle("k", S["cut_mode"])
+            if S["cut_mode"]:
+                P.hint("CUT: click on a region where it should be split in two")
+            elif S["interval_mode"]:
                 P.hint("Click the SECOND point along the dendrite" if S["pending"] is not None
                        else "INTERVAL: click the FIRST point along the dendrite")
             elif S["wrap_mode"]:
@@ -802,13 +851,24 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
 
     # ---- INTERVAL mode: two clicks select the stretch of dendrite between them ----
     def toggle_interval(vw):
-        S["interval_mode"] = not S["interval_mode"]; S["pending"] = None
+        S["interval_mode"] = not S["interval_mode"]; S["pending"] = None; S["cut_mode"] = False
         if S["interval_mode"] and not S["wrap_mode"]:
             toggle_wrap(vw)                                    # needs click-to-select active
         print(f"interval mode {'ON: click two points along the dendrite' if S['interval_mode'] else 'OFF'}",
               flush=True)
         status()
     v.bind_key("i", toggle_interval, overwrite=True)
+
+    # ---- CUT mode: one click splits the region under the cursor at that cross-section ----
+    def toggle_cut(vw):
+        S["cut_mode"] = not S["cut_mode"]
+        if S["cut_mode"]:
+            S["interval_mode"] = False; S["pending"] = None
+            if not S["wrap_mode"]:
+                toggle_wrap(vw)
+        print(f"cut mode {'ON: click where a region should be split' if S['cut_mode'] else 'OFF'}", flush=True)
+        status()
+    v.bind_key("k", toggle_cut, overwrite=True)
 
     # ---- merge the last two wraps into one region ----
     def merge_last_two(vw):
@@ -875,6 +935,25 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
         m = working_mask()
         cache = ensure_cache()
         click = _click_to_voxel(m, event)
+        if S["cut_mode"]:
+            # find which wrap (if any) contains the click; else cut the whole mask piece there
+            idx = next((k for k in range(len(S["wraps"]) - 1, -1, -1) if S["wraps"][k]["region"][click]), None)
+            if idx is None:
+                print("cut: click on an existing region first (wrap it, then cut it)", flush=True); return
+            try:
+                a, b, cpt = cut_region_at(m, S["wraps"][idx]["region"], click, vox, cache=cache)
+            except ValueError as e:
+                print(f"cut failed: {e}", flush=True); return
+            old = S["wraps"][idx]
+            wa = dict(old); wa["region"] = a; wa["size"] = int(a.sum()); wa["kind"] = "cut"
+            wb = dict(old); wb["region"] = b; wb["size"] = int(b.sum()); wb["kind"] = "cut"
+            wb["label"] = next_branch_label([w["label"] for w in S["wraps"]])
+            wb["name"] = f"{old['name']}-b"; wa["name"] = f"{old['name']}-a"
+            S["wraps"][idx] = wa; S["wraps"].insert(idx + 1, wb)
+            refresh_segments()
+            print(f"cut {old['name']} at {cpt} -> {wa['name']} ({wa['size']} vox, label {wa['label']}) + "
+                  f"{wb['name']} ({wb['size']} vox, label {wb['label']}). s/t/b relabel the LAST one.", flush=True)
+            status(); return
         if S["interval_mode"]:
             if S["pending"] is None:
                 S["pending"] = click
@@ -971,6 +1050,8 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
              tooltip="One click selects the junction-to-junction piece under the cursor")
     P.button("Interval between two clicks", key="i", cb=lambda: toggle_interval(v), toggle=True,
              tooltip="Click two points; the stretch between them becomes a region")
+    P.button("Cut region here (click)", key="k", cb=lambda: toggle_cut(v), toggle=True,
+             tooltip="Click on a region: it is split in two at that cross-section, exactly where you clicked")
     P.section("2. label the last region")
     P.button("Last = soma", key="s", cb=lambda: _relabel_last(1))
     P.button("Last = trunk", key="t", cb=lambda: _relabel_last(2))
