@@ -1,0 +1,34 @@
+#!/bin/bash
+# femto - launch the Femtonics pipeline control panel (or a tool) with the right Python.
+#
+#   femto                    open the control panel
+#   femto status             print the run table (no GUI)
+#   femto next               print the next step
+#   femto trace  <stack>     open the mask tool on a stack
+#   femto regions <stack>    open the region tool on a stack
+#   femto figure <run>       build the coherence+behaviour composite for a behavior_base
+#
+# Everything runs from the project root with the project virtualenv; a log of the last
+# panel session is kept at /tmp/femto_gui.log.
+set -euo pipefail
+ROOT="/Users/daria/Desktop/femtonics-data"
+PY="/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/.venv311/bin/python"
+cd "$ROOT"
+
+case "${1:-panel}" in
+  panel)
+    if pgrep -f "femto_gui.py" > /dev/null; then
+      echo "control panel is already running - bringing it to front"
+      osascript -e 'tell application "System Events" to set frontmost of (first process whose name contains "python") to true' 2>/dev/null || true
+    else
+      nohup "$PY" code/STEP7_workflow/femto_gui.py > /tmp/femto_gui.log 2>&1 &
+      echo "control panel launched (log: /tmp/femto_gui.log)"
+    fi ;;
+  status)  "$PY" code/STEP7_workflow/femto_status.py ;;
+  next)    "$PY" code/STEP7_workflow/femto_status.py --next ;;
+  trace)   shift; "$PY" code/STEP3_auto/trace_mask_napari.py "$@" ;;
+  regions) shift; "$PY" code/STEP7_workflow/wrap_segments_napari.py "$@" ;;
+  figure)  shift; "$PY" code/STEP7_workflow/coherence_with_behavior.py --run "$@" ;;
+  -h|--help|help) sed -n '2,12p' "$0" ;;
+  *) echo "unknown command: $1"; sed -n '2,12p' "$0"; exit 1 ;;
+esac

@@ -1,19 +1,23 @@
 # Dendrite pipeline — from 4D stack to coherence+behavior figure
 
-One command drives everything:
+## Starting
+
+Double-click **Femto Panel** on the Desktop, or in a terminal:
 
 ```bash
-cd /Users/daria/Desktop/femtonics-data
-PY=/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/.venv311/bin/python
-$PY code/STEP7_workflow/femto_status.py --next
+femto                 # control panel (run table + buttons)
+femto next            # print the next step without a GUI
+femto status          # full run table
+femto trace   <dir>/runNN_clean.tif      # mask tool on one stack
+femto regions <dir>/runNN_clean.tif      # region tool on one stack
+femto figure  <behavior_base>            # build the composite figure
 ```
 
-It prints which run to work on and the exact command for its next stage.
-`--next --run-it` executes non-GUI stages directly. Or use the button panel:
+(`femto` is `code/femto`; the alias lives in `~/.zshrc`. Open a new terminal
+after the first install.)
 
-```bash
-$PY code/STEP7_workflow/femto_gui.py
-```
+In the panel: select the highlighted run → **Open GUI step** → work in napari →
+Ctrl+S → close napari → **Refresh** → repeat until the run reads `complete`.
 
 ## The stages
 

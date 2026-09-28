@@ -45,3 +45,6 @@ __pycache__/
 # trace/event/coherence/segment CSVs        derived, regenerable
 # *3d.tif, *_clean.tif    extracted / cleaned 4D stacks, GB each
 # *.avi *.mp4 *.pdf *.png renders and figures, all regenerable
+
+# launcher script (not .py)
+!code/femto
