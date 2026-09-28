@@ -37,7 +37,7 @@ WORKFLOW (napari)
     is not clearly there. Shown, never auto-bridged. Decide by eye.
   * Reopening resumes where you saved: every arc (yours and other cells', seeded or
     traced), its owner and your erasures are kept in <stem>_trace_session.npz.
-    --fresh starts over from the seed.
+    --fresh starts over from the seed (saved session and exclusion ignored until you save).
   * Ctrl+S writes <stem>_autoseg_labelmap_reviewed.tif (cell 1, class 2 = structure,
     label 2) + a record in <stem>_autoseg_reviewed.json, so femto_status advances to
     mask_reviewed and wrap_segments_napari.py takes it from there. Originals are never
@@ -434,7 +434,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         print(f"[trace] resumed saved session: {len(S['arcs'])} arcs "
               f"({S['owners'].count('intruder')} other-cell), {int(S['erase0'].sum())} erased voxels")
     prev_excl = (tifffile.imread(paths["exclude_tif"]) > 0) if os.path.exists(paths["exclude_tif"]) else None
-    if sess is None and prev_excl is not None and prev_excl.shape == ref.shape and prev_excl.any():
+    if resume and sess is None and prev_excl is not None and prev_excl.shape == ref.shape and prev_excl.any():
         # arcs lying mostly inside a previously saved exclusion start as intruder arcs
         for k, a in enumerate(S["arcs"]):
             if prev_excl[tuple(a.T)].mean() > 0.5:
@@ -782,7 +782,8 @@ def main(argv=None):
     ap.add_argument("--seed-z", type=float, default=5.0,
                     help="robust-z threshold for reference seeding (higher = fewer, surer arcs)")
     ap.add_argument("--fresh", action="store_true",
-                    help="ignore the saved session (<stem>_trace_session.npz) and start from the seed")
+                    help="start clean from the seed: ignore the saved session and the saved "
+                         "other-cell exclusion (files on disk are only replaced when you save)")
     ap.add_argument("--check", action="store_true", help="headless self-test; writes nothing into the run dir")
     args = ap.parse_args(argv)
     if args.check:
