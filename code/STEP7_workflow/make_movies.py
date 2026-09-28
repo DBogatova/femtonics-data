@@ -61,6 +61,9 @@ def main(argv=None) -> int:
     g.add_argument("--stack", help="path to <runNN>_clean.tif")
     ap.add_argument("--kinds", nargs="+", choices=KINDS, default=list(KINDS))
     ap.add_argument("--force", action="store_true", help="rebuild even if up to date")
+    ap.add_argument("--no-mask", dest="mask", action="store_false", default=True,
+                    help="raw background (default: black outside the cell, other cells blacked out)")
+    ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
     args = ap.parse_args(argv)
 
     stack = resolve_stack(args.run, args.stack)
@@ -71,16 +74,21 @@ def main(argv=None) -> int:
         sys.exit(f"no regions yet: {labels.name} - pick regions first (wrap_segments_napari.py)")
 
     outs = outputs_for(stack)
+    # a movie is stale if the regions, the reviewed mask or the exclusion changed after it
+    deps = [labels] + [stack.parent / f"{stack.stem}{suf}" for suf in
+                       ("_autoseg_labelmap_reviewed.tif", "_exclude_labelmap.tif")]
+    newest = max(d.stat().st_mtime for d in deps if d.exists())
+    mask_args = ([] if args.mask else ["--no-mask"]) + ["--edge-um", f"{args.edge_um:g}"]
     todo, procs = [], []
     for k in args.kinds:
         o = outs[k]
-        if o.exists() and o.stat().st_mtime >= labels.stat().st_mtime and not args.force:
+        if o.exists() and o.stat().st_mtime >= newest and not args.force:
             print(f"  {k:9s} up to date: {o.name}")
             continue
         todo.append(k)
     py = sys.executable
     for k in todo:
-        cmd = [py, str(MOVIE), str(stack), str(labels), *ARGS[k], "--out", str(outs[k])]
+        cmd = [py, str(MOVIE), str(stack), str(labels), *ARGS[k], *mask_args, "--out", str(outs[k])]
         print(f"  {k:9s} rendering -> {outs[k].name}", flush=True)
         procs.append((k, subprocess.Popen(cmd, cwd=str(ROOT), stdout=subprocess.PIPE,
                                           stderr=subprocess.STDOUT, text=True)))

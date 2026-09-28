@@ -47,6 +47,11 @@ def main():
                     help="viewing tilt around X for --time mode (degrees)")
     ap.add_argument("--time-subsample", type=int, default=1, help="use every Nth timepoint (--time)")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--no-mask", dest="mask", action="store_false", default=True,
+                    help="show the raw volume (default: black background outside the cell, "
+                         "other cells blacked out, if a reviewed mask exists next to the stack)")
+    ap.add_argument("--edge-um", type=float, default=2.0,
+                    help="soft falloff outside the cell mask, in um (0 = hard cut)")
     args = ap.parse_args()
 
     stack = tifffile.imread(args.stack)
@@ -56,11 +61,31 @@ def main():
     assert seg.shape == struct.shape, f"mask {seg.shape} != volume {struct.shape}"
     Z, Y, X = struct.shape
 
+    # display mask (movies only; never touches the analysis): multiply BEFORE projecting
+    wgt = None
+    if args.mask:
+        import sys as _sys, pathlib as _pl
+        _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+        from common.display_mask import load_display_weight
+        wgt, desc = load_display_weight(args.stack, args.labelmap, edge_um=args.edge_um)
+        print(desc)
+        if wgt is not None:
+            if wgt.shape != struct.shape:
+                print(f"  display mask shape {wgt.shape} != volume {struct.shape}; unmasked"); wgt = None
+            else:
+                struct = struct * wgt
+
     D = int(np.ceil(np.hypot(Z, Y)))          # pad Z,Y so rotation around X never clips
     struct = pad_zy(struct, D)
     seg = pad_zy(seg, D)
 
-    lo_s, hi_s = np.percentile(struct[struct > 0], (2, 99.7)) if (struct > 0).any() else (0.0, 1.0)
+    if wgt is not None:
+        # contrast from the cell only; the black background must stay black
+        cell = pad_zy(wgt, D) > 0.5
+        lo_s, hi_s = np.percentile(struct[cell], (2, 99.7))
+        lo_s = 0.0
+    else:
+        lo_s, hi_s = np.percentile(struct[struct > 0], (2, 99.7)) if (struct > 0).any() else (0.0, 1.0)
     N = int(seg.max())
     turbo = matplotlib.colormaps["turbo"]
     segcol = np.zeros((N + 1, 3), np.float32)
@@ -89,13 +114,20 @@ def main():
     if (args.dual or args.time) and stack.ndim == 4:
         T = stack.shape[0]
         idx = list(range(0, T, max(1, args.time_subsample)))
-        samp = stack[:: max(1, T // 40)]
+        samp = stack[:: max(1, T // 40)].astype(np.float32)
+        if wgt is not None:
+            samp = samp[:, wgt > 0.5]                    # contrast from the cell only
         lo_a, hi_a = np.percentile(samp, (30, 99.7))     # activity contrast (events over baseline)
+        if wgt is not None:
+            lo_a = float(np.percentile(samp, 5))         # cell baseline dim but visible; background -> 0
+        wpad = pad_zy(wgt, D) if wgt is not None else None
         for k, t in enumerate(idx):
             ang = args.angle + k * 360.0 * args.rotations / max(1, len(idx))
             segr = nd_rotate(seg, ang, axes=(0, 1), reshape=False, order=0).max(0)
-            act = nd_rotate(pad_zy(stack[t].astype(np.float32), D), ang, axes=(0, 1),
-                            reshape=False, order=1).max(0)
+            fr = pad_zy(stack[t].astype(np.float32), D)
+            if wpad is not None:
+                fr = fr * wpad
+            act = nd_rotate(fr, ang, axes=(0, 1), reshape=False, order=1).max(0)
             if args.dual:
                 strv = nd_rotate(struct, ang, axes=(0, 1), reshape=False, order=1).max(0)
                 top = panel(strv, segr, lo_s, hi_s)      # structure

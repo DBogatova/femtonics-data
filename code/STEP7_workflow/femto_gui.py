@@ -142,7 +142,16 @@ def run_gui() -> int:
                 cb = QtWidgets.QCheckBox(label); cb.setChecked(True)
                 self.mv[key] = cb; movs.addWidget(cb)
             self.mv_force = QtWidgets.QCheckBox("rebuild even if up to date")
-            movs.addWidget(self.mv_force); movs.addStretch()
+            movs.addWidget(self.mv_force)
+            self.bg_black = QtWidgets.QCheckBox("black background / hide other cells")
+            self.bg_black.setChecked(True)
+            self.bg_black.setToolTip("Movies and the figure's cell picture show only your cell on black; "
+                                     "cells you marked as 'other' are blacked out. Traces are never affected.")
+            movs.addWidget(self.bg_black)
+            movs.addWidget(QtWidgets.QLabel("edge (um):"))
+            self.edge = QtWidgets.QDoubleSpinBox(); self.edge.setRange(0.0, 10.0); self.edge.setSingleStep(0.5)
+            self.edge.setValue(2.0); self.edge.setToolTip("soft falloff outside the cell; 0 = hard cut")
+            movs.addWidget(self.edge); movs.addStretch()
             lay.addLayout(movs)
 
             self.log = QtWidgets.QPlainTextEdit()
@@ -231,13 +240,14 @@ def run_gui() -> int:
                 return
             base = r.get("behavior_base", "")
             seq = []
+            disp = ([] if self.bg_black.isChecked() else ["--no-mask"]) + ["--edge-um", f"{self.edge.value():g}"]
             if figure:
                 seq.append([PYEXE, str(ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
-                            "--run", base])
+                            "--run", base, *disp])
             kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
             if with_movies and kinds:
                 mv = [PYEXE, str(ROOT / "code/STEP7_workflow/make_movies.py"), "--run", base,
-                      "--kinds", *kinds]
+                      "--kinds", *kinds, *disp]
                 if self.mv_force.isChecked():
                     mv.append("--force")
                 seq.append(mv)
@@ -268,7 +278,9 @@ def run_gui() -> int:
                 kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
                 if fresh and fresh[0].get("stage") == "complete" and kinds and self.chain.isChecked():
                     mv = [PYEXE, str(ROOT / "code/STEP7_workflow/make_movies.py"),
-                          "--run", r.get("behavior_base"), "--kinds", *kinds]
+                          "--run", r.get("behavior_base"), "--kinds", *kinds,
+                          *([] if self.bg_black.isChecked() else ["--no-mask"]),
+                          "--edge-um", f"{self.edge.value():g}"]
                     if self.mv_force.isChecked():
                         mv.append("--force")
                     self._exec(mv)

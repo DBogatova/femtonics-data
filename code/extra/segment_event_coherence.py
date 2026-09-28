@@ -50,6 +50,10 @@ def main():
                     help="projection for the segment MIP panel: z=XY, y=XZ, x=ZY")
     ap.add_argument("--frame-ms", type=float, default=None, help="frame period (ms) to report lags in real time")
     ap.add_argument("--out-prefix", default=None)
+    ap.add_argument("--no-mask", dest="mask", action="store_false", default=True,
+                    help="cell picture from the raw stack (default: black background outside the "
+                         "cell, other cells blacked out). Display only; traces are never masked.")
+    ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
     args = ap.parse_args()
 
     stack = tifffile.imread(args.stack)
@@ -216,8 +220,23 @@ def main():
     view = {"z": "XY", "y": "XZ", "x": "ZY"}[args.proj_axis]
     vz, vy, vx = args.voxel
     aspect_map = {0: vy / vx, 1: vz / vx, 2: vz / vy}[pa]
-    cell = stack.mean(0).max(axis=pa)
-    clo, chi = np.percentile(cell, (2, 99.5))
+    vol = stack.mean(0).astype(np.float32)
+    wgt = None
+    if args.mask:
+        import sys as _sys, pathlib as _pl
+        _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+        from common.display_mask import load_display_weight
+        wgt, desc = load_display_weight(args.stack, args.labelmap, voxel=args.voxel, edge_um=args.edge_um)
+        if wgt is not None and wgt.shape == vol.shape:
+            print(f"cell picture: {desc}"); vol = vol * wgt
+        else:
+            wgt = None
+    cell = vol.max(axis=pa)
+    if wgt is not None:
+        inside = (wgt > 0.5).max(axis=pa)
+        clo, chi = 0.0, float(np.percentile(cell[inside], 99.5))
+    else:
+        clo, chi = np.percentile(cell, (2, 99.5))
     g = np.clip((cell - clo) / (chi - clo + 1e-6), 0, 1)
     ov = np.zeros((*cell.shape, 4))
     for i, l in enumerate(order):

@@ -24,6 +24,11 @@ WORKFLOW (napari)
       radius x    cap on distance from the centerline, as a multiple of the local
                   radius estimated at each centerline point (soma large, branch small)
       pad (vox)   final dilation, for when you want a safety margin
+  * Other cells ('i' / button): trace a crossing or neighbouring cell with two clicks;
+    its arcs are magenta. Its grown region is taken OUT of your mask (voxels both cells
+    could claim go to whichever cell's centerline is brighter there) and saved as
+    <stem>_exclude_labelmap.tif, which the movie and figure tools black out. 'f' flips
+    any arc (including seeded ones) between your cell and the other cell.
   * Erase by hand ('e' / button): paint on the red 'erase' layer; those voxels are
     removed from the mask and STAY removed when you move the sliders (the mask is
     regenerated from the centerline, then your erasures are subtracted).
@@ -65,7 +70,8 @@ def derive_paths(stack_path):
             "ref3d": str(stem) + "_ref3d.tif", "ref3d_json": str(stem) + "_ref3d.json",
             "autoseg": str(stem) + "_autoseg_labelmap.tif", "autoseg_json": str(stem) + "_autoseg.json",
             "out_tif": str(stem) + "_autoseg_labelmap_reviewed.tif",
-            "out_json": str(stem) + "_autoseg_reviewed.json"}
+            "out_json": str(stem) + "_autoseg_reviewed.json",
+            "exclude_tif": str(stem) + "_exclude_labelmap.tif"}
 
 
 def load_reference(paths, channel="cofire_mean"):
@@ -272,6 +278,61 @@ def grow(cache, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0):
     return m, unc
 
 
+def grow_owned(ref, arcs, owners, voxel, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0, erase=None):
+    """Grow the own-cell mask and the intruder mask from ONE set of centerline arcs.
+
+    owners[k] is "own" or "intruder" for arcs[k]. Each owner's mask is grown with the
+    same relative-threshold rule as grow(); where both claim a voxel it goes to the owner
+    whose nearest centerline is brighter there (its halo is weaker than the other cell's
+    body). Own-cell centerline voxels always stay own. Returns (own, intruder, uncertain).
+    """
+    own_arcs = [a for a, o in zip(arcs, owners) if o != "intruder"]
+    int_arcs = [a for a, o in zip(arcs, owners) if o == "intruder"]
+    shape = ref.shape
+    empty = np.zeros(shape, bool)
+    c_own = grow_cache(ref, own_arcs, voxel) if own_arcs else None
+    c_int = grow_cache(ref, int_arcs, voxel) if int_arcs else None
+    m_own, unc = grow(c_own, alpha, radius_x, pad, dim_pct) if c_own else (empty.copy(), empty.copy())
+    m_int, _ = grow(c_int, alpha, radius_x, pad, dim_pct) if c_int else (empty.copy(), None)
+    if m_own is None: m_own = empty.copy()
+    if m_int is None: m_int = empty.copy()
+    both = m_own & m_int
+    if both.any():
+        ni_own = c_own["near_int"] if c_own else np.zeros(shape, np.float32)
+        ni_int = c_int["near_int"]
+        to_int = both & (ni_int > ni_own)
+        if c_own:
+            to_int &= ~(c_own["cl"] > 0)                     # own centerline never moves
+        m_own &= ~to_int
+        m_int &= ~(both & ~to_int)
+    if erase is not None:
+        m_own &= ~erase; m_int &= ~erase
+    return m_own, m_int, (unc if unc is not None else empty)
+
+
+def save_exclude(paths, intruder, owners, arcs, voxel, min_island=20):
+    """Write <stem>_exclude_labelmap.tif (uint8, 1 = voxels of other cells) and add an
+    'exclude' block to the reviewed JSON. Used only for display (black-out); regions and
+    traces never read it. Removes the file content-wise (writes zeros) if nothing is left,
+    rather than deleting anything."""
+    lm = intruder.astype(np.uint8)
+    lm, _ = drop_small_islands(lm, min_voxels=min_island)
+    tifffile.imwrite(paths["exclude_tif"], lm)
+    try:
+        doc = json.load(open(paths["out_json"])) if os.path.exists(paths["out_json"]) else {}
+    except Exception:
+        doc = {}
+    doc["exclude"] = {
+        "file": os.path.basename(paths["exclude_tif"]),
+        "voxels": int((lm > 0).sum()),
+        "n_intruder_arcs": int(sum(o == "intruder" for o in owners)),
+        "updated": datetime.now(timezone.utc).isoformat(),
+        "note": "voxels of other (crossing/neighbouring) cells: blacked out in movies and figure MIPs; never used for traces",
+    }
+    json.dump(doc, open(paths["out_json"], "w"), indent=2)
+    return paths["exclude_tif"], int((lm > 0).sum())
+
+
 # ----------------------------------------------------------------------------- save
 def save(paths, mask, arcs, params, voxel, min_island=20):
     for k in ("out_tif", "out_json"):
@@ -319,8 +380,16 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         return seed_from_autoseg(paths, r.shape) if seed == "autoseg" else seed_from_reference(r, z=seed_z, voxel=voxel)
     arcs = do_seed(ref)
     print(f"[trace] reference {ref.shape} channel={names[ci]}; seeded {len(arcs)} arcs from {seed}")
-    S = {"arcs": arcs, "hist": [], "alpha": alpha, "rx": radius_x, "pad": pad, "cache": None,
-         "ci": ci, "cost": cost_volume(ref), "ref": ref, "pending": None}
+    S = {"arcs": arcs, "owners": ["own"] * len(arcs), "hist": [], "alpha": alpha, "rx": radius_x,
+         "pad": pad, "cache": None, "ci": ci, "cost": cost_volume(ref), "ref": ref, "pending": None}
+    prev_excl = (tifffile.imread(paths["exclude_tif"]) > 0) if os.path.exists(paths["exclude_tif"]) else None
+    if prev_excl is not None and prev_excl.shape == ref.shape and prev_excl.any():
+        # arcs lying mostly inside a previously saved exclusion start as intruder arcs
+        for k, a in enumerate(S["arcs"]):
+            if prev_excl[tuple(a.T)].mean() > 0.5:
+                S["owners"][k] = "intruder"
+        print(f"[trace] loaded previous exclusion ({int(prev_excl.sum())} vox); "
+              f"{S['owners'].count('intruder')} seed arcs start as intruder")
 
     v = napari.Viewer(title=f"trace mask - {os.path.basename(stack_path)}", ndisplay=ndisplay)
     ref_layer = v.add_image(ref, name=f"reference [{names[ci]}]", scale=voxel, colormap="gray",
@@ -330,6 +399,9 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
                                scale=voxel, opacity=0.6)
     erase_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.2, 0.2, 1.0)}   # red = erased
     erase_layer.brush_size = 2; erase_layer.selected_label = 1; erase_layer.n_edit_dimensions = 3
+    int_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="other cell (excluded)",
+                             scale=voxel, opacity=0.5)
+    int_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.1, 0.9, 1.0)}      # magenta
     cl_layer = v.add_labels(np.zeros(ref.shape, np.int32), name="centerline", scale=voxel, opacity=1.0)
     unc_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="uncertain (dim centerline)",
                              scale=voxel, opacity=1.0)
@@ -350,8 +422,11 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         S["mode"] = None if S["mode"] == m else m
         S["pending"] = None; pts_layer.data = np.zeros((0, 3))
         P.set_toggle("t", S["mode"] == "trace"); P.set_toggle("x", S["mode"] == "delete")
+        P.set_toggle("i", S["mode"] == "intruder"); P.set_toggle("f", S["mode"] == "flip")
         P.hint({"trace": "TRACE: click the FIRST point of the new arc",
                 "delete": "DELETE: click an arc to remove it",
+                "intruder": "OTHER CELL: click two points along the crossing cell (it turns magenta)",
+                "flip": "FLIP: click an arc to switch it between your cell and the other cell",
                 None: "Drag the sliders until the halo is gone; trace missing branches with [t]"}[S["mode"]])
 
     P.section("1. thickness (live)")
@@ -366,6 +441,11 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     P.button("Delete arc under click", key="x", cb=lambda: set_mode("delete"), toggle=True)
     P.button("Undo", key="u", cb=lambda: undo())
     P.button("Re-seed centerline", key="r", cb=lambda: reseed())
+    P.section("2a. other cells (blacked out in movies)")
+    P.button("Trace other cell (2 clicks)", key="i", cb=lambda: set_mode("intruder"), toggle=True,
+             tooltip="Trace a crossing/neighbouring cell; its voxels leave your mask and are blacked out in movies")
+    P.button("Flip arc: mine <-> other", key="f", cb=lambda: set_mode("flip"), toggle=True,
+             tooltip="Click an arc to move it between your cell (cyan) and the other cell (magenta)")
     P.section("2b. erase by hand")
     P.button("Erase with brush", key="e", cb=lambda: set_erase(not S.get("erasing", False)), toggle=True,
              tooltip="Paint on the red layer; those voxels are removed from the mask and stay removed")
@@ -380,25 +460,33 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
 
     # ---- core updates
     def rebuild_cache():
-        S["cache"] = grow_cache(S["ref"], S["arcs"], voxel) if S["arcs"] else None
+        # the owner-aware growth recomputes its caches; keep the arc index volume for clicks
         cl = np.zeros(ref.shape, np.int32)
         for k, pts in enumerate(S["arcs"], start=1):
             cl[tuple(pts.T)] = k
         cl_layer.data = cl
+        cmap = {None: (0, 0, 0, 0)}
+        for k, o in enumerate(S["owners"], start=1):
+            cmap[k] = (1.0, 0.1, 0.9, 1.0) if o == "intruder" else (0.1, 0.9, 1.0, 1.0)
+        cl_layer.colormap = cmap
 
     def regrow():
-        m, unc = grow(S["cache"], S["alpha"], S["rx"], S["pad"], dim_pct)
-        if m is None:
+        if not S["arcs"]:
             mask_layer.data = np.zeros(ref.shape, np.uint8); unc_layer.data = np.zeros(ref.shape, np.uint8)
-            status.setText("no centerline - hold t and click two points"); return
+            int_layer.data = np.zeros(ref.shape, np.uint8)
+            status.setText("no centerline - use Trace and click two points"); return
         er = np.asarray(erase_layer.data) > 0
-        m = m & ~er                                         # manual erasures always win
+        m, mi, unc = grow_owned(S["ref"], S["arcs"], S["owners"], voxel, S["alpha"], S["rx"],
+                                S["pad"], dim_pct, erase=er)
         mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
-        status.setText(f"{len(S['arcs'])} arcs | mask {int(m.sum()):,} vox | "
-                       f"uncertain centerline pts: {int(unc.sum())}")
+        int_layer.data = mi.astype(np.uint8)
+        n_int = S["owners"].count("intruder")
+        status.setText(f"{len(S['arcs']) - n_int} arcs | mask {int(m.sum()):,} vox | "
+                       f"uncertain centerline pts: {int(unc.sum())}"
+                       + (f"\nother cell: {n_int} arcs, {int(mi.sum()):,} vox (excluded)" if n_int else ""))
 
     def push_hist():
-        S["hist"].append([a.copy() for a in S["arcs"]])
+        S["hist"].append(([a.copy() for a in S["arcs"]], list(S["owners"])))
         if len(S["hist"]) > 30: S["hist"].pop(0)
 
     def world_to_vox(pos):
@@ -408,8 +496,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     def on_click(layer, event):
         mods = set(event.modifiers) if event.modifiers else set()
         held = set(S.get("held", set()))
-        if S.get("mode") == "trace": held.add("t")
-        if S.get("mode") == "delete": held.add("x")
+        if S.get("mode") in ("trace", "intruder"): held.add("t")
+        if S.get("mode") in ("delete", "flip"): held.add("x")
         pos = world_to_vox(v.cursor.position)
         if not all(0 <= p < n for p, n in zip(pos, ref.shape)):
             return
@@ -425,7 +513,12 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
                 pos = tuple(pts[d.argmin()])
             k = int(cl[pos]) - 1
             if 0 <= k < len(S["arcs"]):
-                push_hist(); S["arcs"].pop(k); rebuild_cache(); regrow()
+                push_hist()
+                if S.get("mode") == "flip":
+                    S["owners"][k] = "own" if S["owners"][k] == "intruder" else "intruder"
+                else:
+                    S["arcs"].pop(k); S["owners"].pop(k)
+                rebuild_cache(); regrow()
         elif "t" in held:
             # snap the click to the brightest voxel within +-1 in Y/X and, in 2D slice
             # view, through the WHOLE Z column: you click on the top view and the path
@@ -443,9 +536,11 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
                 S["pending"] = None; pts_layer.data = np.zeros((0, 3))
                 if path is None or len(path) < 2:
                     status.setText("no path found"); return
-                push_hist(); S["arcs"].append(path); rebuild_cache(); regrow()
-                P.hint("TRACE: click the FIRST point of the next arc (or press [t] to stop)")
-    for lyr in (ref_layer, mask_layer, cl_layer, unc_layer):
+                push_hist(); S["arcs"].append(path)
+                S["owners"].append("intruder" if S.get("mode") == "intruder" else "own")
+                rebuild_cache(); regrow()
+                P.hint("TRACE: click the FIRST point of the next arc (or click the button again to stop)")
+    for lyr in (ref_layer, mask_layer, cl_layer, unc_layer, int_layer):
         lyr.mouse_drag_callbacks.append(on_click)
 
     @erase_layer.mouse_drag_callbacks.append
@@ -480,9 +575,10 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
 
     def undo(viewer=None):
         if S["hist"]:
-            S["arcs"] = S["hist"].pop(); rebuild_cache(); regrow()
+            S["arcs"], S["owners"] = S["hist"].pop(); rebuild_cache(); regrow()
     def reseed(viewer=None):
-        push_hist(); S["arcs"] = do_seed(S["ref"]); rebuild_cache(); regrow()
+        push_hist(); S["arcs"] = do_seed(S["ref"]); S["owners"] = ["own"] * len(S["arcs"])
+        rebuild_cache(); regrow()
     def cycle_channel(viewer=None):
         S["ci"] = (S["ci"] + 1) % ref_all.shape[1]
         vol = ref_all[:, S["ci"]]; lo, hi = np.percentile(vol, [1, 99.9])
@@ -498,12 +594,23 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         params = {"alpha": S["alpha"], "radius_x": S["rx"], "pad": S["pad"], "dim_pct": dim_pct,
                   "reference_channel": names[S["ci"]],
                   "manually_erased_voxels": int((np.asarray(erase_layer.data) > 0).sum())}
-        t, j = save(paths, m, S["arcs"], params, voxel)
-        status.setText(f"saved {os.path.basename(t)}  ({int(m.sum()):,} vox)\nclose napari, then Refresh the panel")
+        own_arcs = [a for a, o in zip(S["arcs"], S["owners"]) if o != "intruder"]
+        params["n_other_cell_arcs"] = S["owners"].count("intruder")
+        t, j = save(paths, m, own_arcs, params, voxel)
+        mi = np.asarray(int_layer.data) > 0
+        extra = ""
+        if mi.any() or os.path.exists(paths["exclude_tif"]):
+            et, nx = save_exclude(paths, mi, S["owners"], S["arcs"], voxel)
+            extra = f"\nother cell: {nx:,} vox -> {os.path.basename(et)}"
+            print(f"[trace] exclusion saved {et} ({nx} vox)")
+        status.setText(f"saved {os.path.basename(t)}  ({int(m.sum()):,} vox){extra}\n"
+                       "close napari, then Refresh the panel")
         print(f"[trace] saved {t}\n[trace] record appended to {j}")
     v.bind_key("u", undo, overwrite=True); v.bind_key("r", reseed, overwrite=True)
     v.bind_key("c", cycle_channel, overwrite=True); v.bind_key("d", toggle_dims, overwrite=True)
     v.bind_key("e", lambda vw: set_erase(not S.get("erasing", False)), overwrite=True)
+    v.bind_key("i", lambda vw: set_mode("intruder"), overwrite=True)
+    v.bind_key("f", lambda vw: set_mode("flip"), overwrite=True)
     v.bind_key("Control-s", do_save, overwrite=True); btn.clicked.connect(lambda: do_save())
 
     rebuild_cache(); regrow(); set_mode(None)
@@ -541,6 +648,22 @@ def run_check(stack_path, voxel_cli=None) -> bool:
     if path is not None:
         rep("path stays on bright ridge", float(np.median(ref[tuple(path.T)])) > float(np.median(ref)),
             f"median on-path {np.median(ref[tuple(path.T)]):.2f} vs volume {np.median(ref):.2f}")
+    # other-cell exclusion: flag the arc least like the longest one as an intruder
+    if len(arcs) >= 3:
+        own_mask_all, _ = grow(cache, 0.5, 1.5, 0)
+        owners = ["own"] * len(arcs)
+        k_int = int(np.argsort([len(a) for a in arcs])[-2])      # a real, long arc
+        owners[k_int] = "intruder"
+        mo, mi, _ = grow_owned(ref, arcs, owners, voxel, 0.5, 1.5, 0)
+        rep("owner-aware growth: own and other cell disjoint", not (mo & mi).any(),
+            f"own {int(mo.sum())} / other {int(mi.sum())} vox")
+        rep("intruder arc voxels end up in the other-cell mask", bool(mi[tuple(arcs[k_int].T)].mean() > 0.9))
+        own_cl = np.zeros(ref.shape, bool)
+        for a, o in zip(arcs, owners):
+            if o == "own": own_cl[tuple(a.T)] = True
+        rep("own centerline stays in own mask", bool(mo[own_cl].all()))
+        rep("excluding shrinks own mask", int(mo.sum()) < int(own_mask_all.sum()),
+            f"{int(own_mask_all.sum())} -> {int(mo.sum())}")
     # save contract into a temp copy so the run dir is untouched
     tmp = tempfile.mkdtemp()
     try:
@@ -550,6 +673,13 @@ def run_check(stack_path, voxel_cli=None) -> bool:
         lm = tifffile.imread(t)
         rep("saved labelmap uint8 with label 2 only", lm.dtype == np.uint8 and set(np.unique(lm)) <= {0, 2})
         rep("reviewed json has a review record", "reviews" in json.load(open(j)))
+        if len(arcs) >= 3:
+            tp["exclude_tif"] = os.path.join(tmp, os.path.basename(paths["exclude_tif"]))
+            et, nx = save_exclude(tp, mi, owners, arcs, voxel)
+            ex = tifffile.imread(et)
+            rep("exclude labelmap written (uint8, 0/1) + JSON block",
+                ex.dtype == np.uint8 and set(np.unique(ex)) <= {0, 1} and "exclude" in json.load(open(j)),
+                f"{nx} vox")
         if os.path.exists(paths["autoseg"]):
             rep("original autoseg untouched",
                 not os.path.exists(os.path.join(tmp, os.path.basename(paths["autoseg"]))))

@@ -51,6 +51,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import femto_status as fs  # noqa: E402
 
+DISPLAY = {"mask": True, "edge_um": 2.0}          # cell-picture display mask (set from CLI)
 COHERENCE_TOOL = "code/extra/segment_event_coherence.py"          # relative to root
 BEHAVIOR_TOOL = "/Users/daria/Desktop/behavior-tracking-daria/batch/coherence_behavior.py"
 
@@ -101,8 +102,10 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
     coh_pdf = run_dir / f"{stem}_coherence.pdf"
     events = run_dir / f"{stem}_coherence_network_events.csv"
 
-    up_to_date = (coh_png.exists() and events.exists()
-                  and coh_png.stat().st_mtime >= lm.stat().st_mtime)
+    deps = [Path(lm)] + [Path(run_dir) / f"{stem}{suf}" for suf in
+                         ("_autoseg_labelmap_reviewed.tif", "_exclude_labelmap.tif")]
+    newest = max(d.stat().st_mtime for d in deps if d.exists())
+    up_to_date = (coh_png.exists() and events.exists() and coh_png.stat().st_mtime >= newest)
     if up_to_date and not force:
         print(f"  coherence: reuse existing (newer than labelmap {lm.name})")
         return coh_png, events, run_dir, False
@@ -123,6 +126,9 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
         if order:
             cmd += ["--order", *[str(o) for o in order], "--names", *names]
             print(f"  coherence: region names (proximal->distal): {', '.join(names)}")
+        if not DISPLAY["mask"]:
+            cmd += ["--no-mask"]
+        cmd += ["--edge-um", f"{DISPLAY['edge_um']:g}"]
         cmd += ["--out-prefix", str(out_prefix)]
         run_subprocess(cmd, root, "segment_event_coherence")
 
@@ -412,7 +418,12 @@ def main(argv=None) -> int:
     ap.add_argument("--force", action="store_true", help="rebuild even if outputs are current")
     ap.add_argument("--root", default=None, help="femtonics-data root (default: inferred)")
     ap.add_argument("--dpi", type=int, default=200, help="composite raster dpi (default 200)")
+    ap.add_argument("--no-mask", dest="mask", action="store_false", default=True,
+                    help="cell picture on the raw background (default: black outside the cell, "
+                         "other cells blacked out)")
+    ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
     args = ap.parse_args(argv)
+    DISPLAY["mask"], DISPLAY["edge_um"] = args.mask, args.edge_um
 
     root = Path(args.root).resolve() if args.root else fs.project_root()
     runs = fs.build_status(root)
