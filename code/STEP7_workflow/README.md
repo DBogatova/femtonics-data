@@ -11,6 +11,7 @@ femto status          # full run table
 femto trace   <dir>/runNN_clean.tif      # mask tool on one stack
 femto regions <dir>/runNN_clean.tif      # region tool on one stack
 femto figure  <behavior_base>            # build the composite figure
+femto movies  <behavior_base> [--kinds dual time structure] [--force]   # 3D movies
 ```
 
 (`femto` is `code/femto`; the alias lives in `~/.zshrc`. Open a new terminal
@@ -32,6 +33,7 @@ Ctrl+S → close napari → **Refresh** → repeat until the run reads `complete
 
 Both tools drop disconnected islands < 20 voxels (per label) at save.
 | 6 | figure | `code/STEP7_workflow/coherence_with_behavior.py --run <behavior_base>` | no |
+| 7 | movies | `code/STEP7_workflow/make_movies.py --run <behavior_base>` — `runNN_final_3d_{dual,time,structure}.mp4`; panel checkboxes choose which; built after the figure, rebuilt only when regions change | no |
 
 Stage detection is by disk presence (which files exist), so
 `processing_status.csv` cannot disagree with reality.

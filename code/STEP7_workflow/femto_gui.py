@@ -262,6 +262,16 @@ def run_gui() -> int:
                         break
                     if not self.chain.isChecked():
                         break
+                # the chain reached the end (figure built): make the ticked movies too.
+                # make_movies skips anything already up to date, so this is cheap to repeat.
+                fresh = [x for x in build_runs() if x.get("behavior_base") == r.get("behavior_base")]
+                kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
+                if fresh and fresh[0].get("stage") == "complete" and kinds and self.chain.isChecked():
+                    mv = [PYEXE, str(ROOT / "code/STEP7_workflow/make_movies.py"),
+                          "--run", r.get("behavior_base"), "--kinds", *kinds]
+                    if self.mv_force.isChecked():
+                        mv.append("--force")
+                    self._exec(mv)
             finally:
                 self.busy = False
                 self.refresh_signal.emit()
