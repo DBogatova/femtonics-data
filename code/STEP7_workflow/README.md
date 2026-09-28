@@ -76,17 +76,17 @@ script stops and tells you. The mice differ (0.70–0.90 um lateral, 0.80–1.00
 and the old per-script defaults ranged from 0.8 to 3.9 um in Z, which silently
 changed anatomical distances and skeleton splits.
 
-## Planned (deferred until several cells are re-analyzed)
+## Other cells and black backgrounds (display only)
 
-**Interfering-cell exclusion + display masking** — requested 2026-09-28, build after
-Daria has processed some cells with the new tools so a real crossing-cell case exists.
-
-- Trace tool: an "Exclude cell" mode. Trace the intruder like any cell, flag it; its
-  grown region becomes label 9 in `*_autoseg_labelmap_reviewed.tif` (own cell stays
-  label 2), is subtracted from the own-cell mask, and is recorded in the JSON.
-- Movie/figure tools: `--display-mask` (default on when a reviewed mask exists): black
-  out label-9 voxels; fade everything outside the own-cell mask to black with a soft
-  edge (`--edge-um`, default 2 um). Affects display only — traces come from regions
-  and never include excluded voxels.
-- Temporal-max backgrounds in `segment_3d_movie.py` are where a crossing cell and haze
-  show up worst; apply the display mask before the projection.
+- **Mask tool:** "Trace other cell" (`i`) - two clicks along a crossing or neighbouring
+  cell; it turns magenta and is grown competitively with yours (voxels both could
+  claim go to whichever cell's centerline is brighter there). "Flip arc" (`f`) moves
+  any arc, including seeded ones, between your cell and the other cell. Saving writes
+  `runNN_clean_exclude_labelmap.tif` next to the reviewed mask; the exclusion is
+  reloaded the next time you open the tool.
+- **Movies and the figure's cell picture** show only your cell on black by default:
+  full brightness inside the mask, a soft 2 um falloff outside it, and other cells
+  forced to 0. Panel: "black background / hide other cells" checkbox and an edge
+  (um) field; CLI: `--no-mask`, `--edge-um`.
+- **Never used for analysis.** Traces, events and all numbers come from the
+  unmodified stack and your regions.
