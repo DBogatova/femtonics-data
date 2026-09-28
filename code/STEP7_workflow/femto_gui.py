@@ -141,7 +141,7 @@ def run_gui() -> int:
                                ("structure", "structural rotation")):
                 cb = QtWidgets.QCheckBox(label); cb.setChecked(True)
                 self.mv[key] = cb; movs.addWidget(cb)
-            self.mv_force = QtWidgets.QCheckBox("rebuild even if up to date")
+            self.mv_force = QtWidgets.QCheckBox("rebuild figure + movies even if up to date")
             movs.addWidget(self.mv_force)
             self.bg_black = QtWidgets.QCheckBox("black background / hide other cells")
             self.bg_black.setChecked(True)
@@ -234,16 +234,19 @@ def run_gui() -> int:
                 return
             threading.Thread(target=self._run_auto, args=(r,), daemon=True).start()
 
+        def display_args(self):
+            return ([] if self.bg_black.isChecked() else ["--no-mask"]) + ["--edge-um", f"{self.edge.value():g}"]
+
         def build_figure(self, with_movies=True, figure=True):
             r = self.selected()
             if r is None or self.busy:
                 return
             base = r.get("behavior_base", "")
             seq = []
-            disp = ([] if self.bg_black.isChecked() else ["--no-mask"]) + ["--edge-um", f"{self.edge.value():g}"]
+            disp = self.display_args()
             if figure:
                 seq.append([PYEXE, str(ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
-                            "--run", base, *disp])
+                            "--run", base, *disp] + (["--force"] if self.mv_force.isChecked() else []))
             kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
             if with_movies and kinds:
                 mv = [PYEXE, str(ROOT / "code/STEP7_workflow/make_movies.py"), "--run", base,
@@ -265,6 +268,8 @@ def run_gui() -> int:
                     if not fresh:
                         break
                     desc, argv, gui = next_command(fresh[0])
+                    if argv and argv[1].endswith("coherence_with_behavior.py"):
+                        argv = argv + self.display_args()          # same options as the buttons
                     if not argv or gui:
                         self.logline(f"[{r.get('behavior_base')}] stopping: {desc}")
                         break

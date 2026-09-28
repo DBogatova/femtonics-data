@@ -52,6 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import femto_status as fs  # noqa: E402
 
 DISPLAY = {"mask": True, "edge_um": 2.0}          # cell-picture display mask (set from CLI)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.display_mask import options_match, write_options   # noqa: E402
 COHERENCE_TOOL = "code/extra/segment_event_coherence.py"          # relative to root
 BEHAVIOR_TOOL = "/Users/daria/Desktop/behavior-tracking-daria/batch/coherence_behavior.py"
 
@@ -105,7 +107,8 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
     deps = [Path(lm)] + [Path(run_dir) / f"{stem}{suf}" for suf in
                          ("_autoseg_labelmap_reviewed.tif", "_exclude_labelmap.tif")]
     newest = max(d.stat().st_mtime for d in deps if d.exists())
-    up_to_date = (coh_png.exists() and events.exists() and coh_png.stat().st_mtime >= newest)
+    up_to_date = (coh_png.exists() and events.exists() and coh_png.stat().st_mtime >= newest
+                  and options_match(coh_png, DISPLAY["mask"], DISPLAY["edge_um"]))
     if up_to_date and not force:
         print(f"  coherence: reuse existing (newer than labelmap {lm.name})")
         return coh_png, events, run_dir, False
@@ -136,14 +139,16 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
         # fresh: safe to write the canonical files into the run dir
         print(f"  coherence: building fresh (labelmap {lm.name})")
         build(run_dir / f"{stem}_coherence")
+        write_options(coh_png, DISPLAY["mask"], DISPLAY["edge_um"])
         return coh_png, events, run_dir, True
 
     # canonical figure exists but is stale (regions changed) or forced: archive the old
     # outputs into old/ (timestamped, nothing is deleted) and rebuild in place, so the
     # run folder always holds one consistent set derived from the current regions.
-    print(f"  coherence: rebuilding (labelmap {lm.name} newer, or --force)")
-    archive([coh_png, coh_pdf, events], run_dir)
+    print(f"  coherence: rebuilding (inputs, display options changed, or --force)")
+    archive([coh_png, coh_pdf, events, Path(str(coh_png) + ".display.json")], run_dir)
     build(run_dir / f"{stem}_coherence")
+    write_options(coh_png, DISPLAY["mask"], DISPLAY["edge_um"])
     return coh_png, events, run_dir, True
 
 

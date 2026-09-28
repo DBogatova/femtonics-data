@@ -516,22 +516,30 @@ def find_inputs(target, autoseg_override=None, ref3d_override=None, out_override
             "autoseg": autoseg, "autoseg_json": autoseg_json, "hand": hand, "out": out}
 
 
-def load_voxel(autoseg_json, cli_voxel=None):
-    """voxel_zyx_um from the autoseg JSON params, else CLI, else DEFAULT_VOXEL."""
+def load_voxel(autoseg_json, cli_voxel=None, clean_path=None):
+    """Voxel size (Z,Y,X) um. Order: --voxel; the run's acquisition metadata
+    (common/voxel.py: behavior_imaging_master.csv / session summary, the single source of
+    truth); only if that is unavailable, the value recorded in the autoseg JSON. The
+    autoseg JSON is last because older runs recorded auto_segment's default there."""
     if cli_voxel:
         return tuple(float(x) for x in cli_voxel)
+    stack = Path(clean_path) if clean_path else (
+        Path(autoseg_json).parent / Path(autoseg_json).name.replace("_autoseg.json", ".tif")
+        if autoseg_json else None)
+    if stack is not None:
+        try:
+            return tuple(resolve_voxel(stack, None, quiet=True))
+        except SystemExit:
+            pass                                      # no metadata for this path: fall through
     if autoseg_json and Path(autoseg_json).exists():
         try:
-            j = json.loads(Path(autoseg_json).read_text())
-            v = j.get("params", {}).get("voxel_zyx_um")
+            v = json.loads(Path(autoseg_json).read_text()).get("params", {}).get("voxel_zyx_um")
             if v and len(v) == 3:
+                print(f"[voxel] WARNING: no run metadata; using the autoseg JSON value {v}")
                 return tuple(float(x) for x in v)
         except Exception:
             pass
-    # no silent default: fall back to the run's acquisition metadata, which exits
-    # loudly if it cannot be found
-    stem = Path(autoseg_json).name.replace("_autoseg.json", ".tif") if autoseg_json else None
-    return tuple(resolve_voxel(Path(autoseg_json).parent / stem, None)) if stem else DEFAULT_VOXEL
+    raise SystemExit("[voxel] cannot determine voxel size: pass --voxel Z Y X")
 
 
 def anatomy_background(ref3d_path, clean_path=None) -> np.ndarray:
@@ -600,7 +608,7 @@ def run_check(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR) ->
         print("FAIL: no autoseg labelmap found")
         return False
 
-    voxel = load_voxel(inp["autoseg_json"], voxel_cli)
+    voxel = load_voxel(inp["autoseg_json"], voxel_cli, inp.get("clean"))
     print(f"voxel   : {voxel} um (z,y,x)")
 
     autoseg = tifffile.imread(str(inp["autoseg"]))
@@ -743,7 +751,7 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
     inp = find_inputs(target)
     if inp["autoseg"] is None:
         raise SystemExit(f"no autoseg labelmap found under {inp['rundir']}")
-    voxel = load_voxel(inp["autoseg_json"], voxel_cli)
+    voxel = load_voxel(inp["autoseg_json"], voxel_cli, inp.get("clean"))
     vox = tuple(voxel)
 
     autoseg = tifffile.imread(str(inp["autoseg"]))

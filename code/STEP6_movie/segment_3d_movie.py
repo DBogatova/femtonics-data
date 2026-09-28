@@ -50,6 +50,8 @@ def main():
     ap.add_argument("--no-mask", dest="mask", action="store_false", default=True,
                     help="show the raw volume (default: black background outside the cell, "
                          "other cells blacked out, if a reviewed mask exists next to the stack)")
+    ap.add_argument("--voxel", nargs=3, type=float, default=None, metavar=("Z", "Y", "X"),
+                    help="voxel size in um for the display mask (default: run metadata)")
     ap.add_argument("--edge-um", type=float, default=2.0,
                     help="soft falloff outside the cell mask, in um (0 = hard cut)")
     args = ap.parse_args()
@@ -67,7 +69,11 @@ def main():
         import sys as _sys, pathlib as _pl
         _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
         from common.display_mask import load_display_weight
-        wgt, desc = load_display_weight(args.stack, args.labelmap, edge_um=args.edge_um)
+        try:
+            wgt, desc = load_display_weight(args.stack, args.labelmap, voxel=args.voxel,
+                                            edge_um=args.edge_um)
+        except SystemExit as e:                     # voxel size unknown: never abort a movie
+            wgt, desc = None, f"display mask skipped ({e}); rendering unmasked - pass --voxel Z Y X"
         print(desc)
         if wgt is not None:
             if wgt.shape != struct.shape:

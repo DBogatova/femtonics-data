@@ -167,7 +167,7 @@ def main():
     # a=soma, b=branch, the peak lag L means soma[t+L] matches branch[t]: soma trails branch
     # by L, i.e. positive lag => soma-end LAGS branch-end => branch-end leads (and vice versa).
     a = traces[0] - traces[0].mean(); b = traces[-1] - traces[-1].mean()
-    maxlag = 30
+    maxlag = max(1, min(30, T - 1))                      # short recordings: keep lags < T
     xcorr = np.array([np.dot(a[lag:], b[:T - lag]) if lag >= 0 else np.dot(a[:T + lag], b[-lag:])
                       for lag in range(-maxlag, maxlag + 1)])
     xcorr /= (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9)
@@ -226,7 +226,10 @@ def main():
         import sys as _sys, pathlib as _pl
         _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
         from common.display_mask import load_display_weight
-        wgt, desc = load_display_weight(args.stack, args.labelmap, voxel=args.voxel, edge_um=args.edge_um)
+        try:
+            wgt, desc = load_display_weight(args.stack, args.labelmap, voxel=args.voxel, edge_um=args.edge_um)
+        except SystemExit as e:
+            wgt, desc = None, f"skipped ({e})"
         if wgt is not None and wgt.shape == vol.shape:
             print(f"cell picture: {desc}"); vol = vol * wgt
         else:

@@ -35,6 +35,9 @@ WORKFLOW (napari)
   * 'uncertain' layer (orange): centerline points where the reference itself is dim
     (below --dim-pct of centerline intensities) - a path was found but the structure
     is not clearly there. Shown, never auto-bridged. Decide by eye.
+  * Reopening resumes where you saved: every arc (yours and other cells', seeded or
+    traced), its owner and your erasures are kept in <stem>_trace_session.npz.
+    --fresh starts over from the seed.
   * Ctrl+S writes <stem>_autoseg_labelmap_reviewed.tif (cell 1, class 2 = structure,
     label 2) + a record in <stem>_autoseg_reviewed.json, so femto_status advances to
     mask_reviewed and wrap_segments_napari.py takes it from there. Originals are never
@@ -71,7 +74,8 @@ def derive_paths(stack_path):
             "autoseg": str(stem) + "_autoseg_labelmap.tif", "autoseg_json": str(stem) + "_autoseg.json",
             "out_tif": str(stem) + "_autoseg_labelmap_reviewed.tif",
             "out_json": str(stem) + "_autoseg_reviewed.json",
-            "exclude_tif": str(stem) + "_exclude_labelmap.tif"}
+            "exclude_tif": str(stem) + "_exclude_labelmap.tif",
+            "session": str(stem) + "_trace_session.npz"}
 
 
 def load_reference(paths, channel="cofire_mean"):
@@ -318,10 +322,7 @@ def save_exclude(paths, intruder, owners, arcs, voxel, min_island=20):
     lm = intruder.astype(np.uint8)
     lm, _ = drop_small_islands(lm, min_voxels=min_island)
     tifffile.imwrite(paths["exclude_tif"], lm)
-    try:
-        doc = json.load(open(paths["out_json"])) if os.path.exists(paths["out_json"]) else {}
-    except Exception:
-        doc = {}
+    doc = load_json_safe(paths["out_json"])
     doc["exclude"] = {
         "file": os.path.basename(paths["exclude_tif"]),
         "voxels": int((lm > 0).sum()),
@@ -333,6 +334,55 @@ def save_exclude(paths, intruder, owners, arcs, voxel, min_island=20):
     return paths["exclude_tif"], int((lm > 0).sum())
 
 
+def load_json_safe(path):
+    """Read a JSON object. If the file exists but cannot be parsed, keep a timestamped
+    copy (<name>.corrupt-YYYYmmdd-HHMMSS) and warn, so nothing already recorded is lost
+    silently; then return {} so a fresh record can be written."""
+    if not os.path.exists(path):
+        return {}
+    try:
+        doc = json.load(open(path))
+        return doc if isinstance(doc, dict) else {"_previous_non_object": doc}
+    except Exception as e:
+        import shutil
+        bak = f"{path}.corrupt-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        shutil.copy2(path, bak)
+        print(f"[trace] WARNING: could not read {os.path.basename(path)} ({e}); kept a copy as "
+              f"{os.path.basename(bak)} and started a new record")
+        return {}
+
+
+def save_session(paths, arcs, owners, erase):
+    """Everything needed to reopen exactly where you left off: every centerline arc (own
+    and other cell, traced or seeded), its owner, and the hand erasures."""
+    lens = np.array([len(a) for a in arcs], np.int64)
+    pts = np.concatenate(arcs).astype(np.int32) if arcs else np.zeros((0, 3), np.int32)
+    np.savez_compressed(paths["session"], arc_points=pts, arc_lengths=lens,
+                        owners=np.array(owners, dtype="U8"),
+                        erase=np.packbits(np.asarray(erase, bool).ravel()),
+                        shape=np.array(np.asarray(erase).shape, np.int64))
+
+
+def load_session(paths, shape):
+    """(arcs, owners, erase) from a saved session, or None if absent/incompatible."""
+    if not os.path.exists(paths["session"]):
+        return None
+    try:
+        z = np.load(paths["session"])
+        if tuple(z["shape"]) != tuple(shape):
+            print("[trace] saved session is for a different volume shape; ignoring it"); return None
+        lens, pts = z["arc_lengths"], z["arc_points"]
+        arcs = np.split(pts.astype(int), np.cumsum(lens)[:-1]) if len(lens) else []
+        owners = [str(o) for o in z["owners"]]
+        erase = np.unpackbits(z["erase"])[: int(np.prod(shape))].reshape(shape).astype(bool)
+        if len(owners) != len(arcs):
+            return None
+        return arcs, owners, erase
+    except Exception as e:
+        print(f"[trace] WARNING: could not read saved session ({e}); starting from the seed")
+        return None
+
+
 # ----------------------------------------------------------------------------- save
 def save(paths, mask, arcs, params, voxel, min_island=20):
     for k in ("out_tif", "out_json"):
@@ -342,13 +392,8 @@ def save(paths, mask, arcs, params, voxel, min_island=20):
     lm, rep = drop_small_islands(lm, min_voxels=min_island)
     print(f"[trace] island cleanup (<{min_island} vox): {describe(rep)}")
     tifffile.imwrite(paths["out_tif"], lm)
-    doc = {}
-    for src in (paths["out_json"], paths["autoseg_json"]):
-        if os.path.exists(src):
-            try:
-                doc = json.load(open(src)); break
-            except Exception:
-                doc = {}
+    doc = load_json_safe(paths["out_json"]) if os.path.exists(paths["out_json"]) \
+        else load_json_safe(paths["autoseg_json"])
     if not isinstance(doc, dict):
         doc = {}
     doc.setdefault("reviews", []).append({
@@ -369,7 +414,7 @@ def save(paths, mask, arcs, params, voxel, min_island=20):
 
 # ----------------------------------------------------------------------------- GUI
 def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_x=1.5, pad=0,
-           dim_pct=15.0, ndisplay=2, seed="reference", seed_z=5.0):
+           dim_pct=15.0, ndisplay=2, seed="reference", seed_z=5.0, resume=True):
     import napari
 
     paths = derive_paths(stack_path)
@@ -382,8 +427,14 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     print(f"[trace] reference {ref.shape} channel={names[ci]}; seeded {len(arcs)} arcs from {seed}")
     S = {"arcs": arcs, "owners": ["own"] * len(arcs), "hist": [], "alpha": alpha, "rx": radius_x,
          "pad": pad, "cache": None, "ci": ci, "cost": cost_volume(ref), "ref": ref, "pending": None}
+    sess = load_session(paths, ref.shape) if resume else None
+    S["erase0"] = None
+    if sess is not None:
+        S["arcs"], S["owners"], S["erase0"] = sess
+        print(f"[trace] resumed saved session: {len(S['arcs'])} arcs "
+              f"({S['owners'].count('intruder')} other-cell), {int(S['erase0'].sum())} erased voxels")
     prev_excl = (tifffile.imread(paths["exclude_tif"]) > 0) if os.path.exists(paths["exclude_tif"]) else None
-    if prev_excl is not None and prev_excl.shape == ref.shape and prev_excl.any():
+    if sess is None and prev_excl is not None and prev_excl.shape == ref.shape and prev_excl.any():
         # arcs lying mostly inside a previously saved exclusion start as intruder arcs
         for k, a in enumerate(S["arcs"]):
             if prev_excl[tuple(a.T)].mean() > 0.5:
@@ -399,6 +450,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
                                scale=voxel, opacity=0.6)
     erase_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.2, 0.2, 1.0)}   # red = erased
     erase_layer.brush_size = 2; erase_layer.selected_label = 1; erase_layer.n_edit_dimensions = 3
+    if S.get("erase0") is not None:
+        erase_layer.data = S["erase0"].astype(np.uint8)
     int_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="other cell (excluded)",
                              scale=voxel, opacity=0.5)
     int_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.1, 0.9, 1.0)}      # magenta
@@ -550,6 +603,9 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             yield
         regrow()                                            # stroke finished -> subtract it
 
+    # any other change to the erase layer (fill tool, undo, programmatic) also re-applies
+    erase_layer.events.data.connect(lambda e: regrow())
+
     def set_erase(on):
         """Erase mode: select the erase layer with the brush; off: back to pan/zoom."""
         S["erasing"] = on
@@ -588,6 +644,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     def toggle_dims(viewer=None):
         v.dims.ndisplay = 3 if v.dims.ndisplay == 2 else 2
     def do_save(viewer=None):
+        regrow()                                            # mask on disk == erasures applied now
         m = mask_layer.data > 0
         if not m.any():
             status.setText("nothing to save"); return
@@ -597,6 +654,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         own_arcs = [a for a, o in zip(S["arcs"], S["owners"]) if o != "intruder"]
         params["n_other_cell_arcs"] = S["owners"].count("intruder")
         t, j = save(paths, m, own_arcs, params, voxel)
+        save_session(paths, S["arcs"], S["owners"], np.asarray(erase_layer.data) > 0)
         mi = np.asarray(int_layer.data) > 0
         extra = ""
         if mi.any() or os.path.exists(paths["exclude_tif"]):
@@ -677,6 +735,23 @@ def run_check(stack_path, voxel_cli=None) -> bool:
             tp["exclude_tif"] = os.path.join(tmp, os.path.basename(paths["exclude_tif"]))
             et, nx = save_exclude(tp, mi, owners, arcs, voxel)
             ex = tifffile.imread(et)
+            # session round trip: reopen must reproduce the exact own + other-cell masks
+            tp["session"] = os.path.join(tmp, os.path.basename(paths["session"]))
+            er = np.zeros(ref.shape, bool); er[tuple(np.argwhere(mo)[:25].T)] = True
+            save_session(tp, arcs, owners, er)
+            sess = load_session(tp, ref.shape)
+            ok_rt = sess is not None and len(sess[0]) == len(arcs) and sess[1] == owners \
+                and all(np.array_equal(a, b) for a, b in zip(sess[0], arcs)) and np.array_equal(sess[2], er)
+            mo2, mi2, _ = grow_owned(ref, sess[0], sess[1], voxel, 0.5, 1.5, 0, erase=sess[2]) if sess else (None, None, None)
+            mo1, mi1, _ = grow_owned(ref, arcs, owners, voxel, 0.5, 1.5, 0, erase=er)
+            rep("session round trip restores arcs, owners, erasures and identical masks",
+                ok_rt and np.array_equal(mo1, mo2) and np.array_equal(mi1, mi2),
+                f"{len(arcs)} arcs, other-cell {int(mi2.sum()) if mi2 is not None else '?'} vox")
+            # corrupt JSON is preserved, not silently reset
+            bad = os.path.join(tmp, "bad.json"); open(bad, "w").write("{not json")
+            d0 = load_json_safe(bad)
+            rep("corrupt JSON kept as a copy, not silently reset",
+                d0 == {} and any(f.startswith("bad.json.corrupt-") for f in os.listdir(tmp)))
             rep("exclude labelmap written (uint8, 0/1) + JSON block",
                 ex.dtype == np.uint8 and set(np.unique(ex)) <= {0, 1} and "exclude" in json.load(open(j)),
                 f"{nx} vox")
@@ -706,12 +781,14 @@ def main(argv=None):
                          "autoseg skeleton, or nothing (trace everything by hand)")
     ap.add_argument("--seed-z", type=float, default=5.0,
                     help="robust-z threshold for reference seeding (higher = fewer, surer arcs)")
+    ap.add_argument("--fresh", action="store_true",
+                    help="ignore the saved session (<stem>_trace_session.npz) and start from the seed")
     ap.add_argument("--check", action="store_true", help="headless self-test; writes nothing into the run dir")
     args = ap.parse_args(argv)
     if args.check:
         return 0 if run_check(args.stack, args.voxel) else 1
     launch(args.stack, args.voxel, args.channel, args.alpha, args.radius_x, args.pad, args.dim_pct,
-           args.ndisplay, args.seed, args.seed_z)
+           args.ndisplay, args.seed, args.seed_z, resume=not args.fresh)
     return 0
 
 

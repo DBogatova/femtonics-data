@@ -76,3 +76,26 @@ def load_display_weight(stack_path, labelmap=None, voxel=None, edge_um: float = 
             f", edge {edge_um:g} um"
             + (f", other cell blacked out ({int((ex > 0).sum())} vox from {ex_p.name})" if ex is not None else ""))
     return w, desc
+
+
+def options_record(mask: bool, edge_um: float) -> dict:
+    return {"mask": bool(mask), "edge_um": round(float(edge_um), 3)}
+
+
+def options_match(output_path, mask: bool, edge_um: float) -> bool:
+    """True if <output>.display.json records the same options. A missing sidecar counts
+    as the historical default (mask on, 2 um) so existing outputs are not all rebuilt."""
+    import json
+    side = Path(str(output_path) + ".display.json")
+    rec = options_record(mask, edge_um)
+    if not side.exists():
+        return rec == options_record(True, 2.0)
+    try:
+        return json.loads(side.read_text()) == rec
+    except Exception:
+        return False
+
+
+def write_options(output_path, mask: bool, edge_um: float):
+    import json
+    Path(str(output_path) + ".display.json").write_text(json.dumps(options_record(mask, edge_um)))

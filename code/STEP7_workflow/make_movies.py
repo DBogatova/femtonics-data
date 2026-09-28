@@ -23,6 +23,8 @@ import argparse, subprocess, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[0]))
+from common.display_mask import options_match, write_options   # noqa: E402
 ROOT = HERE.parents[1]
 MOVIE = ROOT / "code/STEP6_movie/segment_3d_movie.py"
 KINDS = ("structure", "time", "dual")
@@ -82,7 +84,8 @@ def main(argv=None) -> int:
     todo, procs = [], []
     for k in args.kinds:
         o = outs[k]
-        if o.exists() and o.stat().st_mtime >= newest and not args.force:
+        if (o.exists() and o.stat().st_mtime >= newest and not args.force
+                and options_match(o, args.mask, args.edge_um)):
             print(f"  {k:9s} up to date: {o.name}")
             continue
         todo.append(k)
@@ -97,6 +100,7 @@ def main(argv=None) -> int:
         out, _ = p.communicate()
         last = [l for l in out.splitlines() if l.startswith("saved")]
         if p.returncode == 0 and outs[k].exists():
+            write_options(outs[k], args.mask, args.edge_um)
             print(f"  {k:9s} OK  {outs[k].name}  ({outs[k].stat().st_size / 1e6:.1f} MB)  {last[-1] if last else ''}")
         else:
             ok = False
