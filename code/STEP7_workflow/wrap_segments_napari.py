@@ -81,7 +81,7 @@ import numpy as np
 import tifffile
 # scipy / skimage are safe at module load: they do NOT import napari. Only the
 # interactive launch() imports napari, so `import wrap_segments_napari` stays headless.
-from scipy.ndimage import distance_transform_edt, convolve, label as cc_label
+from scipy.ndimage import distance_transform_edt, convolve, label as cc_label, label, binary_dilation
 from skimage.morphology import skeletonize
 import sys as _sys, pathlib as _pl
 _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
@@ -185,6 +185,47 @@ def nearest_arc(point, arc_labels: np.ndarray, voxel) -> int:
     return int(arc_labels[tuple(av[int(d2.argmin())])])
 
 
+def soma_blob_from_thickness(mask, edt, median_arc_radius, voxel, factor=SOMA_FACTOR):
+    """The soma as a BLOB, independent of the skeleton (which fragments a blob into many
+    arcs so that off-centre clicks grab only a slice of it).
+
+    Core = mask voxels whose distance-transform radius >= factor x the median arc radius
+    (i.e. much wider than any branch). Keep the largest core component, then grow it
+    outward through the mask while the local radius stays above the median branch
+    radius, so the soma includes its whole rounded surface but stops where the trunk
+    begins to look like a tube. Returns a boolean volume (all False if nothing is thick)."""
+    if median_arc_radius <= 0:
+        return np.zeros(mask.shape, bool)
+    core = mask & (edt >= factor * median_arc_radius)
+    if not core.any():
+        return np.zeros(mask.shape, bool)
+    lab, n = label(core, structure=np.ones((3, 3, 3)))
+    sizes = np.bincount(lab.ravel()); sizes[0] = 0
+    blob = lab == int(sizes.argmax())
+    # grow from the core, but only through voxels whose local radius stays above HALF
+    # the soma's own radius: the soma ends at the first neck where the tube narrows.
+    # (Using the median branch radius here let the blob run down a thick proximal trunk.)
+    soma_r = float(edt[blob].max())
+    allowed = mask & (edt >= 0.5 * soma_r)
+    grown = blob.copy()
+    for _ in range(64):
+        nxt = binary_dilation(grown, structure=np.ones((3, 3, 3))) & allowed
+        if nxt.sum() == grown.sum():
+            break
+        grown = nxt
+    # add the rounded surface: mask voxels within one soma radius of the thick body,
+    # measured as a plain dilation by ceil(soma_r / voxel) steps but clipped to the mask
+    steps = int(np.ceil(soma_r / float(min(voxel))))
+    rind = grown.copy()
+    for _ in range(steps):
+        rind = binary_dilation(rind, structure=np.ones((3, 3, 3))) & mask
+    # but never past the neck: drop rind voxels farther from the body than soma_r
+    # along the tube (approximate with EDT-to-body)
+    dist_to_body = distance_transform_edt(~grown, sampling=tuple(voxel))
+    rind &= dist_to_body <= soma_r
+    return rind
+
+
 def build_wrap_cache(mask: np.ndarray, voxel, min_arc_vox: int = 1) -> dict:
     """Everything a click needs, computed once per mask state (skeleton -> arcs ->
     geodesic partition -> radii). Recompute after the mask is edited."""
@@ -199,7 +240,9 @@ def build_wrap_cache(mask: np.ndarray, voxel, min_arc_vox: int = 1) -> dict:
     edt = distance_transform_edt(mask, sampling=tuple(voxel))
     radii = arc_radii(edt, arc_labels)
     median_arc_radius = float(np.median(list(radii.values()))) if radii else 0.0
+    soma_blob = soma_blob_from_thickness(mask, edt, median_arc_radius, voxel)
     return {
+        "soma_blob": soma_blob,
         "mask": mask,
         "skel": skel,
         "n_skel": int(skel.sum()),
@@ -227,11 +270,21 @@ def wrap_from_click(mask: np.ndarray, click_zyx, voxel, cache: dict = None,
         mv = np.argwhere(mask)
         d2 = (((mv - pt) * np.asarray(voxel, float)) ** 2).sum(1)
         pt = mv[int(d2.argmin())]
-    arc = nearest_arc(pt, cache["arc_labels"], voxel)
-    region = cache["partition"] == arc
-    region_max_radius = float(cache["edt"][region].max()) if region.any() else 0.0
     med = cache["median_arc_radius"]
-    soma_suggested = bool(med > 0 and region_max_radius >= soma_factor * med)
+    blob = cache.get("soma_blob")
+    if blob is not None and blob[tuple(pt)]:
+        # click inside the thick blob -> the WHOLE soma, whichever skeleton arc is nearest
+        arc = -1
+        region = blob.copy()
+        region_max_radius = float(cache["edt"][region].max())
+        soma_suggested = True
+    else:
+        arc = nearest_arc(pt, cache["arc_labels"], voxel)
+        region = (cache["partition"] == arc)
+        if blob is not None:
+            region = region & ~blob                          # arcs never eat into the soma
+        region_max_radius = float(cache["edt"][region].max()) if region.any() else 0.0
+        soma_suggested = bool(med > 0 and region_max_radius >= soma_factor * med)
     return {
         "click": tuple(int(x) for x in pt),
         "arc": int(arc),
