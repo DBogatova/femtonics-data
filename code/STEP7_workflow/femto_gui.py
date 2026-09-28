@@ -56,7 +56,7 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
     stack = run.get("stack")
     base = run.get("behavior_base", "")
     if stage == "not_local":
-        return ("fetch 4D stack from cluster (ask Kiro / see extract_top7.qsub)", [], False)
+        return ("fetch 4D stack from cluster (extract on SCC: extract_top7.qsub)", [], False)
     if stage == "stack":
         return ("build reference volume",
                 [PYEXE, str(ROOT / "code/STEP3_auto/make_reference_volume.py"),
