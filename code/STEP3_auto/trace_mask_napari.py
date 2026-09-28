@@ -47,6 +47,7 @@ _sys_root = _pl.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_sys_root))
 from common.voxel import add_voxel_arg, resolve_voxel        # noqa: E402
 from common.napari_panel import ActionPanel                  # noqa: E402
+from common.cleanup import drop_small_islands, describe      # noqa: E402
 
 __version__ = "0.1.0"
 CELL_OFFSET = 10
@@ -269,11 +270,13 @@ def grow(cache, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0):
 
 
 # ----------------------------------------------------------------------------- save
-def save(paths, mask, arcs, params, voxel):
+def save(paths, mask, arcs, params, voxel, min_island=20):
     for k in ("out_tif", "out_json"):
         if os.path.abspath(paths[k]) in (os.path.abspath(paths["autoseg"]), os.path.abspath(paths["autoseg_json"])):
             raise RuntimeError("refusing to overwrite the original autoseg files")
     lm = np.where(mask, STRUCT_LABEL, 0).astype(np.uint8)
+    lm, rep = drop_small_islands(lm, min_voxels=min_island)
+    print(f"[trace] island cleanup (<{min_island} vox): {describe(rep)}")
     tifffile.imwrite(paths["out_tif"], lm)
     doc = {}
     for src in (paths["out_json"], paths["autoseg_json"]):
@@ -288,7 +291,9 @@ def save(paths, mask, arcs, params, voxel):
         "tool": "trace_mask_napari", "version": __version__,
         "created": datetime.now(timezone.utc).isoformat(),
         "output": os.path.basename(paths["out_tif"]),
-        "mask_voxels": int(mask.sum()), "n_arcs": len(arcs),
+        "mask_voxels": int((lm > 0).sum()), "n_arcs": len(arcs),
+        "islands_removed": [{"label": lb, "components": n, "voxels": v} for lb, n, v in rep],
+        "min_island_voxels": min_island,
         "arc_lengths_vox": [int(len(a)) for a in arcs],
         "voxel_zyx_um": [float(v) for v in voxel],
         "params": params,

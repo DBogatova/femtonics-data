@@ -90,9 +90,11 @@ import sys as _sys, pathlib as _pl
 _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
 from common.voxel import add_voxel_arg, resolve_voxel
 from common.napari_panel import ActionPanel
+from common.cleanup import drop_small_islands, describe
 from skimage.graph import MCP_Geometric
 
 DEFAULT_VOXEL = (0.85, 0.8, 0.8)          # fallback only; real value read from autoseg JSON
+MIN_ISLAND_VOX = 20        # components smaller than this are dropped at save (per label)
 SOMA_FACTOR = 2.0                         # region-max-radius >= SOMA_FACTOR * median-arc-radius -> soma
 CC26 = np.ones((3, 3, 3), np.uint8)       # 26-connectivity structuring element
 
@@ -1017,6 +1019,8 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
     def _save(vw):
         seg = build_labelmap(S["wraps"], cellvol.shape)
         seg[~working_mask()] = 0                            # clamp to the current mask
+        seg, rep = drop_small_islands(seg, min_voxels=MIN_ISLAND_VOX)
+        print(f"island cleanup (<{MIN_ISLAND_VOX} vox per label): {describe(rep)}", flush=True)
         if not (seg > 0).any():
             print("nothing to save (no wraps).", flush=True)
             return
@@ -1024,6 +1028,8 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
             "source_clean": str(inp["clean"]),
             "source_autoseg": str(inp["autoseg"]),
             "accepted_cells": sorted(S["accepted"]),
+            "islands_removed": [{"label": lb, "components": n, "voxels": v} for lb, n, v in rep],
+            "min_island_voxels": MIN_ISLAND_VOX,
             "wrap_clicks": [{"click_zyx": list(w["click"]), "arc": int(w["arc"]),
                              "label": int(w["label"]), "name": w["name"],
                              "size": int(w["size"]),
