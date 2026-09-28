@@ -73,3 +73,18 @@ used. There is no hard-coded default any more; if the run cannot be found the
 script stops and tells you. The mice differ (0.70–0.90 um lateral, 0.80–1.00 um Z),
 and the old per-script defaults ranged from 0.8 to 3.9 um in Z, which silently
 changed anatomical distances and skeleton splits.
+
+## Planned (deferred until several cells are re-analysed)
+
+**Interfering-cell exclusion + display masking** — requested 2026-09-28, build after
+Daria has processed some cells with the new tools so a real crossing-cell case exists.
+
+- Trace tool: an "Exclude cell" mode. Trace the intruder like any cell, flag it; its
+  grown region becomes label 9 in `*_autoseg_labelmap_reviewed.tif` (own cell stays
+  label 2), is subtracted from the own-cell mask, and is recorded in the JSON.
+- Movie/figure tools: `--display-mask` (default on when a reviewed mask exists): black
+  out label-9 voxels; fade everything outside the own-cell mask to black with a soft
+  edge (`--edge-um`, default 2 um). Affects display only — traces come from regions
+  and never include excluded voxels.
+- Temporal-max backgrounds in `segment_3d_movie.py` are where a crossing cell and haze
+  show up worst; apply the display mask before the projection.
