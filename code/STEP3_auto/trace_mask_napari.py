@@ -36,7 +36,10 @@ WORKFLOW (napari)
     (below --dim-pct of centerline intensities) - a path was found but the structure
     is not clearly there. Shown, never auto-bridged. Decide by eye.
   * Reopening resumes where you saved: every arc (yours and other cells', seeded or
-    traced), its owner and your erasures are kept in <stem>_trace_session.npz.
+    traced), its owner, your erasures and additions are kept in <stem>_trace_session.npz,
+    and the sliders/reference channel come back at the values you saved with. A mask
+    saved before sessions existed is rebuilt so it opens voxel-for-voxel as saved.
+  * Add by hand ('a' / button): paint on the green layer to force voxels into your mask.
     --fresh starts over from the seed (saved session and exclusion ignored until you save).
   * Ctrl+S writes <stem>_autoseg_labelmap_reviewed.tif (cell 1, class 2 = structure,
     label 2) + a record in <stem>_autoseg_reviewed.json, so femto_status advances to
@@ -282,7 +285,7 @@ def grow(cache, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0):
     return m, unc
 
 
-def grow_owned(ref, arcs, owners, voxel, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0, erase=None):
+def grow_owned(ref, arcs, owners, voxel, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0, erase=None, add=None):
     """Grow the own-cell mask and the intruder mask from ONE set of centerline arcs.
 
     owners[k] is "own" or "intruder" for arcs[k]. Each owner's mask is grown with the
@@ -309,6 +312,8 @@ def grow_owned(ref, arcs, owners, voxel, alpha=0.5, radius_x=1.5, pad=0, dim_pct
             to_int &= ~(c_own["cl"] > 0)                     # own centerline never moves
         m_own &= ~to_int
         m_int &= ~(both & ~to_int)
+    if add is not None:                                   # painted-in voxels are always yours
+        m_own |= add; m_int &= ~add
     if erase is not None:
         m_own &= ~erase; m_int &= ~erase
     return m_own, m_int, (unc if unc is not None else empty)
@@ -352,7 +357,20 @@ def load_json_safe(path):
         return {}
 
 
-def save_session(paths, arcs, owners, erase):
+def last_saved_params(paths):
+    """Settings of the last mask saved with this tool (alpha, radius_x, pad, channel),
+    or None."""
+    if not os.path.exists(paths["out_json"]):
+        return None
+    try:
+        revs = [r for r in json.load(open(paths["out_json"])).get("reviews", [])
+                if r.get("tool") == "trace_mask_napari"]
+        return revs[-1].get("params") if revs else None
+    except Exception:
+        return None
+
+
+def save_session(paths, arcs, owners, erase, add=None):
     """Everything needed to reopen exactly where you left off: every centerline arc (own
     and other cell, traced or seeded), its owner, and the hand erasures."""
     lens = np.array([len(a) for a in arcs], np.int64)
@@ -360,6 +378,7 @@ def save_session(paths, arcs, owners, erase):
     np.savez_compressed(paths["session"], arc_points=pts, arc_lengths=lens,
                         owners=np.array(owners, dtype="U8"),
                         erase=np.packbits(np.asarray(erase, bool).ravel()),
+                        add=np.packbits(np.asarray(add if add is not None else np.zeros_like(erase), bool).ravel()),
                         shape=np.array(np.asarray(erase).shape, np.int64))
 
 
@@ -374,10 +393,12 @@ def load_session(paths, shape):
         lens, pts = z["arc_lengths"], z["arc_points"]
         arcs = np.split(pts.astype(int), np.cumsum(lens)[:-1]) if len(lens) else []
         owners = [str(o) for o in z["owners"]]
-        erase = np.unpackbits(z["erase"])[: int(np.prod(shape))].reshape(shape).astype(bool)
+        n = int(np.prod(shape))
+        erase = np.unpackbits(z["erase"])[:n].reshape(shape).astype(bool)
+        add = np.unpackbits(z["add"])[:n].reshape(shape).astype(bool) if "add" in z.files else np.zeros(shape, bool)
         if len(owners) != len(arcs):
             return None
-        return arcs, owners, erase
+        return arcs, owners, erase, add
     except Exception as e:
         print(f"[trace] WARNING: could not read saved session ({e}); starting from the seed")
         return None
@@ -419,6 +440,12 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
 
     paths = derive_paths(stack_path)
     voxel = resolve_voxel(stack_path, voxel_cli)
+    saved = last_saved_params(paths) if resume else None
+    if saved:
+        alpha = float(saved.get("alpha", alpha)); radius_x = float(saved.get("radius_x", radius_x))
+        pad = int(saved.get("pad", pad)); channel = saved.get("reference_channel", channel)
+        print(f"[trace] restoring saved settings: alpha {alpha:.2f}, radius x {radius_x:.2f}, pad {pad}, "
+              f"channel {channel}")
     ref, names, ci, ref_all = load_reference(paths, channel)
     def do_seed(r):
         if seed == "none": return []
@@ -428,11 +455,28 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     S = {"arcs": arcs, "owners": ["own"] * len(arcs), "hist": [], "alpha": alpha, "rx": radius_x,
          "pad": pad, "cache": None, "ci": ci, "cost": cost_volume(ref), "ref": ref, "pending": None}
     sess = load_session(paths, ref.shape) if resume else None
-    S["erase0"] = None
+    S["erase0"] = None; S["add0"] = None
     if sess is not None:
-        S["arcs"], S["owners"], S["erase0"] = sess
+        S["arcs"], S["owners"], S["erase0"], S["add0"] = sess
         print(f"[trace] resumed saved session: {len(S['arcs'])} arcs "
-              f"({S['owners'].count('intruder')} other-cell), {int(S['erase0'].sum())} erased voxels")
+              f"({S['owners'].count('intruder')} other-cell), {int(S['erase0'].sum())} erased, "
+              f"{int(S['add0'].sum())} added voxels")
+    elif resume and os.path.exists(paths["out_tif"]):
+        # a mask saved before sessions existed: rebuild a session that reproduces it EXACTLY.
+        # centerline = skeleton of the saved mask; the voxels that growth would add or miss
+        # become erase / add strokes, so what you see on opening is what you saved.
+        saved_mask = tifffile.imread(paths["out_tif"]) > 0
+        if saved_mask.shape == ref.shape and saved_mask.any():
+            arcs0 = _skeleton_arcs(saved_mask, 3, prune_radius=voxel) or _skeleton_arcs(saved_mask, 1)
+            owners0 = ["own"] * len(arcs0)
+            excl0 = (tifffile.imread(paths["exclude_tif"]) > 0) if os.path.exists(paths["exclude_tif"]) else None
+            g_own, _, _ = grow_owned(ref, arcs0, owners0, voxel, alpha, radius_x, pad)
+            S["arcs"], S["owners"] = arcs0, owners0
+            S["erase0"] = g_own & ~saved_mask
+            S["add0"] = saved_mask & ~g_own
+            print(f"[trace] no saved session: rebuilt one from your saved mask "
+                  f"({int(saved_mask.sum())} vox, {len(arcs0)} arcs; {int(S['add0'].sum())} vox kept by 'add', "
+                  f"{int(S['erase0'].sum())} by 'erase')")
     prev_excl = (tifffile.imread(paths["exclude_tif"]) > 0) if os.path.exists(paths["exclude_tif"]) else None
     if resume and sess is None and prev_excl is not None and prev_excl.shape == ref.shape and prev_excl.any():
         # arcs lying mostly inside a previously saved exclusion start as intruder arcs
@@ -452,6 +496,12 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     erase_layer.brush_size = 2; erase_layer.selected_label = 1; erase_layer.n_edit_dimensions = 3
     if S.get("erase0") is not None:
         erase_layer.data = S["erase0"].astype(np.uint8)
+    add_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="add (paint here to include)",
+                             scale=voxel, opacity=0.6)
+    add_layer.colormap = {None: (0, 0, 0, 0), 1: (0.2, 1.0, 0.3, 1.0)}      # green = added
+    add_layer.brush_size = 2; add_layer.selected_label = 1; add_layer.n_edit_dimensions = 3
+    if S.get("add0") is not None:
+        add_layer.data = S["add0"].astype(np.uint8)
     int_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="other cell (excluded)",
                              scale=voxel, opacity=0.5)
     int_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.1, 0.9, 1.0)}      # magenta
@@ -472,6 +522,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     def set_mode(m):
         if S.get("erasing"):
             set_erase(False)
+        if S.get("adding"):
+            set_add(False)
         S["mode"] = None if S["mode"] == m else m
         S["pending"] = None; pts_layer.data = np.zeros((0, 3))
         P.set_toggle("t", S["mode"] == "trace"); P.set_toggle("x", S["mode"] == "delete")
@@ -503,6 +555,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     P.button("Erase with brush", key="e", cb=lambda: set_erase(not S.get("erasing", False)), toggle=True,
              tooltip="Paint on the red layer; those voxels are removed from the mask and stay removed")
     P.button("Clear all erasures", cb=lambda: clear_erase())
+    P.button("Add with brush", key="a", cb=lambda: set_add(not S.get("adding", False)), toggle=True,
+             tooltip="Paint on the green layer; those voxels are forced into your mask and stay in")
     P.section("3. view")
     P.button("Next reference channel", key="c", cb=lambda: cycle_channel())
     P.button("2D / 3D", key="d", cb=lambda: toggle_dims())
@@ -529,8 +583,9 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             int_layer.data = np.zeros(ref.shape, np.uint8)
             status.setText("no centerline - use Trace and click two points"); return
         er = np.asarray(erase_layer.data) > 0
+        ad = np.asarray(add_layer.data) > 0
         m, mi, unc = grow_owned(S["ref"], S["arcs"], S["owners"], voxel, S["alpha"], S["rx"],
-                                S["pad"], dim_pct, erase=er)
+                                S["pad"], dim_pct, erase=er, add=ad)
         mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
         int_layer.data = mi.astype(np.uint8)
         n_int = S["owners"].count("intruder")
@@ -606,9 +661,31 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     # any other change to the erase layer (fill tool, undo, programmatic) also re-applies
     erase_layer.events.data.connect(lambda e: regrow())
 
+    @add_layer.mouse_drag_callbacks.append
+    def _after_add(layer, event):
+        yield
+        while event.type == "mouse_move":
+            yield
+        regrow()
+    add_layer.events.data.connect(lambda e: regrow())
+
+    def set_add(on):
+        S["adding"] = on
+        if on:
+            if S.get("erasing"): set_erase(False)
+            S["mode"] = None; P.set_toggle("t", False); P.set_toggle("x", False)
+            v.layers.selection.active = add_layer; add_layer.mode = "paint"
+            P.hint("ADD: paint voxels to include them in your mask (brush size: [ ]). Kept across slider changes.")
+        else:
+            add_layer.mode = "pan_zoom"; v.layers.selection.active = mask_layer
+            P.hint("Drag the sliders until the halo is gone; trace missing branches with [t]")
+        P.set_toggle("a", on)
+
     def set_erase(on):
         """Erase mode: select the erase layer with the brush; off: back to pan/zoom."""
         S["erasing"] = on
+        if on and S.get("adding"):
+            set_add(False)
         if on:
             S["mode"] = None; P.set_toggle("t", False); P.set_toggle("x", False)
             v.layers.selection.active = erase_layer; erase_layer.mode = "paint"
@@ -650,11 +727,13 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             status.setText("nothing to save"); return
         params = {"alpha": S["alpha"], "radius_x": S["rx"], "pad": S["pad"], "dim_pct": dim_pct,
                   "reference_channel": names[S["ci"]],
-                  "manually_erased_voxels": int((np.asarray(erase_layer.data) > 0).sum())}
+                  "manually_erased_voxels": int((np.asarray(erase_layer.data) > 0).sum()),
+                  "manually_added_voxels": int((np.asarray(add_layer.data) > 0).sum())}
         own_arcs = [a for a, o in zip(S["arcs"], S["owners"]) if o != "intruder"]
         params["n_other_cell_arcs"] = S["owners"].count("intruder")
         t, j = save(paths, m, own_arcs, params, voxel)
-        save_session(paths, S["arcs"], S["owners"], np.asarray(erase_layer.data) > 0)
+        save_session(paths, S["arcs"], S["owners"], np.asarray(erase_layer.data) > 0,
+                     np.asarray(add_layer.data) > 0)
         mi = np.asarray(int_layer.data) > 0
         extra = ""
         if mi.any() or os.path.exists(paths["exclude_tif"]):
@@ -667,6 +746,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     v.bind_key("u", undo, overwrite=True); v.bind_key("r", reseed, overwrite=True)
     v.bind_key("c", cycle_channel, overwrite=True); v.bind_key("d", toggle_dims, overwrite=True)
     v.bind_key("e", lambda vw: set_erase(not S.get("erasing", False)), overwrite=True)
+    v.bind_key("a", lambda vw: set_add(not S.get("adding", False)), overwrite=True)
     v.bind_key("i", lambda vw: set_mode("intruder"), overwrite=True)
     v.bind_key("f", lambda vw: set_mode("flip"), overwrite=True)
     v.bind_key("Control-s", do_save, overwrite=True); btn.clicked.connect(lambda: do_save())
