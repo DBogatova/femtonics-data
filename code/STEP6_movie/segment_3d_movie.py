@@ -47,9 +47,10 @@ def main():
                     help="viewing tilt around X for --time mode (degrees)")
     ap.add_argument("--time-subsample", type=int, default=1, help="use every Nth timepoint (--time)")
     ap.add_argument("--out", default=None)
-    ap.add_argument("--no-mask", dest="mask", action="store_false", default=True,
-                    help="show the raw volume (default: black background outside the cell, "
-                         "other cells blacked out, if a reviewed mask exists next to the stack)")
+    ap.add_argument("--mask", dest="mask", action="store_true", default=False,
+                    help="black background outside the cell and other cells blacked out "
+                         "(display only; default: the original, unmasked recording)")
+    ap.add_argument("--no-mask", dest="mask", action="store_false", help="original look (default)")
     ap.add_argument("--voxel", nargs=3, type=float, default=None, metavar=("Z", "Y", "X"),
                     help="voxel size in um for the display mask (default: run metadata)")
     ap.add_argument("--edge-um", type=float, default=2.0,

@@ -50,9 +50,10 @@ def main():
                     help="projection for the segment MIP panel: z=XY, y=XZ, x=ZY")
     ap.add_argument("--frame-ms", type=float, default=None, help="frame period (ms) to report lags in real time")
     ap.add_argument("--out-prefix", default=None)
-    ap.add_argument("--no-mask", dest="mask", action="store_false", default=True,
-                    help="cell picture from the raw stack (default: black background outside the "
-                         "cell, other cells blacked out). Display only; traces are never masked.")
+    ap.add_argument("--mask", dest="mask", action="store_true", default=False,
+                    help="black background outside the cell and other cells blacked out "
+                         "(display only; default: the original, unmasked recording)")
+    ap.add_argument("--no-mask", dest="mask", action="store_false", help="original look (default)")
     ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
     args = ap.parse_args()
 

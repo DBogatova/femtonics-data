@@ -63,8 +63,10 @@ def main(argv=None) -> int:
     g.add_argument("--stack", help="path to <runNN>_clean.tif")
     ap.add_argument("--kinds", nargs="+", choices=KINDS, default=list(KINDS))
     ap.add_argument("--force", action="store_true", help="rebuild even if up to date")
-    ap.add_argument("--no-mask", dest="mask", action="store_false", default=True,
-                    help="raw background (default: black outside the cell, other cells blacked out)")
+    ap.add_argument("--mask", dest="mask", action="store_true", default=False,
+                    help="black background outside the cell and other cells blacked out "
+                         "(display only; default: the original, unmasked recording)")
+    ap.add_argument("--no-mask", dest="mask", action="store_false", help="original look (default)")
     ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
     args = ap.parse_args(argv)
 
@@ -80,7 +82,7 @@ def main(argv=None) -> int:
     deps = [labels] + [stack.parent / f"{stack.stem}{suf}" for suf in
                        ("_autoseg_labelmap_reviewed.tif", "_exclude_labelmap.tif")]
     newest = max(d.stat().st_mtime for d in deps if d.exists())
-    mask_args = ([] if args.mask else ["--no-mask"]) + ["--edge-um", f"{args.edge_um:g}"]
+    mask_args = (["--mask"] if args.mask else ["--no-mask"]) + ["--edge-um", f"{args.edge_um:g}"]
     todo, procs = [], []
     for k in args.kinds:
         o = outs[k]

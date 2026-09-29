@@ -84,12 +84,12 @@ def options_record(mask: bool, edge_um: float) -> dict:
 
 def options_match(output_path, mask: bool, edge_um: float) -> bool:
     """True if <output>.display.json records the same options. A missing sidecar counts
-    as the historical default (mask on, 2 um) so existing outputs are not all rebuilt."""
+    as the historical default (unmasked) so existing outputs are not all rebuilt."""
     import json
     side = Path(str(output_path) + ".display.json")
     rec = options_record(mask, edge_um)
     if not side.exists():
-        return rec == options_record(True, 2.0)
+        return rec == options_record(False, 2.0)
     try:
         return json.loads(side.read_text()) == rec
     except Exception:
