@@ -285,7 +285,16 @@ def grow(cache, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0):
     return m, unc
 
 
-def grow_owned(ref, arcs, owners, voxel, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0, erase=None, add=None):
+def owner_caches(ref, arcs, owners, voxel):
+    """The expensive part of grow_owned (geodesic maps), once per arc/owner/reference change."""
+    own_arcs = [a for a, o in zip(arcs, owners) if o != "intruder"]
+    int_arcs = [a for a, o in zip(arcs, owners) if o == "intruder"]
+    return (grow_cache(ref, own_arcs, voxel) if own_arcs else None,
+            grow_cache(ref, int_arcs, voxel) if int_arcs else None)
+
+
+def grow_owned(ref, arcs, owners, voxel, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0, erase=None, add=None,
+               caches=None):
     """Grow the own-cell mask and the intruder mask from ONE set of centerline arcs.
 
     owners[k] is "own" or "intruder" for arcs[k]. Each owner's mask is grown with the
@@ -297,8 +306,7 @@ def grow_owned(ref, arcs, owners, voxel, alpha=0.5, radius_x=1.5, pad=0, dim_pct
     int_arcs = [a for a, o in zip(arcs, owners) if o == "intruder"]
     shape = ref.shape
     empty = np.zeros(shape, bool)
-    c_own = grow_cache(ref, own_arcs, voxel) if own_arcs else None
-    c_int = grow_cache(ref, int_arcs, voxel) if int_arcs else None
+    c_own, c_int = caches if caches is not None else owner_caches(ref, arcs, owners, voxel)
     m_own, unc = grow(c_own, alpha, radius_x, pad, dim_pct) if c_own else (empty.copy(), empty.copy())
     m_int, _ = grow(c_int, alpha, radius_x, pad, dim_pct) if c_int else (empty.copy(), None)
     if m_own is None: m_own = empty.copy()
@@ -536,10 +544,10 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
 
     P.section("1. thickness (live)")
     P.slider("alpha - relative threshold", 5, 95, alpha, 100,
-             lambda val: (S.__setitem__("alpha", val), regrow()))
+             lambda val: (S.__setitem__("alpha", val), regrow_soon()))
     P.note("higher alpha = thinner mask: keeps voxels brighter than alpha x the local centerline")
-    P.slider("radius x local", 50, 400, radius_x, 100, lambda val: (S.__setitem__("rx", val), regrow()))
-    P.slider("pad (voxels)", 0, 3, pad, 1, lambda val: (S.__setitem__("pad", val), regrow()), fmt="{:.0f}")
+    P.slider("radius x local", 50, 400, radius_x, 100, lambda val: (S.__setitem__("rx", val), regrow_soon()))
+    P.slider("pad (voxels)", 0, 3, pad, 1, lambda val: (S.__setitem__("pad", val), regrow_soon()), fmt="{:.0f}")
     P.section("2. edit the centerline")
     P.button("Trace arc between 2 clicks", key="t", cb=lambda: set_mode("trace"), toggle=True,
              tooltip="Click two points; the brightest path between them becomes a centerline arc")
@@ -566,8 +574,13 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     P.finish()
 
     # ---- core updates
+    from qtpy.QtCore import QTimer
+    _timer = QTimer(); _timer.setSingleShot(True); _timer.setInterval(60)
+    _timer.timeout.connect(lambda: regrow())
+
     def rebuild_cache():
-        # the owner-aware growth recomputes its caches; keep the arc index volume for clicks
+        # expensive geodesic maps: only when arcs, owners or the reference change
+        S["caches"] = owner_caches(S["ref"], S["arcs"], S["owners"], voxel) if S["arcs"] else (None, None)
         cl = np.zeros(ref.shape, np.int32)
         for k, pts in enumerate(S["arcs"], start=1):
             cl[tuple(pts.T)] = k
@@ -577,7 +590,11 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             cmap[k] = (1.0, 0.1, 0.9, 1.0) if o == "intruder" else (0.1, 0.9, 1.0, 1.0)
         cl_layer.colormap = cmap
 
+    def regrow_soon():
+        _timer.start()                                      # restarts: only the last request runs
+
     def regrow():
+        _timer.stop()
         if not S["arcs"]:
             mask_layer.data = np.zeros(ref.shape, np.uint8); unc_layer.data = np.zeros(ref.shape, np.uint8)
             int_layer.data = np.zeros(ref.shape, np.uint8)
@@ -585,7 +602,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         er = np.asarray(erase_layer.data) > 0
         ad = np.asarray(add_layer.data) > 0
         m, mi, unc = grow_owned(S["ref"], S["arcs"], S["owners"], voxel, S["alpha"], S["rx"],
-                                S["pad"], dim_pct, erase=er, add=ad)
+                                S["pad"], dim_pct, erase=er, add=ad, caches=S.get("caches"))
         mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
         int_layer.data = mi.astype(np.uint8)
         n_int = S["owners"].count("intruder")
@@ -659,7 +676,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         regrow()                                            # stroke finished -> subtract it
 
     # any other change to the erase layer (fill tool, undo, programmatic) also re-applies
-    erase_layer.events.data.connect(lambda e: regrow())
+    erase_layer.events.data.connect(lambda e: regrow_soon())
 
     @add_layer.mouse_drag_callbacks.append
     def _after_add(layer, event):
@@ -667,7 +684,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         while event.type == "mouse_move":
             yield
         regrow()
-    add_layer.events.data.connect(lambda e: regrow())
+    add_layer.events.data.connect(lambda e: regrow_soon())
 
     def set_add(on):
         S["adding"] = on
