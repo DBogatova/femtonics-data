@@ -13,6 +13,7 @@ step for the selected run:
   [Open wrap GUI]            launches wrap_segments_napari.py detached
   [Build figure + movies]    coherence + behavior composite, then the ticked movies
   [Build movies only]        just the ticked 3D movies (dual / dynamic / structural)
+  [Statistics (all cells)]   per-run metrics + cohort table / summary / figures in stats/
   [Refresh]                  re-scan the disk, update stages
 
 GUI steps are launched as separate processes so napari's own event loop never
@@ -128,10 +129,13 @@ def run_gui() -> int:
             self.b_ereg.setToolTip("Open the region tool on this run, whatever its stage")
             self.b_fig = QtWidgets.QPushButton("Build figure + movies")
             self.b_mov = QtWidgets.QPushButton("Build movies only")
+            self.b_stats = QtWidgets.QPushButton("Statistics (all cells)")
+            self.b_stats.setToolTip("Recompute per-run metrics for every cell with regions and rebuild "
+                                    "stats/cohort_* (table, summary, figures)")
             self.b_ref = QtWidgets.QPushButton("Refresh")
             self.chain = QtWidgets.QCheckBox("chain automatic steps")
             self.chain.setChecked(True)
-            for b in (self.b_auto, self.b_gui, self.b_emask, self.b_ereg, self.b_fig, self.b_mov, self.b_ref):
+            for b in (self.b_auto, self.b_gui, self.b_emask, self.b_ereg, self.b_fig, self.b_mov, self.b_stats, self.b_ref):
                 btns.addWidget(b)
             btns.addWidget(self.chain)
             btns.addStretch()
@@ -173,6 +177,7 @@ def run_gui() -> int:
             self.b_ref.clicked.connect(self.refresh)
             self.b_auto.clicked.connect(lambda: self.dispatch(gui_ok=False))
             self.b_gui.clicked.connect(lambda: self.dispatch(gui_ok=True))
+            self.b_stats.clicked.connect(self.build_stats)
             self.b_emask.clicked.connect(lambda: self.reopen("mask"))
             self.b_ereg.clicked.connect(lambda: self.reopen("regions"))
             self.b_fig.clicked.connect(lambda: self.build_figure(with_movies=True))
@@ -274,6 +279,15 @@ def run_gui() -> int:
             pth = ROOT / rd / f"{st}.tif"
             return pth if pth.exists() else None
 
+        def stats_argv(self):
+            return [[PYEXE, str(ROOT / "code/STEP8_stats/run_metrics.py"), "--all"],
+                    [PYEXE, str(ROOT / "code/STEP8_stats/cohort_stats.py")]]
+
+        def build_stats(self):
+            if self.busy:
+                return
+            threading.Thread(target=self._run_argv_seq, args=(self.stats_argv(),), daemon=True).start()
+
         def display_args(self):
             return ((["--mask"] if self.bg_black.isChecked() else ["--no-mask"]) + ["--edge-um", f"{self.edge.value():g}"]
                     + (["--hide-other"] if self.hide_other.isChecked() else ["--show-other"]))
@@ -297,6 +311,8 @@ def run_gui() -> int:
                 seq.append(mv)
             if not seq:
                 self.logline("nothing selected to build"); return
+            if figure:
+                seq += self.stats_argv()                 # cohort statistics follow every new figure
             threading.Thread(target=self._run_argv_seq, args=(seq,), daemon=True).start()
 
         def _run_auto(self, r):
@@ -329,6 +345,8 @@ def run_gui() -> int:
                     if self.mv_force.isChecked():
                         mv.append("--force")
                     self._exec(mv)
+                    for a in self.stats_argv():
+                        self._exec(a)
             finally:
                 self.busy = False
                 self.refresh_signal.emit()

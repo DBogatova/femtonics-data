@@ -49,3 +49,6 @@ __pycache__/
 # launcher script (not .py)
 !code/femto
 !mice.csv
+
+# statistics outputs are derived (regenerate with: femto stats)
+stats/
