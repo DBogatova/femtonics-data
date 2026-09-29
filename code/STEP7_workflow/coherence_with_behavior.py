@@ -51,7 +51,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import femto_status as fs  # noqa: E402
 
-DISPLAY = {"mask": False, "edge_um": 2.0}          # cell-picture display mask (set from CLI)
+DISPLAY = {"mask": False, "edge_um": 2.0, "hide_other": True}          # cell-picture display mask (set from CLI)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.display_mask import options_match, write_options   # noqa: E402
 COHERENCE_TOOL = "code/extra/segment_event_coherence.py"          # relative to root
@@ -108,7 +108,7 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
                          ("_autoseg_labelmap_reviewed.tif", "_exclude_labelmap.tif")]
     newest = max(d.stat().st_mtime for d in deps if d.exists())
     up_to_date = (coh_png.exists() and events.exists() and coh_png.stat().st_mtime >= newest
-                  and options_match(coh_png, DISPLAY["mask"], DISPLAY["edge_um"]))
+                  and options_match(coh_png, DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"]))
     if up_to_date and not force:
         print(f"  coherence: reuse existing (newer than labelmap {lm.name})")
         return coh_png, events, run_dir, False
@@ -130,6 +130,7 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
             cmd += ["--order", *[str(o) for o in order], "--names", *names]
             print(f"  coherence: region names (proximal->distal): {', '.join(names)}")
         cmd += ["--mask"] if DISPLAY["mask"] else ["--no-mask"]
+        cmd += ["--hide-other"] if DISPLAY["hide_other"] else ["--show-other"]
         cmd += ["--edge-um", f"{DISPLAY['edge_um']:g}"]
         cmd += ["--out-prefix", str(out_prefix)]
         run_subprocess(cmd, root, "segment_event_coherence")
@@ -138,7 +139,7 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
         # fresh: safe to write the canonical files into the run dir
         print(f"  coherence: building fresh (labelmap {lm.name})")
         build(run_dir / f"{stem}_coherence")
-        write_options(coh_png, DISPLAY["mask"], DISPLAY["edge_um"])
+        write_options(coh_png, DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"])
         return coh_png, events, run_dir, True
 
     # canonical figure exists but is stale (regions changed) or forced: archive the old
@@ -147,7 +148,7 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
     print(f"  coherence: rebuilding (inputs, display options changed, or --force)")
     archive([coh_png, coh_pdf, events, Path(str(coh_png) + ".display.json")], run_dir)
     build(run_dir / f"{stem}_coherence")
-    write_options(coh_png, DISPLAY["mask"], DISPLAY["edge_um"])
+    write_options(coh_png, DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"])
     return coh_png, events, run_dir, True
 
 
@@ -426,9 +427,13 @@ def main(argv=None) -> int:
                     help="black background outside the cell and other cells blacked out "
                          "(display only; default: the original, unmasked recording)")
     ap.add_argument("--no-mask", dest="mask", action="store_false", help="original look (default)")
+    ap.add_argument("--hide-other", dest="hide_other", action="store_true", default=True,
+                    help="fill cells marked 'other cell' with nearby background flicker (default)")
+    ap.add_argument("--show-other", dest="hide_other", action="store_false",
+                    help="show other cells as recorded")
     ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
     args = ap.parse_args(argv)
-    DISPLAY["mask"], DISPLAY["edge_um"] = args.mask, args.edge_um
+    DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"] = args.mask, args.edge_um, args.hide_other
 
     root = Path(args.root).resolve() if args.root else fs.project_root()
     runs = fs.build_status(root)

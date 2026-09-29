@@ -51,6 +51,11 @@ def main():
                     help="black background outside the cell and other cells blacked out "
                          "(display only; default: the original, unmasked recording)")
     ap.add_argument("--no-mask", dest="mask", action="store_false", help="original look (default)")
+    ap.add_argument("--hide-other", dest="hide_other", action="store_true", default=True,
+                    help="replace voxels of cells marked 'other cell' with nearby background "
+                         "flicker (default; display only)")
+    ap.add_argument("--show-other", dest="hide_other", action="store_false",
+                    help="show other cells as recorded")
     ap.add_argument("--voxel", nargs=3, type=float, default=None, metavar=("Z", "Y", "X"),
                     help="voxel size in um for the display mask (default: run metadata)")
     ap.add_argument("--edge-um", type=float, default=2.0,
@@ -59,6 +64,14 @@ def main():
 
     stack = tifffile.imread(args.stack)
     seg = tifffile.imread(args.labelmap).astype(np.uint16)
+    if args.hide_other:                               # display only: other cells -> background flicker
+        import sys as _sys, pathlib as _pl
+        _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+        from common.display_mask import load_other_cell_fill, fill_other_cells
+        fill = load_other_cell_fill(args.stack, args.labelmap)
+        if fill is not None:
+            fill_other_cells(stack, *fill)
+            print(f"other cells hidden: {len(fill[0])} voxels filled with nearby background")
     struct = (stack.max(0) if args.agg == "max" else stack.mean(0)).astype(np.float32) \
         if stack.ndim == 4 else stack.astype(np.float32)
     assert seg.shape == struct.shape, f"mask {seg.shape} != volume {struct.shape}"

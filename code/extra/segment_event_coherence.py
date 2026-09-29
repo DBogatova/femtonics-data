@@ -54,6 +54,11 @@ def main():
                     help="black background outside the cell and other cells blacked out "
                          "(display only; default: the original, unmasked recording)")
     ap.add_argument("--no-mask", dest="mask", action="store_false", help="original look (default)")
+    ap.add_argument("--hide-other", dest="hide_other", action="store_true", default=True,
+                    help="replace voxels of cells marked 'other cell' with nearby background "
+                         "flicker (default; display only)")
+    ap.add_argument("--show-other", dest="hide_other", action="store_false",
+                    help="show other cells as recorded")
     ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
     args = ap.parse_args()
 
@@ -221,7 +226,14 @@ def main():
     view = {"z": "XY", "y": "XZ", "x": "ZY"}[args.proj_axis]
     vz, vy, vx = args.voxel
     aspect_map = {0: vy / vx, 1: vz / vx, 2: vz / vy}[pa]
-    vol = stack.mean(0).astype(np.float32)
+    vol = stack.mean(0).astype(np.float32)             # a COPY: traces above used the raw stack
+    if args.hide_other:
+        import sys as _sys, pathlib as _pl
+        _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+        from common.display_mask import load_other_cell_fill, fill_other_cells
+        fill = load_other_cell_fill(args.stack, args.labelmap)
+        if fill is not None:
+            fill_other_cells(vol, *fill); print(f"cell picture: other cells hidden ({len(fill[0])} voxels)")
     wgt = None
     if args.mask:
         import sys as _sys, pathlib as _pl

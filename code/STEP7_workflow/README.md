@@ -87,10 +87,13 @@ changed anatomical distances and skeleton splits.
   any arc, including seeded ones, between your cell and the other cell. Saving writes
   `runNN_clean_exclude_labelmap.tif` next to the reviewed mask; the exclusion is
   reloaded the next time you open the tool.
-- **Movies and the figure's cell picture** show the original recording by default.
-  Tick "black background / hide other cells" in the panel (CLI: `--mask`) to show only
-  your cell on black - full brightness inside the mask, a soft falloff over the edge
-  (um) outside it, other cells forced to 0.
+- **Other cells are hidden by default** in movies and the figure's cell picture: each
+  voxel of a cell you marked "other cell" takes the signal of a nearby background voxel
+  (same plane, within ~20 voxels along the tube, away from both cells) for the whole
+  recording, with a 50/50 blended rim, so the spot flickers like real background. Panel:
+  "hide other cells (fill with background)"; CLI `--hide-other` (default) / `--show-other`.
+- **Black background** is opt-in: panel "black background", CLI `--mask` (soft falloff
+  over the edge (um) outside your cell).
 - **Never used for analysis.** Traces, events and all numbers come from the
   unmodified stack and your regions.
 

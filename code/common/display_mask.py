@@ -78,24 +78,99 @@ def load_display_weight(stack_path, labelmap=None, voxel=None, edge_um: float = 
     return w, desc
 
 
-def options_record(mask: bool, edge_um: float) -> dict:
-    return {"mask": bool(mask), "edge_um": round(float(edge_um), 3)}
+def options_record(mask: bool, edge_um: float, hide_other: bool = False) -> dict:
+    return {"mask": bool(mask), "edge_um": round(float(edge_um), 3), "hide_other": bool(hide_other)}
 
 
-def options_match(output_path, mask: bool, edge_um: float) -> bool:
+def options_match(output_path, mask: bool, edge_um: float, hide_other: bool = False) -> bool:
     """True if <output>.display.json records the same options. A missing sidecar counts
     as the historical default (unmasked) so existing outputs are not all rebuilt."""
     import json
     side = Path(str(output_path) + ".display.json")
-    rec = options_record(mask, edge_um)
+    rec = options_record(mask, edge_um, hide_other)
     if not side.exists():
         return rec == options_record(False, 2.0)
     try:
-        return json.loads(side.read_text()) == rec
+        old = json.loads(side.read_text()); old.setdefault("hide_other", False)
+        return old == rec
     except Exception:
         return False
 
 
-def write_options(output_path, mask: bool, edge_um: float):
+def write_options(output_path, mask: bool, edge_um: float, hide_other: bool = False):
     import json
-    Path(str(output_path) + ".display.json").write_text(json.dumps(options_record(mask, edge_um)))
+    Path(str(output_path) + ".display.json").write_text(json.dumps(options_record(mask, edge_um, hide_other)))
+
+
+# ----------------------------------------------------------------------------- other cells
+def background_donors(exclude, own, window_vox: int = 20, margin_vox: int = 2, seed: int = 0):
+    """For every voxel of another cell (plus a 1-voxel rim), pick a DONOR background voxel:
+    same Z plane, within +-window_vox columns, at least margin_vox from both cells.
+    Returns (targets (N,3), donors (N,3), rim_flag (N,) bool). Deterministic (seeded)."""
+    ex = np.asarray(exclude) > 0
+    own = np.asarray(own) > 0 if own is not None else np.zeros_like(ex)
+    ex &= ~own
+    if not ex.any():
+        z = np.zeros((0, 3), int)
+        return z, z, np.zeros(0, bool)
+    st = np.ones((3, 3, 3), bool)
+    rim = ndi.binary_dilation(ex, st) & ~ex & ~own
+    far = ~ndi.binary_dilation(ex | own, st, iterations=margin_vox)
+    targets = np.argwhere(ex | rim)
+    rng = np.random.default_rng(seed)
+    donors = np.empty_like(targets)
+    Z, Y, X = ex.shape
+    for z in np.unique(targets[:, 0]):
+        cand = np.argwhere(far[z])                    # (y, x) background in this plane
+        sel = np.flatnonzero(targets[:, 0] == z)
+        if len(cand) == 0:                            # no background in the plane: any plane
+            cand3 = np.argwhere(far)
+            pick = cand3[rng.integers(0, len(cand3), len(sel))] if len(cand3) else targets[sel]
+            donors[sel] = pick
+            continue
+        order = np.argsort(cand[:, 1]); cx = cand[order, 1]; cy = cand[order, 0]
+        for i in sel:
+            x0 = targets[i, 2]
+            w = window_vox
+            while True:
+                lo, hi = np.searchsorted(cx, x0 - w), np.searchsorted(cx, x0 + w, side="right")
+                if hi > lo or w > X:
+                    break
+                w *= 2
+            k = rng.integers(lo, hi) if hi > lo else rng.integers(0, len(cx))
+            donors[i] = (z, cy[k], cx[k])
+    rim_flag = rim[tuple(targets.T)]
+    return targets, donors, rim_flag
+
+
+def fill_other_cells(vol, targets, donors, rim_flag):
+    """In place: other-cell voxels take their donor's value; rim voxels are a 50/50 blend.
+    vol is (Z,Y,X) or (T,Z,Y,X). Returns vol."""
+    if len(targets) == 0:
+        return vol
+    t, d = tuple(targets.T), tuple(donors.T)
+    if vol.ndim == 4:
+        src = vol[(slice(None),) + d].astype(np.float32)
+        cur = vol[(slice(None),) + t].astype(np.float32)
+        new = np.where(rim_flag[None, :], 0.5 * cur + 0.5 * src, src)
+        vol[(slice(None),) + t] = new.astype(vol.dtype)
+    else:
+        src = vol[d].astype(np.float32); cur = vol[t].astype(np.float32)
+        vol[t] = np.where(rim_flag, 0.5 * cur + 0.5 * src, src).astype(vol.dtype)
+    return vol
+
+
+def load_other_cell_fill(stack_path, labelmap=None):
+    """(targets, donors, rim) for the run's saved exclusion, or None if there is none."""
+    import tifffile
+    own_p, ex_p = find_masks(stack_path)
+    if ex_p is None:
+        return None
+    ex = tifffile.imread(str(ex_p))
+    own = tifffile.imread(str(own_p)) if own_p is not None else None
+    if labelmap is not None and Path(labelmap).exists():
+        seg = tifffile.imread(str(labelmap)) > 0
+        own = seg if own is None else ((np.asarray(own) > 0) | seg)
+    if not (ex > 0).any():
+        return None
+    return background_donors(ex, own)

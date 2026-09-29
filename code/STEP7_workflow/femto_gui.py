@@ -147,10 +147,15 @@ def run_gui() -> int:
                 self.mv[key] = cb; movs.addWidget(cb)
             self.mv_force = QtWidgets.QCheckBox("rebuild figure + movies even if up to date")
             movs.addWidget(self.mv_force)
-            self.bg_black = QtWidgets.QCheckBox("black background / hide other cells")
+            self.hide_other = QtWidgets.QCheckBox("hide other cells (fill with background)")
+            self.hide_other.setChecked(True)
+            self.hide_other.setToolTip("Cells you marked 'other cell' in the mask tool are replaced by nearby "
+                                       "background flicker in movies and the figure picture. Traces never change.")
+            movs.addWidget(self.hide_other)
+            self.bg_black = QtWidgets.QCheckBox("black background")
             self.bg_black.setChecked(False)          # default: the original, unmasked look
-            self.bg_black.setToolTip("Movies and the figure's cell picture show only your cell on black; "
-                                     "cells you marked as 'other' are blacked out. Traces are never affected.")
+            self.bg_black.setToolTip("Movies and the figure's cell picture show only your cell on black. "
+                                     "Traces are never affected.")
             movs.addWidget(self.bg_black)
             movs.addWidget(QtWidgets.QLabel("edge (um):"))
             self.edge = QtWidgets.QDoubleSpinBox(); self.edge.setRange(0.0, 10.0); self.edge.setSingleStep(0.5)
@@ -270,7 +275,8 @@ def run_gui() -> int:
             return pth if pth.exists() else None
 
         def display_args(self):
-            return (["--mask"] if self.bg_black.isChecked() else ["--no-mask"]) + ["--edge-um", f"{self.edge.value():g}"]
+            return ((["--mask"] if self.bg_black.isChecked() else ["--no-mask"]) + ["--edge-um", f"{self.edge.value():g}"]
+                    + (["--hide-other"] if self.hide_other.isChecked() else ["--show-other"]))
 
         def build_figure(self, with_movies=True, figure=True):
             r = self.selected()
@@ -319,8 +325,7 @@ def run_gui() -> int:
                 if fresh and fresh[0].get("stage") == "complete" and kinds and self.chain.isChecked():
                     mv = [PYEXE, str(ROOT / "code/STEP7_workflow/make_movies.py"),
                           "--run", r.get("behavior_base"), "--kinds", *kinds,
-                          *(["--mask"] if self.bg_black.isChecked() else ["--no-mask"]),
-                          "--edge-um", f"{self.edge.value():g}"]
+                          *self.display_args()]
                     if self.mv_force.isChecked():
                         mv.append("--force")
                     self._exec(mv)

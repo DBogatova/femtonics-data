@@ -67,6 +67,10 @@ def main(argv=None) -> int:
                     help="black background outside the cell and other cells blacked out "
                          "(display only; default: the original, unmasked recording)")
     ap.add_argument("--no-mask", dest="mask", action="store_false", help="original look (default)")
+    ap.add_argument("--hide-other", dest="hide_other", action="store_true", default=True,
+                    help="fill cells marked 'other cell' with nearby background flicker (default)")
+    ap.add_argument("--show-other", dest="hide_other", action="store_false",
+                    help="show other cells as recorded")
     ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
     args = ap.parse_args(argv)
 
@@ -82,12 +86,13 @@ def main(argv=None) -> int:
     deps = [labels] + [stack.parent / f"{stack.stem}{suf}" for suf in
                        ("_autoseg_labelmap_reviewed.tif", "_exclude_labelmap.tif")]
     newest = max(d.stat().st_mtime for d in deps if d.exists())
-    mask_args = (["--mask"] if args.mask else ["--no-mask"]) + ["--edge-um", f"{args.edge_um:g}"]
+    mask_args = ((["--mask"] if args.mask else ["--no-mask"]) + ["--edge-um", f"{args.edge_um:g}"]
+                 + (["--hide-other"] if args.hide_other else ["--show-other"]))
     todo, procs = [], []
     for k in args.kinds:
         o = outs[k]
         if (o.exists() and o.stat().st_mtime >= newest and not args.force
-                and options_match(o, args.mask, args.edge_um)):
+                and options_match(o, args.mask, args.edge_um, args.hide_other)):
             print(f"  {k:9s} up to date: {o.name}")
             continue
         todo.append(k)
@@ -102,7 +107,7 @@ def main(argv=None) -> int:
         out, _ = p.communicate()
         last = [l for l in out.splitlines() if l.startswith("saved")]
         if p.returncode == 0 and outs[k].exists():
-            write_options(outs[k], args.mask, args.edge_um)
+            write_options(outs[k], args.mask, args.edge_um, args.hide_other)
             print(f"  {k:9s} OK  {outs[k].name}  ({outs[k].stat().st_size / 1e6:.1f} MB)  {last[-1] if last else ''}")
         else:
             ok = False
