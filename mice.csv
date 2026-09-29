@@ -1,0 +1,8 @@
+mouse,line,virus,titer_gc_per_ml,volume_nl,dose_gc,injection_date,injected_by,notes
+rbp4_132_phpeb,Rbp4-Cre,AAV-PHP.eB GCaMP7s,3.20E+13,15,4.80E+11,2025-10-10,Brad + Natalie,good expression low somatodendritic coupling
+rbp4_139_phpeb,Rbp4-Cre,AAV-PHP.eB GCaMP7s,3.20E+13,15,4.80E+11,2025-10-10,Brad + Natalie,good expression low somatodendritic coupling
+rbp4_140_phpeb,Rbp4-Cre,AAV-PHP.eB GCaMP7s,3.20E+13,15,4.80E+11,2025-10-10,Brad + Natalie,good expression low somatodendritic coupling
+rbp4_141_phpeb,Rbp4-Cre,AAV-PHP.eB GCaMP7s,3.20E+13,15,4.80E+11,2025-10-10,Brad + Natalie,good expression low somatodendritic coupling
+rbp4_phpebach,Rbp4-Cre,AAV-PHP.eB GCaMP7s,,,,,,injection date unknown - ask
+rbp4_ai162_055,Rbp4-Cre x Ai162,transgenic GCaMP6s (no virus),,,,,,no runs matched yet
+rbp4_phpebne_053,Rbp4-Cre,AAV-PHP.eB (ne),,,,,,no runs matched yet; injection date unknown

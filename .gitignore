@@ -48,3 +48,4 @@ __pycache__/
 
 # launcher script (not .py)
 !code/femto
+!mice.csv
