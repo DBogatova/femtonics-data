@@ -772,12 +772,12 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
 
     v = napari.Viewer(ndisplay=3)
     clim = (float(np.percentile(bg, 2)), float(np.percentile(bg, 99.7)))
-    v.add_image(bg, name="anatomy", colormap="gray", scale=vox,
+    v.add_image(bg, name="Image", colormap="gray", scale=vox,
                 contrast_limits=clim, rendering="attenuated_mip", opacity=0.6)
-    cells_layer = v.add_labels(cellvol, name="cells (accept/reject)", scale=vox, opacity=0.35)
-    mask_layer = v.add_labels(S["last_base"].astype(np.uint8), name="mask (refine)",
+    cells_layer = v.add_labels(cellvol, name="Proposed cells", scale=vox, opacity=0.35)
+    mask_layer = v.add_labels(S["last_base"].astype(np.uint8), name="Your cell",
                               scale=vox, opacity=0.3)
-    seg_layer = v.add_labels(np.zeros(cellvol.shape, np.uint8), name="segments (wrap)",
+    seg_layer = v.add_labels(np.zeros(cellvol.shape, np.uint8), name="Regions",
                              scale=vox, opacity=0.7)
     v.scale_bar.visible = True
     v.scale_bar.unit = "um"
@@ -1116,28 +1116,27 @@ def launch(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR):
     v.bind_key("e", toggle_erase, overwrite=True)
 
     # ---- side panel: every key as a button, same callbacks ----
-    P = ActionPanel(v, title="pick regions")
-    P.section("1. select regions")
-    P.button("Wrap whole piece (click)", key="w", cb=lambda: toggle_wrap(v), toggle=True,
+    P = ActionPanel(v, title="Regions")
+    P.section("Pick Regions")
+    P.button("Whole piece (click it)", key="w", cb=lambda: toggle_wrap(v), toggle=True,
              tooltip="One click selects the junction-to-junction piece under the cursor")
-    P.button("Interval between two clicks", key="i", cb=lambda: toggle_interval(v), toggle=True,
+    P.button("Stretch between 2 clicks", key="i", cb=lambda: toggle_interval(v), toggle=True,
              tooltip="Click two points; the stretch between them becomes a region")
-    P.button("Cut region here (click)", key="k", cb=lambda: toggle_cut(v), toggle=True,
+    P.button("Cut a region here (click)", key="k", cb=lambda: toggle_cut(v), toggle=True,
              tooltip="Click on a region: it is split in two at that cross-section, exactly where you clicked")
-    P.section("2. label the last region")
+    P.section("Name Last Region")
     P.button("Last = soma", key="s", cb=lambda: _relabel_last(1))
     P.button("Last = trunk", key="t", cb=lambda: _relabel_last(2))
     P.button("Last = next branch", key="b",
              cb=lambda: _relabel_last(next_branch_label([w["label"] for w in S["wraps"][:-1]])))
     P.button("Name last region...", key="n", cb=lambda: name_last(v))
-    P.section("3. fix")
-    P.button("Erase with brush (mask + regions)", key="e", cb=lambda: toggle_erase(v), toggle=True,
+    P.section("Fix Regions")
+    P.button("Erase voxels (brush)", key="e", cb=lambda: toggle_erase(v), toggle=True,
              tooltip="Brush removes voxels from the mask; any region covering them shrinks too")
     P.button("Merge last two regions", key="m", cb=lambda: merge_last_two(v))
     P.button("Undo last region", key="u", cb=lambda: _undo(v))
-    P.note("Cells: keys 1-9 toggle a proposed cell in/out. [a] rotates the anatomy view. "
-           "Paint/erase the mask with napari's brush when wrap mode is off.")
-    P.section("4. done")
+    P.note("Keys 1-9 hide / show a proposed cell. [a] rotates the view.")
+    P.section("Save")
     P.button("Save regions", key="Ctrl+S", cb=lambda: _save(v))
     P.finish()
     S["panel"] = P

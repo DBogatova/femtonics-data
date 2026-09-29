@@ -17,12 +17,13 @@ from __future__ import annotations
 
 
 class ActionPanel:
-    def __init__(self, viewer, title="actions", min_width=220, max_width=320):
+    def __init__(self, viewer, title="actions", min_width=300, max_width=360):
         from qtpy.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame)
         from qtpy.QtCore import Qt
         self._Qt = Qt
         self.viewer = viewer
         self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)   # wrap, never scroll sideways
         self.scroll.setMinimumWidth(min_width); self.scroll.setMaximumWidth(max_width)
         self.w = QWidget(); self.lay = QVBoxLayout(self.w); self.lay.setSpacing(4)
         self.scroll.setWidget(self.w)
@@ -50,7 +51,9 @@ class ActionPanel:
     # ---- structure
     def section(self, title):
         from qtpy.QtWidgets import QLabel
-        lab = QLabel(title.upper()); lab.setStyleSheet("color: #90a4ae; font-size: 10px; margin-top: 6px;")
+        lab = QLabel(title)
+        lab.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: bold; margin-top: 12px; "
+                          "padding: 3px 4px; border-bottom: 1px solid #5f6b73;")
         self.lay.addWidget(lab)
 
     def note(self, text):

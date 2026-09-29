@@ -94,6 +94,15 @@ def load_reference(paths, channel="cofire_mean"):
     return np.clip((vol - lo) / (hi - lo + 1e-9), 0, 1), names, ci, ref
 
 
+CHANNEL_LABEL = {"cofire_mean": "co-firing moments", "anatomy_mean": "average",
+                 "activity_p99.5": "peak activity"}
+HIDDEN_CHANNELS = {"neighbour_corr"}      # a correlation statistic (strip edges show as white bands)
+
+
+def channel_label(name):
+    return CHANNEL_LABEL.get(name, name)
+
+
 # ----------------------------------------------------------------------------- tracing
 def cost_volume(ref, gamma=2.0, eps=0.02):
     """Geodesic cost: cheap on bright ridges, expensive in the dark. cost = (eps + 1-I)^gamma."""
@@ -454,6 +463,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         pad = int(saved.get("pad", pad)); channel = saved.get("reference_channel", channel)
         print(f"[trace] restoring saved settings: alpha {alpha:.2f}, radius x {radius_x:.2f}, pad {pad}, "
               f"channel {channel}")
+    if channel in HIDDEN_CHANNELS:
+        channel = "cofire_mean"
     ref, names, ci, ref_all = load_reference(paths, channel)
     def do_seed(r):
         if seed == "none": return []
@@ -495,33 +506,32 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
               f"{S['owners'].count('intruder')} seed arcs start as intruder")
 
     v = napari.Viewer(title=f"trace mask - {os.path.basename(stack_path)}", ndisplay=ndisplay)
-    ref_layer = v.add_image(ref, name=f"reference [{names[ci]}]", scale=voxel, colormap="gray",
+    ref_layer = v.add_image(ref, name="Image", scale=voxel, colormap="gray",
                             contrast_limits=(0, 1))
-    mask_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="mask", scale=voxel, opacity=0.45)
-    erase_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="erase (paint here to remove)",
-                               scale=voxel, opacity=0.6)
-    erase_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.2, 0.2, 1.0)}   # red = erased
-    erase_layer.brush_size = 2; erase_layer.selected_label = 1; erase_layer.n_edit_dimensions = 3
-    if S.get("erase0") is not None:
-        erase_layer.data = S["erase0"].astype(np.uint8)
-    add_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="add (paint here to include)",
-                             scale=voxel, opacity=0.6)
-    add_layer.colormap = {None: (0, 0, 0, 0), 1: (0.2, 1.0, 0.3, 1.0)}      # green = added
-    add_layer.brush_size = 2; add_layer.selected_label = 1; add_layer.n_edit_dimensions = 3
-    if S.get("add0") is not None:
-        add_layer.data = S["add0"].astype(np.uint8)
-    int_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="other cell (excluded)",
+    mask_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="Your cell", scale=voxel, opacity=0.45)
+    mask_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.85, 0.1, 1.0)}           # yellow
+    int_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="Other cells",
                              scale=voxel, opacity=0.5)
-    int_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.1, 0.9, 1.0)}      # magenta
-    cl_layer = v.add_labels(np.zeros(ref.shape, np.int32), name="centerline", scale=voxel, opacity=1.0)
-    unc_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="uncertain (dim centerline)",
+    int_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.1, 0.9, 1.0)}             # magenta
+    # one layer for both hand edits: 1 = removed (red), 2 = added (green)
+    edits_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="Hand edits",
+                               scale=voxel, opacity=0.6)
+    edits_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.2, 0.2, 1.0), 2: (0.2, 1.0, 0.3, 1.0)}
+    edits_layer.brush_size = 2; edits_layer.n_edit_dimensions = 3
+    _ed = np.zeros(ref.shape, np.uint8)
+    if S.get("erase0") is not None: _ed[S["erase0"]] = 1
+    if S.get("add0") is not None: _ed[S["add0"]] = 2
+    edits_layer.data = _ed
+    cl_layer = v.add_labels(np.zeros(ref.shape, np.int32), name="Centerline",
+                            scale=voxel, opacity=1.0)
+    unc_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="Uncertain spots",
                              scale=voxel, opacity=1.0)
-    unc_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.55, 0.0, 1.0)}   # orange; None = default (transparent)
-    pts_layer = v.add_points(np.zeros((0, 3)), name="trace clicks", scale=voxel, size=2,
-                             face_color="cyan")
+    unc_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.55, 0.0, 1.0)}             # orange
+    pts_layer = v.add_points(np.zeros((0, 3)), name="Clicks", scale=voxel, size=2, face_color="cyan")
+    erase_layer = add_layer = edits_layer          # both hand-edit brushes paint this one layer
 
     # ---- dock: shared action panel (buttons mirror the keys)
-    P = ActionPanel(v, title="trace mask")
+    P = ActionPanel(v, title="Cell mask")
     S["mode"] = None                                   # sticky click mode: None | "trace" | "delete"
     class _Status:                                     # keep the old status.setText() call sites
         def setText(self, t): P.status(t)
@@ -536,41 +546,44 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         S["pending"] = None; pts_layer.data = np.zeros((0, 3))
         P.set_toggle("t", S["mode"] == "trace"); P.set_toggle("x", S["mode"] == "delete")
         P.set_toggle("i", S["mode"] == "intruder"); P.set_toggle("f", S["mode"] == "flip")
-        P.hint({"trace": "TRACE: click the FIRST point of the new arc",
-                "delete": "DELETE: click an arc to remove it",
-                "intruder": "OTHER CELL: click two points along the crossing cell (it turns magenta)",
-                "flip": "FLIP: click an arc to switch it between your cell and the other cell",
-                None: "Drag the sliders until the halo is gone; trace missing branches with [t]"}[S["mode"]])
+        P.hint({"trace": "ADD BRANCH: click the start of the missing branch, then its end",
+                "delete": "REMOVE BRANCH: click a branch of the centerline",
+                "intruder": "OTHER CELL: click two points along the other cell (it turns magenta)",
+                "flip": "SWITCH: click a branch to move it between your cell and other cells",
+                None: "Adjust Mask Thickness until the glow is gone, then fix branches below"}[S["mode"]])
 
-    P.section("1. thickness (live)")
-    P.slider("alpha - relative threshold", 5, 95, alpha, 100,
-             lambda val: (S.__setitem__("alpha", val), regrow_soon()))
-    P.note("higher alpha = thinner mask: keeps voxels brighter than alpha x the local centerline")
-    P.slider("radius x local", 50, 400, radius_x, 100, lambda val: (S.__setitem__("rx", val), regrow_soon()))
-    P.slider("pad (voxels)", 0, 3, pad, 1, lambda val: (S.__setitem__("pad", val), regrow_soon()), fmt="{:.0f}")
-    P.section("2. edit the centerline")
-    P.button("Trace arc between 2 clicks", key="t", cb=lambda: set_mode("trace"), toggle=True,
-             tooltip="Click two points; the brightest path between them becomes a centerline arc")
-    P.button("Delete arc under click", key="x", cb=lambda: set_mode("delete"), toggle=True)
+    P.section("Mask Thickness")
+    P.slider("Tightness", 5, 95, alpha, 100, lambda val: (S.__setitem__("alpha", val), regrow_soon()))
+    P.note("higher = thinner: keeps only voxels brighter than this fraction of the centerline")
+    P.slider("Max width (x local)", 50, 400, radius_x, 100, lambda val: (S.__setitem__("rx", val), regrow_soon()))
+    P.slider("Extra margin (voxels)", 0, 3, pad, 1, lambda val: (S.__setitem__("pad", val), regrow_soon()), fmt="{:.0f}")
+    P.section("Change Cell Mask")
+    P.button("Add a missing branch (2 clicks)", key="t", cb=lambda: set_mode("trace"), toggle=True,
+             tooltip="Click the start and the end: the brightest path between them becomes part of your cell")
+    P.button("Remove a branch (click it)", key="x", cb=lambda: set_mode("delete"), toggle=True)
+    P.button("Erase voxels (brush)", key="e", cb=lambda: set_erase(not S.get("erasing", False)), toggle=True,
+             tooltip="Paint red over voxels that are not your cell; they stay out whatever the sliders do")
+    P.button("Add voxels (brush)", key="a", cb=lambda: set_add(not S.get("adding", False)), toggle=True,
+             tooltip="Paint green where your cell is missing; they stay in whatever the sliders do")
+    P.button("Clear hand edits", cb=lambda: clear_erase(), tooltip="Remove all red and green brush edits")
     P.button("Undo", key="u", cb=lambda: undo())
-    P.button("Re-seed centerline", key="r", cb=lambda: reseed())
-    P.section("2a. other cells (blacked out in movies)")
-    P.button("Trace other cell (2 clicks)", key="i", cb=lambda: set_mode("intruder"), toggle=True,
-             tooltip="Trace a crossing/neighbouring cell; its voxels leave your mask and are blacked out in movies")
-    P.button("Flip arc: mine <-> other", key="f", cb=lambda: set_mode("flip"), toggle=True,
-             tooltip="Click an arc to move it between your cell (cyan) and the other cell (magenta)")
-    P.section("2b. erase by hand")
-    P.button("Erase with brush", key="e", cb=lambda: set_erase(not S.get("erasing", False)), toggle=True,
-             tooltip="Paint on the red layer; those voxels are removed from the mask and stay removed")
-    P.button("Clear all erasures", cb=lambda: clear_erase())
-    P.button("Add with brush", key="a", cb=lambda: set_add(not S.get("adding", False)), toggle=True,
-             tooltip="Paint on the green layer; those voxels are forced into your mask and stay in")
-    P.section("3. view")
-    P.button("Next reference channel", key="c", cb=lambda: cycle_channel())
-    P.button("2D / 3D", key="d", cb=lambda: toggle_dims())
-    P.note("Orange = centerline where the reference is dim (uncertain). Decide by eye; nothing is auto-bridged.")
-    P.section("4. done")
+    P.button("Start over from automatic", key="r", cb=lambda: reseed(),
+             tooltip="Replace the centerline with the automatic one (Undo brings yours back)")
+    P.section("Mark Other Cells")
+    P.button("Trace another cell (2 clicks)", key="i", cb=lambda: set_mode("intruder"), toggle=True,
+             tooltip="A cell crossing yours: it leaves your mask and is replaced by background in movies")
+    P.button("Switch a branch: mine / other", key="f", cb=lambda: set_mode("flip"), toggle=True,
+             tooltip="Click a centerline branch to move it between your cell and other cells")
+    P.section("View")
+    S["chan_btn"] = P.button(f"Image: {channel_label(names[ci])}", key="c", cb=lambda: cycle_channel(),
+                             tooltip="Show another picture (co-firing moments / average / peak activity). "
+                     "Display only: the mask does not change.")
+    P.button("2D / 3D view", key="d", cb=lambda: toggle_dims())
+    P.section("Save")
     btn = P.button("Save mask", key="Ctrl+S")
+    P.section("Colors")
+    P.note("yellow = your cell\nmagenta = other cells\ncyan line = centerline (magenta line = other cell)\n"
+           "red / green = erased / added by hand\norange = uncertain spot: the image is dim there, check by eye")
     P.finish()
 
     # ---- core updates
@@ -598,17 +611,18 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         if not S["arcs"]:
             mask_layer.data = np.zeros(ref.shape, np.uint8); unc_layer.data = np.zeros(ref.shape, np.uint8)
             int_layer.data = np.zeros(ref.shape, np.uint8)
-            status.setText("no centerline - use Trace and click two points"); return
-        er = np.asarray(erase_layer.data) > 0
-        ad = np.asarray(add_layer.data) > 0
+            status.setText("no centerline yet - use 'Add a missing branch'"); return
+        er = np.asarray(edits_layer.data) == 1
+        ad = np.asarray(edits_layer.data) == 2
         m, mi, unc = grow_owned(S["ref"], S["arcs"], S["owners"], voxel, S["alpha"], S["rx"],
                                 S["pad"], dim_pct, erase=er, add=ad, caches=S.get("caches"))
+        m = drop_small_islands(m.astype(np.uint8), min_voxels=20)[0] > 0   # same cleanup as at save
         mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
         int_layer.data = mi.astype(np.uint8)
         n_int = S["owners"].count("intruder")
-        status.setText(f"{len(S['arcs']) - n_int} arcs | mask {int(m.sum()):,} vox | "
-                       f"uncertain centerline pts: {int(unc.sum())}"
-                       + (f"\nother cell: {n_int} arcs, {int(mi.sum()):,} vox (excluded)" if n_int else ""))
+        status.setText(f"your cell: {int(m.sum()):,} voxels, {len(S['arcs']) - n_int} branches"
+                       + (f"\nother cells: {int(mi.sum()):,} voxels, {n_int} branches" if n_int else "")
+                       + (f"\nuncertain spots: {int(unc.sum())}" if unc.sum() else ""))
 
     def push_hist():
         S["hist"].append(([a.copy() for a in S["arcs"]], list(S["owners"])))
@@ -655,7 +669,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             loc = np.unravel_index(np.argmax(S["ref"][sl]), S["ref"][sl].shape)
             pos = tuple(int(sl[i].start + loc[i]) for i in range(3))
             if S["pending"] is None:
-                S["pending"] = pos; pts_layer.data = np.array([pos]); P.hint("TRACE: now click the SECOND point")
+                S["pending"] = pos; pts_layer.data = np.array([pos]); P.hint("now click the END point")
             else:
                 path = geodesic_path(S["cost"], S["pending"], pos, voxel)
                 S["pending"] = None; pts_layer.data = np.zeros((0, 3))
@@ -664,7 +678,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
                 push_hist(); S["arcs"].append(path)
                 S["owners"].append("intruder" if S.get("mode") == "intruder" else "own")
                 rebuild_cache(); regrow()
-                P.hint("TRACE: click the FIRST point of the next arc (or click the button again to stop)")
+                P.hint("done - click another start point, or click the button again to stop")
     for lyr in (ref_layer, mask_layer, cl_layer, unc_layer, int_layer):
         lyr.mouse_drag_callbacks.append(on_click)
 
@@ -678,24 +692,17 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     # any other change to the erase layer (fill tool, undo, programmatic) also re-applies
     erase_layer.events.data.connect(lambda e: regrow_soon())
 
-    @add_layer.mouse_drag_callbacks.append
-    def _after_add(layer, event):
-        yield
-        while event.type == "mouse_move":
-            yield
-        regrow()
-    add_layer.events.data.connect(lambda e: regrow_soon())
 
     def set_add(on):
         S["adding"] = on
         if on:
             if S.get("erasing"): set_erase(False)
             S["mode"] = None; P.set_toggle("t", False); P.set_toggle("x", False)
-            v.layers.selection.active = add_layer; add_layer.mode = "paint"
-            P.hint("ADD: paint voxels to include them in your mask (brush size: [ ]). Kept across slider changes.")
+            v.layers.selection.active = edits_layer; edits_layer.selected_label = 2; edits_layer.mode = "paint"
+            P.hint("ADD VOXELS: paint green where your cell is missing (brush size: [ ])")
         else:
-            add_layer.mode = "pan_zoom"; v.layers.selection.active = mask_layer
-            P.hint("Drag the sliders until the halo is gone; trace missing branches with [t]")
+            edits_layer.mode = "pan_zoom"; v.layers.selection.active = mask_layer
+            P.hint("Adjust Mask Thickness until the glow is gone, then fix branches below")
         P.set_toggle("a", on)
 
     def set_erase(on):
@@ -705,14 +712,14 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             set_add(False)
         if on:
             S["mode"] = None; P.set_toggle("t", False); P.set_toggle("x", False)
-            v.layers.selection.active = erase_layer; erase_layer.mode = "paint"
-            P.hint("ERASE: paint over voxels to remove them (brush size: [ ]). Erasures survive slider changes.")
+            v.layers.selection.active = edits_layer; edits_layer.selected_label = 1; edits_layer.mode = "paint"
+            P.hint("ERASE VOXELS: paint red over what is not your cell (brush size: [ ])")
         else:
-            erase_layer.mode = "pan_zoom"; v.layers.selection.active = mask_layer
-            P.hint("Drag the sliders until the halo is gone; trace missing branches with [t]")
+            edits_layer.mode = "pan_zoom"; v.layers.selection.active = mask_layer
+            P.hint("Adjust Mask Thickness until the glow is gone, then fix branches below")
         P.set_toggle("e", on)
     def clear_erase():
-        erase_layer.data = np.zeros(ref.shape, np.uint8); regrow()
+        edits_layer.data = np.zeros(ref.shape, np.uint8); regrow()      # clears removed AND added
 
     # napari key events: track held keys
     S["held"] = set()
@@ -730,11 +737,16 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         push_hist(); S["arcs"] = do_seed(S["ref"]); S["owners"] = ["own"] * len(S["arcs"])
         rebuild_cache(); regrow()
     def cycle_channel(viewer=None):
-        S["ci"] = (S["ci"] + 1) % ref_all.shape[1]
-        vol = ref_all[:, S["ci"]]; lo, hi = np.percentile(vol, [1, 99.9])
-        S["ref"] = np.clip((vol - lo) / (hi - lo + 1e-9), 0, 1); S["cost"] = cost_volume(S["ref"])
-        ref_layer.data = S["ref"]; ref_layer.name = f"reference [{names[S['ci']]}]"
-        rebuild_cache(); regrow()
+        """VIEW ONLY: show another reference image. The mask keeps growing on the image it
+        was built with (S["ref"] / S["ci"]), so switching the picture never changes data."""
+        shown = [i for i, n in enumerate(names) if n not in HIDDEN_CHANNELS] or list(range(len(names)))
+        cur = S.get("view_ci", S["ci"])
+        k = shown.index(cur) if cur in shown else -1
+        S["view_ci"] = shown[(k + 1) % len(shown)]
+        vol = ref_all[:, S["view_ci"]]; lo, hi = np.percentile(vol, [1, 99.9])
+        ref_layer.data = np.clip((vol - lo) / (hi - lo + 1e-9), 0, 1)
+        if S.get("chan_btn") is not None:
+            S["chan_btn"].setText(f"Image: {channel_label(names[S['view_ci']])}   [c]")
     def toggle_dims(viewer=None):
         v.dims.ndisplay = 3 if v.dims.ndisplay == 2 else 2
     def do_save(viewer=None):
@@ -744,13 +756,13 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             status.setText("nothing to save"); return
         params = {"alpha": S["alpha"], "radius_x": S["rx"], "pad": S["pad"], "dim_pct": dim_pct,
                   "reference_channel": names[S["ci"]],
-                  "manually_erased_voxels": int((np.asarray(erase_layer.data) > 0).sum()),
-                  "manually_added_voxels": int((np.asarray(add_layer.data) > 0).sum())}
+                  "manually_erased_voxels": int((np.asarray(edits_layer.data) == 1).sum()),
+                  "manually_added_voxels": int((np.asarray(edits_layer.data) == 2).sum())}
         own_arcs = [a for a, o in zip(S["arcs"], S["owners"]) if o != "intruder"]
         params["n_other_cell_arcs"] = S["owners"].count("intruder")
         t, j = save(paths, m, own_arcs, params, voxel)
-        save_session(paths, S["arcs"], S["owners"], np.asarray(erase_layer.data) > 0,
-                     np.asarray(add_layer.data) > 0)
+        save_session(paths, S["arcs"], S["owners"], np.asarray(edits_layer.data) == 1,
+                     np.asarray(edits_layer.data) == 2)
         mi = np.asarray(int_layer.data) > 0
         extra = ""
         if mi.any() or os.path.exists(paths["exclude_tif"]):
@@ -769,6 +781,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     v.bind_key("Control-s", do_save, overwrite=True); btn.clicked.connect(lambda: do_save())
 
     rebuild_cache(); regrow(); set_mode(None)
+    v.layers.selection.active = mask_layer                  # open on 'Your cell', not on the clicks layer
     napari.run()
 
 
