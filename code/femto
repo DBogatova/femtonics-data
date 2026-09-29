@@ -8,6 +8,7 @@
 #   femto regions <stack>    open the region tool on a stack
 #   femto figure <run>       build the coherence+behavior composite for a behavior_base
 #   femto movies <run> [--kinds dual time structure] [--force]   3D movies from the regions
+#   femto stats              per-run metrics for every cell + cohort table/summary/figures (stats/)
 #
 # Everything runs from the project root with the project virtualenv; a log of the last
 # panel session is kept at /tmp/femto_gui.log.
@@ -31,6 +32,7 @@ case "${1:-panel}" in
   regions) shift; "$PY" code/STEP7_workflow/wrap_segments_napari.py "$@" ;;
   figure)  shift; "$PY" code/STEP7_workflow/coherence_with_behavior.py --run "$@" ;;
   movies)  shift; b="$1"; shift; "$PY" code/STEP7_workflow/make_movies.py --run "$b" "$@" ;;
-  -h|--help|help) sed -n '2,13p' "$0" ;;
-  *) echo "unknown command: $1"; sed -n '2,13p' "$0"; exit 1 ;;
+  stats)   "$PY" code/STEP8_stats/run_metrics.py --all && "$PY" code/STEP8_stats/cohort_stats.py ;;
+  -h|--help|help) sed -n '2,14p' "$0" ;;
+  *) echo "unknown command: $1"; sed -n '2,14p' "$0"; exit 1 ;;
 esac

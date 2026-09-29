@@ -55,6 +55,7 @@ Stage detection is by disk presence (which files exist), so
 2. run matched in `behavior_imaging_master.csv`
    (`code/STEP1_extract/match_behavior_imaging.py`; matches by trigger-pulse
    fingerprint — rerun it when adding new sessions)
+| 8 | statistics | `code/STEP8_stats/run_metrics.py --all` then `cohort_stats.py` (panel: **Statistics (all cells)**, CLI `femto stats`). Per run: soma-branch / soma-trunk coupling (full and core voxels), independent-event fractions, who leads, lag, quiet-vs-active coupling, expression proxy (soma raw F), days post-injection from `mice.csv`. Cohort: `stats/cohort_metrics.csv`, `cohort_summary.txt` (Wilcoxon / binomial / mixed model with mouse as random effect), `fig_independence`, `fig_within_mouse`, `fig_expression`. Runs automatically after every figure build. | no |
 
 ## Which image feeds what (explicit, recorded)
 
