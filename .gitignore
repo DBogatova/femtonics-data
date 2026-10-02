@@ -52,3 +52,4 @@ __pycache__/
 
 # statistics outputs are derived (regenerate with: femto stats)
 stats/
+!stats/nucleus/README.md
