@@ -82,12 +82,14 @@ changed anatomical distances and skeleton splits.
 
 ## Other cells and black backgrounds (display only)
 
-- **Mask tool:** "Trace other cell" (`i`) - two clicks along a crossing or neighbouring
-  cell; it turns magenta and is grown competitively with yours (voxels both could
-  claim go to whichever cell's centerline is brighter there). "Flip arc" (`f`) moves
-  any arc, including seeded ones, between your cell and the other cell. Saving writes
-  `runNN_clean_exclude_labelmap.tif` next to the reviewed mask; the exclusion is
-  reloaded the next time you open the tool.
+- **Mask tool:** "Trace another cell" (`i`): two clicks along a crossing or neighbouring
+  cell; it turns magenta. "Switch a branch" (`f`) moves any centerline branch between your
+  cell and other cells. Other cells have their **own** thickness sliders and their own
+  brushes (Shift-E remove / Shift-A add, on the "Hand edits: other cells" layer). **Your
+  cell always wins**: wherever your mask is, other cells cannot grow, so marking or
+  reshaping them never changes your mask; your green brush claims a disputed voxel for
+  your cell. Saving writes `runNN_clean_exclude_labelmap.tif`; everything (arcs, owners,
+  both sets of brush edits, both sets of sliders) is restored when you reopen.
 - **Other cells are hidden by default** in movies and the figure's cell picture: each
   voxel of a cell you marked "other cell" takes the signal of a nearby background voxel
   (same plane, within ~20 voxels along the tube, away from both cells) for the whole

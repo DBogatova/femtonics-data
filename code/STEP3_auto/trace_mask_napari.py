@@ -27,8 +27,10 @@ WORKFLOW (napari)
   * Other cells ('i' / button): trace a crossing or neighbouring cell with two clicks;
     its arcs are magenta. Its grown region is taken OUT of your mask (voxels both cells
     could claim go to whichever cell's centerline is brighter there) and saved as
-    <stem>_exclude_labelmap.tif, which the movie and figure tools black out. 'f' flips
-    any arc (including seeded ones) between your cell and the other cell.
+    <stem>_exclude_labelmap.tif, which the movie and figure tools hide. 'f' flips any arc
+    (including seeded ones) between your cell and the other cell. Other cells have their
+    own thickness sliders and their own brushes (Shift-E remove / Shift-A add) and can
+    never take a voxel your mask claims: your cell always wins.
   * Erase by hand ('e' / button): paint on the red 'erase' layer; those voxels are
     removed from the mask and STAY removed when you move the sliders (the mask is
     regenerated from the centerline, then your erasures are subtracted).
@@ -303,36 +305,38 @@ def owner_caches(ref, arcs, owners, voxel):
 
 
 def grow_owned(ref, arcs, owners, voxel, alpha=0.5, radius_x=1.5, pad=0, dim_pct=15.0, erase=None, add=None,
-               caches=None):
-    """Grow the own-cell mask and the intruder mask from ONE set of centerline arcs.
+               caches=None, other=None, other_erase=None, other_add=None):
+    """Grow YOUR cell and the OTHER cells from one set of centerline arcs.
 
-    owners[k] is "own" or "intruder" for arcs[k]. Each owner's mask is grown with the
-    same relative-threshold rule as grow(); where both claim a voxel it goes to the owner
-    whose nearest centerline is brighter there (its halo is weaker than the other cell's
-    body). Own-cell centerline voxels always stay own. Returns (own, intruder, uncertain).
-    """
+    Rule: your cell wins. Your mask is grown exactly as if no other cell existed
+    (thickness sliders + your brushes); then the other cells are grown with THEIR own
+    thickness settings (`other` = dict(alpha, radius_x, pad), default = yours) and their
+    own brushes, and every voxel your mask claims is removed from them. So marking or
+    reshaping another cell can never eat into your cell, and your brushes decide
+    ownership: green ("mine") = in your cell, out of theirs; red = out of yours.
+    Returns (own, intruder, uncertain)."""
     own_arcs = [a for a, o in zip(arcs, owners) if o != "intruder"]
     int_arcs = [a for a, o in zip(arcs, owners) if o == "intruder"]
     shape = ref.shape
     empty = np.zeros(shape, bool)
     c_own, c_int = caches if caches is not None else owner_caches(ref, arcs, owners, voxel)
     m_own, unc = grow(c_own, alpha, radius_x, pad, dim_pct) if c_own else (empty.copy(), empty.copy())
-    m_int, _ = grow(c_int, alpha, radius_x, pad, dim_pct) if c_int else (empty.copy(), None)
-    if m_own is None: m_own = empty.copy()
-    if m_int is None: m_int = empty.copy()
-    both = m_own & m_int
-    if both.any():
-        ni_own = c_own["near_int"] if c_own else np.zeros(shape, np.float32)
-        ni_int = c_int["near_int"]
-        to_int = both & (ni_int > ni_own)
-        if c_own:
-            to_int &= ~(c_own["cl"] > 0)                     # own centerline never moves
-        m_own &= ~to_int
-        m_int &= ~(both & ~to_int)
-    if add is not None:                                   # painted-in voxels are always yours
-        m_own |= add; m_int &= ~add
+    if m_own is None:
+        m_own = empty.copy()
+    if add is not None:
+        m_own |= add
     if erase is not None:
-        m_own &= ~erase; m_int &= ~erase
+        m_own &= ~erase
+    o = other or {}
+    m_int, _ = grow(c_int, o.get("alpha", alpha), o.get("radius_x", radius_x), o.get("pad", pad), dim_pct) \
+        if c_int else (empty.copy(), None)
+    if m_int is None:
+        m_int = empty.copy()
+    if other_add is not None:
+        m_int |= other_add
+    if other_erase is not None:
+        m_int &= ~other_erase
+    m_int &= ~m_own                                       # your cell always wins
     return m_own, m_int, (unc if unc is not None else empty)
 
 
@@ -387,7 +391,7 @@ def last_saved_params(paths):
         return None
 
 
-def save_session(paths, arcs, owners, erase, add=None):
+def save_session(paths, arcs, owners, erase, add=None, other=None, other_erase=None, other_add=None):
     """Everything needed to reopen exactly where you left off: every centerline arc (own
     and other cell, traced or seeded), its owner, and the hand erasures."""
     lens = np.array([len(a) for a in arcs], np.int64)
@@ -396,6 +400,9 @@ def save_session(paths, arcs, owners, erase, add=None):
                         owners=np.array(owners, dtype="U8"),
                         erase=np.packbits(np.asarray(erase, bool).ravel()),
                         add=np.packbits(np.asarray(add if add is not None else np.zeros_like(erase), bool).ravel()),
+                        other_erase=np.packbits(np.asarray(other_erase if other_erase is not None else np.zeros_like(erase), bool).ravel()),
+                        other_add=np.packbits(np.asarray(other_add if other_add is not None else np.zeros_like(erase), bool).ravel()),
+                        other=np.array([(other or {}).get("alpha", -1), (other or {}).get("radius_x", -1), (other or {}).get("pad", -1)], float),
                         shape=np.array(np.asarray(erase).shape, np.int64))
 
 
@@ -415,7 +422,12 @@ def load_session(paths, shape):
         add = np.unpackbits(z["add"])[:n].reshape(shape).astype(bool) if "add" in z.files else np.zeros(shape, bool)
         if len(owners) != len(arcs):
             return None
-        return arcs, owners, erase, add
+        oe = np.unpackbits(z["other_erase"])[:n].reshape(shape).astype(bool) if "other_erase" in z.files else np.zeros(shape, bool)
+        oa = np.unpackbits(z["other_add"])[:n].reshape(shape).astype(bool) if "other_add" in z.files else np.zeros(shape, bool)
+        oth = None
+        if "other" in z.files and z["other"][0] >= 0:
+            oth = {"alpha": float(z["other"][0]), "radius_x": float(z["other"][1]), "pad": int(z["other"][2])}
+        return arcs, owners, erase, add, oe, oa, oth
     except Exception as e:
         print(f"[trace] WARNING: could not read saved session ({e}); starting from the seed")
         return None
@@ -475,8 +487,9 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
          "pad": pad, "cache": None, "ci": ci, "cost": cost_volume(ref), "ref": ref, "pending": None}
     sess = load_session(paths, ref.shape) if resume else None
     S["erase0"] = None; S["add0"] = None
+    S["oerase0"] = None; S["oadd0"] = None; S["other"] = None
     if sess is not None:
-        S["arcs"], S["owners"], S["erase0"], S["add0"] = sess
+        S["arcs"], S["owners"], S["erase0"], S["add0"], S["oerase0"], S["oadd0"], S["other"] = sess
         print(f"[trace] resumed saved session: {len(S['arcs'])} arcs "
               f"({S['owners'].count('intruder')} other-cell), {int(S['erase0'].sum())} erased, "
               f"{int(S['add0'].sum())} added voxels")
@@ -522,6 +535,14 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     if S.get("erase0") is not None: _ed[S["erase0"]] = 1
     if S.get("add0") is not None: _ed[S["add0"]] = 2
     edits_layer.data = _ed
+    oedits_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="Hand edits: other cells",
+                                scale=voxel, opacity=0.6)
+    oedits_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.2, 0.2, 1.0), 2: (1.0, 0.1, 0.9, 1.0)}   # red = removed, magenta = added
+    oedits_layer.brush_size = 2; oedits_layer.n_edit_dimensions = 3
+    _oe = np.zeros(ref.shape, np.uint8)
+    if S.get("oerase0") is not None: _oe[S["oerase0"]] = 1
+    if S.get("oadd0") is not None: _oe[S["oadd0"]] = 2
+    oedits_layer.data = _oe
     cl_layer = v.add_labels(np.zeros(ref.shape, np.int32), name="Centerline",
                             scale=voxel, opacity=1.0)
     unc_layer = v.add_labels(np.zeros(ref.shape, np.uint8), name="Uncertain spots",
@@ -529,6 +550,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     unc_layer.colormap = {None: (0, 0, 0, 0), 1: (1.0, 0.55, 0.0, 1.0)}             # orange
     pts_layer = v.add_points(np.zeros((0, 3)), name="Clicks", scale=voxel, size=2, face_color="cyan")
     erase_layer = add_layer = edits_layer          # both hand-edit brushes paint this one layer
+    S["other"] = S.get("other") or {"alpha": alpha, "radius_x": radius_x, "pad": pad}
 
     # ---- dock: shared action panel (buttons mirror the keys)
     P = ActionPanel(v, title="Cell mask")
@@ -542,6 +564,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             set_erase(False)
         if S.get("adding"):
             set_add(False)
+        if S.get("oediting"):
+            set_oedit(S["oediting"])
         S["mode"] = None if S["mode"] == m else m
         S["pending"] = None; pts_layer.data = np.zeros((0, 3))
         P.set_toggle("t", S["mode"] == "trace"); P.set_toggle("x", S["mode"] == "delete")
@@ -570,10 +594,19 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     P.button("Start over from automatic", key="r", cb=lambda: reseed(),
              tooltip="Replace the centerline with the automatic one (Undo brings yours back)")
     P.section("Mark Other Cells")
+    P.note("Other cells can never take voxels from your cell: wherever your mask is, it wins.")
     P.button("Trace another cell (2 clicks)", key="i", cb=lambda: set_mode("intruder"), toggle=True,
              tooltip="A cell crossing yours: it leaves your mask and is replaced by background in movies")
     P.button("Switch a branch: mine / other", key="f", cb=lambda: set_mode("flip"), toggle=True,
              tooltip="Click a centerline branch to move it between your cell and other cells")
+    def _oset(k, val):
+        S["other"][k] = val; regrow_soon()
+    P.slider("Other cells: tightness", 5, 95, S["other"]["alpha"], 100, lambda val: _oset("alpha", val))
+    P.slider("Other cells: max width (x local)", 50, 400, S["other"]["radius_x"], 100, lambda val: _oset("radius_x", val))
+    P.button("Erase other-cell voxels (brush)", key="Shift-E", cb=lambda: set_oedit(1), toggle=True,
+             tooltip="Paint red on the other-cell edits layer: those voxels leave the other cell")
+    P.button("Add other-cell voxels (brush)", key="Shift-A", cb=lambda: set_oedit(2), toggle=True,
+             tooltip="Paint magenta: those voxels join the other cell (never taken from yours)")
     P.section("View")
     S["chan_btn"] = P.button(f"Image: {channel_label(names[ci])}", key="c", cb=lambda: cycle_channel(),
                              tooltip="Show another picture (co-firing moments / average / peak activity). "
@@ -583,7 +616,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     btn = P.button("Save mask", key="Ctrl+S")
     P.section("Colors")
     P.note("yellow = your cell\nmagenta = other cells\ncyan line = centerline (magenta line = other cell)\n"
-           "red / green = erased / added by hand\norange = uncertain spot: the image is dim there, check by eye")
+           "red / green = erased / added to your cell by hand\nred / magenta on the other layer = removed / added to other cells\n"
+           "orange = uncertain spot: the image is dim there, check by eye")
     P.finish()
 
     # ---- core updates
@@ -614,8 +648,11 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             status.setText("no centerline yet - use 'Add a missing branch'"); return
         er = np.asarray(edits_layer.data) == 1
         ad = np.asarray(edits_layer.data) == 2
+        oe = np.asarray(oedits_layer.data) == 1
+        oa = np.asarray(oedits_layer.data) == 2
         m, mi, unc = grow_owned(S["ref"], S["arcs"], S["owners"], voxel, S["alpha"], S["rx"],
-                                S["pad"], dim_pct, erase=er, add=ad, caches=S.get("caches"))
+                                S["pad"], dim_pct, erase=er, add=ad, caches=S.get("caches"),
+                                other=S["other"], other_erase=oe, other_add=oa)
         m = drop_small_islands(m.astype(np.uint8), min_voxels=20)[0] > 0   # same cleanup as at save
         mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
         int_layer.data = mi.astype(np.uint8)
@@ -697,6 +734,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         S["adding"] = on
         if on:
             if S.get("erasing"): set_erase(False)
+            if S.get("oediting"): set_oedit(S["oediting"])
             S["mode"] = None; P.set_toggle("t", False); P.set_toggle("x", False)
             v.layers.selection.active = edits_layer; edits_layer.selected_label = 2; edits_layer.mode = "paint"
             P.hint("ADD VOXELS: paint green where your cell is missing (brush size: [ ])")
@@ -705,11 +743,37 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             P.hint("Adjust Mask Thickness until the glow is gone, then fix branches below")
         P.set_toggle("a", on)
 
+    def set_oedit(label):
+        """Brush on the other-cells edit layer: 1 = remove from other cell, 2 = add to it."""
+        cur = S.get("oediting")
+        on = cur != label
+        if S.get("erasing"): set_erase(False)
+        if S.get("adding"): set_add(False)
+        S["oediting"] = label if on else None
+        if on:
+            S["mode"] = None; P.set_toggle("t", False); P.set_toggle("x", False)
+            v.layers.selection.active = oedits_layer; oedits_layer.selected_label = label; oedits_layer.mode = "paint"
+            P.hint("OTHER CELL: paint red to remove / magenta to add (brush size: [ ]). Your cell is never affected.")
+        else:
+            oedits_layer.mode = "pan_zoom"; v.layers.selection.active = mask_layer
+            P.hint("Adjust Mask Thickness until the glow is gone, then fix branches below")
+        P.set_toggle("Shift-E", S["oediting"] == 1); P.set_toggle("Shift-A", S["oediting"] == 2)
+
+    @oedits_layer.mouse_drag_callbacks.append
+    def _after_oedit(layer, event):
+        yield
+        while event.type == "mouse_move":
+            yield
+        regrow()
+    oedits_layer.events.data.connect(lambda e: regrow_soon())
+
     def set_erase(on):
         """Erase mode: select the erase layer with the brush; off: back to pan/zoom."""
         S["erasing"] = on
         if on and S.get("adding"):
             set_add(False)
+        if on and S.get("oediting"):
+            set_oedit(S["oediting"])
         if on:
             S["mode"] = None; P.set_toggle("t", False); P.set_toggle("x", False)
             v.layers.selection.active = edits_layer; edits_layer.selected_label = 1; edits_layer.mode = "paint"
@@ -757,12 +821,15 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         params = {"alpha": S["alpha"], "radius_x": S["rx"], "pad": S["pad"], "dim_pct": dim_pct,
                   "reference_channel": names[S["ci"]],
                   "manually_erased_voxels": int((np.asarray(edits_layer.data) == 1).sum()),
-                  "manually_added_voxels": int((np.asarray(edits_layer.data) == 2).sum())}
+                  "manually_added_voxels": int((np.asarray(edits_layer.data) == 2).sum()),
+                  "other_cells": dict(S["other"], erased=int((np.asarray(oedits_layer.data) == 1).sum()),
+                                      added=int((np.asarray(oedits_layer.data) == 2).sum()))}
         own_arcs = [a for a, o in zip(S["arcs"], S["owners"]) if o != "intruder"]
         params["n_other_cell_arcs"] = S["owners"].count("intruder")
         t, j = save(paths, m, own_arcs, params, voxel)
         save_session(paths, S["arcs"], S["owners"], np.asarray(edits_layer.data) == 1,
-                     np.asarray(edits_layer.data) == 2)
+                     np.asarray(edits_layer.data) == 2, S["other"],
+                     np.asarray(oedits_layer.data) == 1, np.asarray(oedits_layer.data) == 2)
         mi = np.asarray(int_layer.data) > 0
         extra = ""
         if mi.any() or os.path.exists(paths["exclude_tif"]):
@@ -776,6 +843,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     v.bind_key("c", cycle_channel, overwrite=True); v.bind_key("d", toggle_dims, overwrite=True)
     v.bind_key("e", lambda vw: set_erase(not S.get("erasing", False)), overwrite=True)
     v.bind_key("a", lambda vw: set_add(not S.get("adding", False)), overwrite=True)
+    v.bind_key("Shift-e", lambda vw: set_oedit(1), overwrite=True)
+    v.bind_key("Shift-a", lambda vw: set_oedit(2), overwrite=True)
     v.bind_key("i", lambda vw: set_mode("intruder"), overwrite=True)
     v.bind_key("f", lambda vw: set_mode("flip"), overwrite=True)
     v.bind_key("Control-s", do_save, overwrite=True); btn.clicked.connect(lambda: do_save())
@@ -830,8 +899,19 @@ def run_check(stack_path, voxel_cli=None) -> bool:
         for a, o in zip(arcs, owners):
             if o == "own": own_cl[tuple(a.T)] = True
         rep("own centerline stays in own mask", bool(mo[own_cl].all()))
-        rep("excluding shrinks own mask", int(mo.sum()) < int(own_mask_all.sum()),
-            f"{int(own_mask_all.sum())} -> {int(mo.sum())}")
+        # YOUR CELL WINS: own mask is exactly what growing your arcs alone gives
+        own_alone, _ = grow(grow_cache(ref, [a for a, o in zip(arcs, owners) if o == "own"], voxel), 0.5, 1.5, 0)
+        rep("marking another cell never changes your mask", np.array_equal(mo, own_alone), f"{int(mo.sum())} vox")
+        # other-cell edits never touch your cell; your green brush beats their claim
+        oa = np.zeros(ref.shape, bool); oa[tuple(np.argwhere(mo)[:50].T)] = True          # try to add 50 of YOUR voxels to them
+        mo2, mi2, _ = grow_owned(ref, arcs, owners, voxel, 0.5, 1.5, 0, other_add=oa)
+        rep("adding your voxels to the other cell is refused", np.array_equal(mo2, mo) and not (mi2 & mo).any())
+        ga = np.zeros(ref.shape, bool); ga[tuple(np.argwhere(mi)[:50].T)] = True          # claim 50 of THEIR voxels as yours
+        mo3, mi3, _ = grow_owned(ref, arcs, owners, voxel, 0.5, 1.5, 0, add=ga)
+        rep("green brush moves voxels from the other cell to yours", bool(mo3[ga].all()) and not mi3[ga].any())
+        mo4, mi4, _ = grow_owned(ref, arcs, owners, voxel, 0.5, 1.5, 0, other={"alpha": 0.9, "radius_x": 0.8, "pad": 0})
+        rep("tightening the other cell leaves yours unchanged", np.array_equal(mo4, mo) and int(mi4.sum()) <= int(mi.sum()),
+            f"other {int(mi.sum())} -> {int(mi4.sum())}")
     # save contract into a temp copy so the run dir is untouched
     tmp = tempfile.mkdtemp()
     try:
