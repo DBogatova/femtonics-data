@@ -71,7 +71,7 @@ Usage
   python code/STEP7_workflow/wrap_segments_napari.py <run_dir> --check
 
 Never overwrites hand-made *_clean_segments*.tif or any *_autoseg* file: the output is
-<stem>_clean_segments_final.tif, and if that already exists it is versioned (_v2, _v3, ...).
+<stem>_clean_segments_final.tif; previous regions are archived into old/ with a timestamp.
 """
 from __future__ import annotations
 
@@ -555,20 +555,21 @@ def anatomy_background(ref3d_path, clean_path=None) -> np.ndarray:
 
 
 def _safe_out_path(out: Path) -> Path:
-    """Never clobber an existing file (incl. hand-made maps). Version _v2, _v3, ... .
-    Also refuse names that look hand-made or like autoseg output."""
+    """Regions are re-pickable: write under the canonical name and ARCHIVE the previous
+    regions (tif + json) into <run_dir>/old/ with a timestamp. Hand-made files are never
+    touched: only the canonical *_segments_final.* pair is archived."""
+    import shutil, datetime as _dt
     lname = out.name.lower()
     if "autoseg" in lname or ("segments" in lname and "final" not in lname):
         raise ValueError(f"refusing to write to a non-'final' segments/autoseg path: {out}")
-    if not out.exists():
-        return out
-    stem, suf = out.stem, out.suffix
-    i = 2
-    while True:
-        cand = out.with_name(f"{stem}_v{i}{suf}")
-        if not cand.exists():
-            return cand
-        i += 1
+    if out.exists():
+        old = out.parent / "old"; old.mkdir(exist_ok=True)
+        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        for pth in (out, out.with_suffix(".json")):
+            if pth.exists():
+                shutil.move(str(pth), str(old / f"{pth.stem}.{stamp}{pth.suffix}"))
+        print(f"previous regions archived -> old/ ({stamp})", flush=True)
+    return out
 
 
 def save_segments(out_path, seg, voxel, sidecar_extra=None) -> dict:
