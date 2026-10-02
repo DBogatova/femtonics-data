@@ -18,6 +18,9 @@ import tifffile
 import imageio.v2 as imageio
 import matplotlib
 from scipy.ndimage import rotate as nd_rotate
+import sys as _psys, pathlib as _ppl
+_psys.path.insert(0, str(_ppl.Path(__file__).resolve().parents[1]))
+from common.progress import progress
 
 
 def pad_zy(v, D):
@@ -142,6 +145,7 @@ def main():
             lo_a = float(np.percentile(samp, 5))         # cell baseline dim but visible; background -> 0
         wpad = pad_zy(wgt, D) if wgt is not None else None
         for k, t in enumerate(idx):
+            progress(k, len(idx), "movie: activity frames")
             ang = args.angle + k * 360.0 * args.rotations / max(1, len(idx))
             segr = nd_rotate(seg, ang, axes=(0, 1), reshape=False, order=0).max(0)
             fr = pad_zy(stack[t].astype(np.float32), D)
@@ -162,6 +166,7 @@ def main():
     else:
         # static turntable: rotate the structure around X
         for i in range(args.frames):
+            progress(i, args.frames, "movie: rotation frames")
             ang = i * 360.0 * args.rotations / args.frames
             strv = nd_rotate(struct, ang, axes=(0, 1), reshape=False, order=1).max(0)
             segr = nd_rotate(seg, ang, axes=(0, 1), reshape=False, order=0).max(0)

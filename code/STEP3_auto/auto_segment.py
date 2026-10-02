@@ -69,6 +69,9 @@ import numpy as np
 import sys as _sys, pathlib as _pl
 _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
 from common.voxel import add_voxel_arg, resolve_voxel
+import sys as _psys, pathlib as _ppl
+_psys.path.insert(0, str(_ppl.Path(__file__).resolve().parents[1]))
+from common.progress import progress
 
 __version__ = "1.0.0"
 
@@ -143,6 +146,7 @@ def activity_statistics(stack, tchunk=200, space_chunk=20000):
     cross = {s: np.zeros((Z, Y, X), np.float64) for s in shifts}
 
     for t0 in range(0, T, tchunk):
+        progress(t0, T, "auto-segment: activity statistics")
         c = stack[t0:t0 + tchunk].astype(np.float32)
         s1 += c.sum(0)
         s2 += np.square(c).sum(0)

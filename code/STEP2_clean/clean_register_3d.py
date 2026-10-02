@@ -26,6 +26,9 @@ from scipy.ndimage import median_filter, shift as nd_shift
 from scipy.signal import find_peaks
 from skimage.registration import phase_cross_correlation
 import matplotlib.pyplot as plt
+import sys as _psys, pathlib as _ppl
+_psys.path.insert(0, str(_ppl.Path(__file__).resolve().parents[1]))
+from common.progress import progress
 
 
 def scanline_grid(vol, period=None):
@@ -99,6 +102,7 @@ def register_all(clean, ref, upsample, max_shift):
     reg = np.empty_like(clean)
     shifts = np.zeros((T, 3), np.float32)
     for t in range(T):
+        progress(t, T, "register: motion correction")
         sh, _, _ = phase_cross_correlation(ref, clean[t], upsample_factor=upsample,
                                            normalization=None)
         sh = np.clip(sh, -max_shift, max_shift)

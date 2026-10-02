@@ -38,6 +38,9 @@ from pathlib import Path
 import numpy as np
 import tifffile
 from numpy.fft import fftn, ifftn
+import sys as _psys, pathlib as _ppl
+_psys.path.insert(0, str(_ppl.Path(__file__).resolve().parents[1]))
+from common.progress import progress
 
 
 def drift_voxels(store, T):
@@ -96,6 +99,7 @@ def build(stack_path: Path, args) -> Path:
         return c
 
     for a in range(0, T, args.tchunk):
+        progress(a, 3 * T, "reference: mean / percentile")
         b = min(a + args.tchunk, T)
         c = load_aligned(a, b)
         mean += c.sum(0)
@@ -103,6 +107,7 @@ def build(stack_path: Path, args) -> Path:
     mean /= T
     covx = np.zeros((Z, Y, X)); covy = np.zeros((Z, Y, X))
     for a in range(0, T, args.tchunk):
+        progress(T + a, 3 * T, "reference: neighbour correlation")
         b = min(a + args.tchunk, T)
         c = load_aligned(a, b) - mean
         m2 += (c ** 2).sum(0)
@@ -124,6 +129,7 @@ def build(stack_path: Path, args) -> Path:
     struct = amax > np.percentile(amax, 95)
     trace = np.zeros(T, np.float32)
     for a in range(0, T, args.tchunk):
+        progress(2 * T + a, 3 * T, "reference: co-firing frames")
         b = min(a + args.tchunk, T)
         trace[a:b] = load_aligned(a, b)[:, struct].mean(1)
     f0 = np.percentile(trace, 10); dff = (trace - f0) / max(f0, 1e-6)

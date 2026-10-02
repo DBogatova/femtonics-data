@@ -102,6 +102,8 @@ def run_gui() -> int:
 
     class Panel(QtWidgets.QMainWindow):
         log_signal = QtCore.Signal(str)
+        progress_signal = QtCore.Signal(int, int, str)        # done, total, label (current step)
+        chain_signal = QtCore.Signal(int, int, str)           # step k, n steps, step name
         refresh_signal = QtCore.Signal()
 
         def __init__(self):
@@ -167,6 +169,18 @@ def run_gui() -> int:
             movs.addWidget(self.edge); movs.addStretch()
             lay.addLayout(movs)
 
+            prog = QtWidgets.QGridLayout()
+            self.chain_label = QtWidgets.QLabel("idle"); self.chain_bar = QtWidgets.QProgressBar()
+            self.chain_bar.setRange(0, 1); self.chain_bar.setValue(0); self.chain_bar.setTextVisible(True); self.chain_bar.setFormat("")
+            self.step_label = QtWidgets.QLabel(""); self.step_bar = QtWidgets.QProgressBar()
+            self.step_bar.setRange(0, 1); self.step_bar.setValue(0); self.step_bar.setFormat("")
+            for b in (self.chain_bar, self.step_bar):
+                b.setFixedHeight(16)
+            prog.addWidget(QtWidgets.QLabel("steps:"), 0, 0); prog.addWidget(self.chain_bar, 0, 1); prog.addWidget(self.chain_label, 0, 2)
+            prog.addWidget(QtWidgets.QLabel("current:"), 1, 0); prog.addWidget(self.step_bar, 1, 1); prog.addWidget(self.step_label, 1, 2)
+            prog.setColumnStretch(1, 3); prog.setColumnStretch(2, 2)
+            lay.addLayout(prog)
+
             self.log = QtWidgets.QPlainTextEdit()
             self.log.setReadOnly(True)
             self.log.setMaximumBlockCount(5000)
@@ -183,6 +197,8 @@ def run_gui() -> int:
             self.b_fig.clicked.connect(lambda: self.build_figure(with_movies=True))
             self.b_mov.clicked.connect(lambda: self.build_figure(with_movies=True, figure=False))
             self.log_signal.connect(self.log.appendPlainText)
+            self.progress_signal.connect(self._on_progress)
+            self.chain_signal.connect(self._on_chain)
             self.refresh_signal.connect(self.refresh)
             self.busy = False
             self.runs = []
@@ -213,6 +229,22 @@ def run_gui() -> int:
                 self.logline("!! select a run first")
                 return None
             return self.runs[i]
+
+        def _on_progress(self, done, total, label):
+            if total <= 0:
+                self.step_bar.setRange(0, 0); self.step_bar.setFormat("")          # busy (unknown length)
+            else:
+                self.step_bar.setRange(0, total); self.step_bar.setValue(min(done, total))
+                self.step_bar.setFormat(f"{100 * min(done, total) // total}%")
+            self.step_label.setText(label)
+
+        def _on_chain(self, k, n, name):
+            if n <= 0:
+                self.chain_bar.setRange(0, 1); self.chain_bar.setValue(0); self.chain_bar.setFormat(""); self.chain_label.setText("idle")
+                self.step_bar.setRange(0, 1); self.step_bar.setValue(0); self.step_bar.setFormat(""); self.step_label.setText("")
+            else:
+                self.chain_bar.setRange(0, n); self.chain_bar.setValue(k); self.chain_bar.setFormat(f"{k}/{n}")
+                self.chain_label.setText(name)
 
         def logline(self, s):
             self.log_signal.emit(s)
@@ -320,18 +352,22 @@ def run_gui() -> int:
             """Run automatic steps, optionally chaining until GUI/complete."""
             self.busy = True
             try:
-                for _ in range(6):
+                for step_i in range(6):
                     fresh = [x for x in build_runs()
                              if x.get("behavior_base") == r.get("behavior_base")]
                     if not fresh:
                         break
                     desc, argv, gui = next_command(fresh[0])
+                    # chain bar: stages left until the GUI step / completion
+                    stages = ["stack", "reference", "auto_segmented"]
+                    st = fresh[0].get("stage", ""); k = stages.index(st) if st in stages else 0
+                    self.chain_signal.emit(k, len(stages), desc)
                     if argv and argv[1].endswith("coherence_with_behavior.py"):
                         argv = argv + self.display_args()          # same options as the buttons
                     if not argv or gui:
                         self.logline(f"[{r.get('behavior_base')}] stopping: {desc}")
                         break
-                    if not self._exec(argv):
+                    if not self._exec(argv, desc):
                         break
                     if not self.chain.isChecked():
                         break
@@ -351,24 +387,41 @@ def run_gui() -> int:
             finally:
                 self.busy = False
                 self.refresh_signal.emit()
+                QtCore.QTimer.singleShot(4000, lambda: self.chain_signal.emit(0, 0, ""))
 
         def _run_argv_seq(self, seq):
             self.busy = True
             try:
-                for argv in seq:
+                for i, argv in enumerate(seq):
+                    self.chain_signal.emit(i, len(seq), Path(argv[1]).stem.replace("_", " "))
                     if not self._exec(argv):
                         break
+                else:
+                    self.chain_signal.emit(len(seq), len(seq), "all done")
             finally:
                 self.busy = False
                 self.refresh_signal.emit()
+                QtCore.QTimer.singleShot(4000, lambda: self.chain_signal.emit(0, 0, ""))
 
-        def _exec(self, argv) -> bool:
+        def _exec(self, argv, step=None) -> bool:
+            name = step or Path(argv[1]).stem.replace("_", " ")
             self.logline("$ " + " ".join(argv))
+            self.progress_signal.emit(0, 0, name)                       # busy until the step reports
             p = subprocess.Popen(argv, cwd=str(ROOT), stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, text=True)
+                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
             for line in p.stdout:
-                self.logline(line.rstrip())
+                line = line.rstrip()
+                if line.startswith("##PROGRESS "):
+                    try:
+                        frac, _, label = line[11:].partition(" ")
+                        done, total = (int(x) for x in frac.split("/"))
+                        self.progress_signal.emit(done, total, label or name)
+                    except ValueError:
+                        pass
+                    continue                                            # keep the log readable
+                self.logline(line)
             p.wait()
+            self.progress_signal.emit(1, 1, f"{name}: done" if p.returncode == 0 else f"{name}: FAILED")
             self.logline(f"[exit {p.returncode}]")
             return p.returncode == 0
 
