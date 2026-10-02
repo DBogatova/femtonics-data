@@ -42,6 +42,9 @@ WORKFLOW (napari)
     and the sliders/reference channel come back at the values you saved with. A mask
     saved before sessions existed is rebuilt so it opens voxel-for-voxel as saved.
   * Add by hand ('a' / button): paint on the green layer to force voxels into your mask.
+  * Any erase or paint made directly on the 'Your cell' or 'Other cells' layer with
+    napari's own brush is recorded as a permanent hand edit too: what you erase never
+    comes back when the sliders move or the tool is reopened.
     --fresh starts over from the seed (saved session and exclusion ignored until you save).
   * Ctrl+S writes <stem>_autoseg_labelmap_reviewed.tif (cell 1, class 2 = structure,
     label 2) + a record in <stem>_autoseg_reviewed.json, so femto_status advances to
@@ -643,8 +646,13 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     def regrow():
         _timer.stop()
         if not S["arcs"]:
-            mask_layer.data = np.zeros(ref.shape, np.uint8); unc_layer.data = np.zeros(ref.shape, np.uint8)
-            int_layer.data = np.zeros(ref.shape, np.uint8)
+            S["absorbing"] = True
+            try:
+                mask_layer.data = np.zeros(ref.shape, np.uint8); unc_layer.data = np.zeros(ref.shape, np.uint8)
+                int_layer.data = np.zeros(ref.shape, np.uint8)
+            finally:
+                S["absorbing"] = False
+            S["expect_own"] = np.zeros(ref.shape, bool); S["expect_other"] = np.zeros(ref.shape, bool)
             status.setText("no centerline yet - use 'Add a missing branch'"); return
         er = np.asarray(edits_layer.data) == 1
         ad = np.asarray(edits_layer.data) == 2
@@ -655,8 +663,13 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
                                 other=S["other"], other_erase=oe, other_add=oa)
         S["last_unc"] = unc
         m = drop_small_islands(m.astype(np.uint8), min_voxels=20)[0] > 0   # same cleanup as at save
-        mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
-        int_layer.data = mi.astype(np.uint8)
+        S["absorbing"] = True
+        try:
+            mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
+            int_layer.data = mi.astype(np.uint8)
+        finally:
+            S["absorbing"] = False
+        S["expect_own"] = m.copy(); S["expect_other"] = mi.copy()
         n_int = S["owners"].count("intruder")
         status.setText(f"your cell: {int(m.sum()):,} voxels, {len(S['arcs']) - n_int} branches"
                        + (f"\nother cells: {int(mi.sum()):,} voxels, {n_int} branches" if n_int else "")
@@ -672,7 +685,12 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         m, mi, _ = grow_owned(S["ref"], S["arcs"], S["owners"], voxel, S["alpha"], S["rx"], S["pad"], dim_pct,
                               erase=er, add=ad, caches=S["caches"], other=S["other"], other_erase=oe, other_add=oa)
         m = drop_small_islands(m.astype(np.uint8), min_voxels=20)[0] > 0
-        mask_layer.data = m.astype(np.uint8); int_layer.data = mi.astype(np.uint8)
+        S["absorbing"] = True
+        try:
+            mask_layer.data = m.astype(np.uint8); int_layer.data = mi.astype(np.uint8)
+        finally:
+            S["absorbing"] = False
+        S["expect_own"] = m.copy(); S["expect_other"] = mi.copy()
 
     def push_hist():
         S["hist"].append(([a.copy() for a in S["arcs"]], list(S["owners"])))
@@ -757,6 +775,34 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             edits_layer.mode = "pan_zoom"; v.layers.selection.active = mask_layer
             P.hint("Adjust Mask Thickness until the glow is gone, then fix branches below")
         P.set_toggle("a", on)
+
+    # Painting straight on 'Your cell' or 'Other cells' (napari's own brush / eraser) is
+    # recorded as a permanent hand edit, so it never comes back on the next recompute.
+    S["expect_own"] = None; S["expect_other"] = None
+
+    def _absorb_cell_edit(which):
+        if S.get("absorbing"):
+            return
+        shown = np.asarray(mask_layer.data if which == "own" else int_layer.data) > 0
+        exp = S.get("expect_own" if which == "own" else "expect_other")
+        if exp is None or shown.shape != exp.shape:
+            return
+        removed = exp & ~shown; added = shown & ~exp
+        if not removed.any() and not added.any():
+            return
+        S["absorbing"] = True
+        try:
+            lyr = edits_layer if which == "own" else oedits_layer
+            d = np.asarray(lyr.data).copy()
+            d[removed] = 1                        # red: permanently out of this cell
+            d[added] = 2                          # green/magenta: permanently in
+            lyr.data = d                          # fires apply_edits_now -> recompute shows it
+        finally:
+            S["absorbing"] = False
+
+    for _ev in ("paint", "set_data"):
+        getattr(mask_layer.events, _ev).connect(lambda e: _absorb_cell_edit("own"))
+        getattr(int_layer.events, _ev).connect(lambda e: _absorb_cell_edit("other"))
 
     def set_oedit(label):
         """Brush on the other-cells edit layer: 1 = remove from other cell, 2 = add to it."""
