@@ -653,6 +653,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         m, mi, unc = grow_owned(S["ref"], S["arcs"], S["owners"], voxel, S["alpha"], S["rx"],
                                 S["pad"], dim_pct, erase=er, add=ad, caches=S.get("caches"),
                                 other=S["other"], other_erase=oe, other_add=oa)
+        S["last_unc"] = unc
         m = drop_small_islands(m.astype(np.uint8), min_voxels=20)[0] > 0   # same cleanup as at save
         mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
         int_layer.data = mi.astype(np.uint8)
@@ -660,6 +661,18 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         status.setText(f"your cell: {int(m.sum()):,} voxels, {len(S['arcs']) - n_int} branches"
                        + (f"\nother cells: {int(mi.sum()):,} voxels, {n_int} branches" if n_int else "")
                        + (f"\nuncertain spots: {int(unc.sum())}" if unc.sum() else ""))
+
+    def apply_edits_now():
+        """Brush strokes take effect immediately: re-run only the cheap ownership step
+        (your green/red, their red/magenta, your-cell-wins clip) on the grown masks."""
+        if not S["arcs"] or S.get("caches") is None:
+            return
+        er = np.asarray(edits_layer.data) == 1; ad = np.asarray(edits_layer.data) == 2
+        oe = np.asarray(oedits_layer.data) == 1; oa = np.asarray(oedits_layer.data) == 2
+        m, mi, _ = grow_owned(S["ref"], S["arcs"], S["owners"], voxel, S["alpha"], S["rx"], S["pad"], dim_pct,
+                              erase=er, add=ad, caches=S["caches"], other=S["other"], other_erase=oe, other_add=oa)
+        m = drop_small_islands(m.astype(np.uint8), min_voxels=20)[0] > 0
+        mask_layer.data = m.astype(np.uint8); int_layer.data = mi.astype(np.uint8)
 
     def push_hist():
         S["hist"].append(([a.copy() for a in S["arcs"]], list(S["owners"])))
@@ -724,10 +737,12 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         yield
         while event.type == "mouse_move":
             yield
-        regrow()                                            # stroke finished -> subtract it
+        apply_edits_now()                                   # stroke finished -> make sure it shows
 
     # any other change to the erase layer (fill tool, undo, programmatic) also re-applies
-    erase_layer.events.data.connect(lambda e: regrow_soon())
+    # napari 0.6: brush strokes emit 'paint' (and 'set_data'); 'data' fires only on assignment
+    for _ev in ("paint", "set_data", "data"):
+        getattr(erase_layer.events, _ev).connect(lambda e: apply_edits_now())
 
 
     def set_add(on):
@@ -764,8 +779,9 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         yield
         while event.type == "mouse_move":
             yield
-        regrow()
-    oedits_layer.events.data.connect(lambda e: regrow_soon())
+        apply_edits_now()
+    for _ev in ("paint", "set_data", "data"):
+        getattr(oedits_layer.events, _ev).connect(lambda e: apply_edits_now())
 
     def set_erase(on):
         """Erase mode: select the erase layer with the brush; off: back to pan/zoom."""
