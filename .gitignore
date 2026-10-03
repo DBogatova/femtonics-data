@@ -53,3 +53,4 @@ __pycache__/
 # statistics outputs are derived (regenerate with: femto stats)
 stats/
 !code/**/*.md
+!USER_GUIDE.md

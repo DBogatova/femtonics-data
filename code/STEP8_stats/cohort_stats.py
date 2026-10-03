@@ -46,7 +46,8 @@ def collect() -> pd.DataFrame:
         if "note" in m:
             continue
         row = {k: m.get(k) for k in ["behavior_base", "mouse", "date", "rank", "frame_rate_hz", "T",
-                                     "imaging_quality", "n_regions"] + METRICS}
+                                     "imaging_quality", "n_regions", "reference", "reference_region"] + METRICS}
+        row["reference"] = row.get("reference") or "soma"
         row["n_branch_regions"] = sum(1 for v in m["regions"].values() if v["compartment"] == "branch")
         row["metrics_file"] = str(Path(f).relative_to(ROOT))
         rows.append(row)
@@ -58,7 +59,8 @@ def collect() -> pd.DataFrame:
     d["date_dt"] = pd.to_datetime(d["date"], format="%m-%d-%Y")
     d["dpi"] = (d["date_dt"] - d["injection_date"]).dt.days
     d["short"] = d["mouse"].str.replace("rbp4_", "", regex=False) + " " + d["date"].str[:5] + " r" + \
-        d["behavior_base"].str.extract(r"Run(\d+)")[0].astype(int).astype(str)
+        d["behavior_base"].str.extract(r"Run(\d+)")[0].astype(int).astype(str) + \
+        np.where(d["reference"] == "proximal_trunk", " (no soma)", "")
     return d.sort_values(["mouse", "date_dt", "rank"]).reset_index(drop=True)
 
 
@@ -69,7 +71,7 @@ def collect_distance() -> pd.DataFrame:
             continue
         m = json.load(open(f))
         for c in m.get("coupling_by_distance", []):
-            rows.append({"behavior_base": m["behavior_base"], "mouse": m["mouse"], **c})
+            rows.append({"behavior_base": m["behavior_base"], "mouse": m["mouse"], "reference": m.get("reference", "soma"), **c})
     return pd.DataFrame(rows)
 
 
@@ -80,13 +82,16 @@ def fig_distance(dd: pd.DataFrame, out: Path):
     for b, g in dd.groupby("behavior_base"):
         g = g.sort_values("distance_um")
         ax.plot(g.distance_um, g.r_with_soma_corr, "-", color=colors[b], lw=1, alpha=0.6)
+        hollow = g.reference.iloc[0] == "proximal_trunk"
         for _, r in g.iterrows():
-            ax.scatter(r.distance_um, r.r_with_soma_corr, marker=mk.get(r.compartment, "s"), color=colors[b], s=40, zorder=3)
-        ax.plot([], [], "-", color=colors[b], label=b.replace("rbp4_", "").replace("_phpeb", ""))
+            ax.scatter(r.distance_um, r.r_with_soma_corr, marker=mk.get(r.compartment, "s"), s=40, zorder=3,
+                       facecolor="none" if hollow else colors[b], edgecolor=colors[b], linewidth=1.4)
+        ax.plot([], [], "--" if hollow else "-", color=colors[b],
+                label=b.replace("rbp4_", "").replace("_phpeb", "") + (" (vs proximal trunk)" if hollow else ""))
     ax.scatter([], [], marker="o", color="0.4", label="trunk"); ax.scatter([], [], marker="^", color="0.4", label="branch")
-    ax.set_xlabel("distance from soma along the dendrite (um)"); ax.set_ylabel("r with soma (noise-corrected)")
+    ax.set_xlabel("distance from the reference region along the dendrite (um)"); ax.set_ylabel("r with reference (noise-corrected)")
     ax.set_ylim(0, 1.02); ax.legend(fontsize=7, frameon=False)
-    ax.set_title("Coupling to the soma vs distance (one line per cell)", fontsize=10, loc="left")
+    ax.set_title("Coupling vs distance (filled: soma reference; hollow: proximal trunk, no soma in scan)", fontsize=9, loc="left")
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
     fig.tight_layout(); fig.savefig(out.with_suffix(".png"), dpi=170); fig.savefig(out.with_suffix(".pdf")); plt.close(fig)
 
@@ -95,6 +100,9 @@ def tests(d: pd.DataFrame) -> str:
     from scipy import stats
     L = []
     n = len(d); L.append(f"{n} run(s), {d.mouse.nunique()} mouse/mice: " + ", ".join(f"{m} ({k})" for m, k in d.mouse.value_counts().items()))
+    ns = int((d.reference == "soma").sum()); nt = n - ns
+    L.append(f"reference region: soma in {ns} run(s), most proximal trunk in {nt} (soma below the scanned tube)."
+             + ("  'soma' below means 'reference region'; tests are reported for all runs and for soma-referenced runs alone." if nt else ""))
     L.append("")
     L.append("H1  Soma-dendrite independence")
     x = d["r_soma_branch"].dropna(); y = d["r_soma_trunk"].dropna()
@@ -107,6 +115,9 @@ def tests(d: pd.DataFrame) -> str:
         w = stats.wilcoxon(both["r_soma_trunk"], both["r_soma_branch"], alternative="greater")
         L.append(f"  branch less coupled than trunk: {int((both.r_soma_trunk > both.r_soma_branch).sum())}/{len(both)} runs, "
                  f"Wilcoxon p={w.pvalue:.3g}" + ("  (n small - descriptive)" if len(both) < 6 else ""))
+    if nt and ns:
+        xs_ = d[d.reference == "soma"]["r_soma_branch"].dropna(); xt_ = d[d.reference != "soma"]["r_soma_branch"].dropna()
+        L.append(f"  soma-referenced runs: r {xs_.mean():.2f} (n={len(xs_)});  proximal-trunk-referenced: r {xt_.mean():.2f} (n={len(xt_)})")
     fi = d["frac_branch_independent"].dropna()
     L.append(f"  branch events with no soma event within the window: mean {100*fi.mean():.0f}% [{100*fi.min():.0f}..{100*fi.max():.0f}%]")
     fs = d["frac_soma_independent"].dropna()

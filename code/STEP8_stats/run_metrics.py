@@ -41,6 +41,9 @@ trunk, everything else -> branch. Metrics:
     soma_f_raw               soma mean raw fluorescence (F, not dF/F): brighter = more
                              sensor. Comparable within a mouse at fixed laser power.
     soma_snr                 soma dF/F p99 / robust noise
+  reference: the soma region; if none exists (soma below the scanned tube), the trunk
+    region closest to the deep end of the guideline, flagged reference = proximal_trunk.
+    All soma_* metrics are then relative to that region; the cohort keeps the two apart.
   covariates: mouse, date, dpi (days post injection, from mice.csv), frame_rate_hz,
     imaging_quality, n_regions, region names.
 
@@ -61,7 +64,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "code")); sys.path.insert(0, str(ROOT / "code/STEP7_workflow"))
 from common.voxel import resolve_voxel                        # noqa: E402
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def dff(t, f0_pct=10.0):
@@ -108,6 +111,28 @@ def distances_from_soma(seg, soma_label, mask, voxel):
         else:
             out[l] = (float(np.linalg.norm((np.argwhere(seg == l).mean(0) - sc) * w)), "euclidean")
     return out
+
+
+def guideline_deep_end_first(run, root) -> bool:
+    """True if scan column 0 is the deep (soma) end of the snake guideline. Default True."""
+    try:
+        import h5py, glob
+        sys.path.insert(0, str(root / "code/STEP1_extract"))
+        from summarize_mesc import parse_json_attr
+        session = (root / run["run_dir"]).parents[1] if (root / run["run_dir"]).parent.name == "preprocessed" else (root / run["run_dir"]).parent
+        mesc = sorted(glob.glob(str(session / "raw" / "*.mesc")))
+        if not mesc or not run.get("munit"):
+            return True
+        with h5py.File(mesc[0], "r") as f:
+            for sk in [k for k in f if k.startswith("MSession")]:
+                if run["munit"] in f[sk]:
+                    pats = parse_json_attr(f[sk][run["munit"]], "MultiROIProtocolJSON")["scanPatterns"]["patterns"]
+                    p = next(q for q in pats if q.get("scanMode") == 8)
+                    z = np.array(p["guideLine"][0][2], float)
+                    return bool(z[0] < z[-1])                 # more negative z = deeper
+    except Exception:
+        pass
+    return True
 
 
 def compartment_of(name: str) -> str:
@@ -195,10 +220,24 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
            "imaging_quality": run.get("quality"), "n_regions": len(labels),
            "regions": {str(l): {"name": names[l], "compartment": comp[l], "voxels": int((seg == l).sum())} for l in labels},
            "params": {"window_frames": window, "prom_frac": prom_frac, "version": __version__}}
-    if not by["soma"] or not by["branch"]:
-        out["note"] = "needs a region named soma* and at least one branch region"
+    if not by["branch"]:
+        out["note"] = "needs at least one branch region"
         return out
-    s = by["soma"][0]; soma = tr[s]; soma_core = core[s]
+    if by["soma"]:
+        s = by["soma"][0]; out["reference"] = "soma"
+    elif by["trunk"]:
+        # no soma in the scan: use the trunk region closest to the soma. The deep end of
+        # the snake guideline is the soma side; regions are ordered by their scan column
+        # and the guideline direction decides which end is proximal.
+        deep_first = guideline_deep_end_first(run, root)
+        xs = {l: float(np.argwhere(seg == l)[:, 2].mean()) for l in by["trunk"]}
+        s = min(xs, key=xs.get) if deep_first else max(xs, key=xs.get)
+        out["reference"] = "proximal_trunk"; out["reference_region"] = names[s]
+        by["trunk"] = [l for l in by["trunk"] if l != s]
+    else:
+        out["note"] = "needs a soma* or trunk* region as the reference"
+        return out
+    soma = tr[s]; soma_core = core[s]
     # geometry and noise per region
     mask_p = run_dir / f"{stem}_autoseg_labelmap_reviewed.tif"
     cell_mask = tifffile.imread(mask_p) if mask_p.exists() else (seg > 0)

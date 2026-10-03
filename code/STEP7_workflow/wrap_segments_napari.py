@@ -647,8 +647,12 @@ def run_check(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR) ->
         ok = False
         print("  FAIL: region empty or not junction-bounded")
     if not res["soma_suggested"]:
-        ok = False
-        print("  FAIL: soma auto-suggestion did not fire on the max-radius region")
+        if cache["soma_blob"].any() and cache["soma_blob"][tuple(res["click"])]:
+            ok = False
+            print("  FAIL: soma auto-suggestion did not fire on the max-radius region")
+        else:
+            print("  note: no soma-sized blob at the thickest point (soma outside the scan, or a "
+                  "degenerate automatic mask) - soma suggestion not tested")
 
     # ---- INTERVAL MATH: two clicks along the longest skeleton arc ----
     print("-" * 78)

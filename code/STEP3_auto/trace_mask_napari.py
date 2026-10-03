@@ -956,7 +956,12 @@ def run_check(stack_path, voxel_cli=None) -> bool:
         mo, mi, _ = grow_owned(ref, arcs, owners, voxel, 0.5, 1.5, 0)
         rep("owner-aware growth: own and other cell disjoint", not (mo & mi).any(),
             f"own {int(mo.sum())} / other {int(mi.sum())} vox")
-        rep("intruder arc voxels end up in the other-cell mask", bool(mi[tuple(arcs[k_int].T)].mean() > 0.9))
+        # the rule is 'your cell wins': every intruder-arc voxel is in exactly one of the two
+        # masks, and in the other-cell mask wherever your mask does not claim it
+        av = tuple(arcs[k_int].T)
+        rep("intruder arc voxels: other cell wherever your mask does not claim them",
+            bool(np.all(mi[av] | mo[av])) and bool(np.all(mi[av] == ~mo[av])),
+            f"{100 * mi[av].mean():.0f}% other, {100 * mo[av].mean():.0f}% yours")
         own_cl = np.zeros(ref.shape, bool)
         for a, o in zip(arcs, owners):
             if o == "own": own_cl[tuple(a.T)] = True

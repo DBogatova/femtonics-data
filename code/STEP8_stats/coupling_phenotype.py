@@ -41,7 +41,7 @@ sys.path.insert(0, str(ROOT / "code")); sys.path.insert(0, str(ROOT / "code/STEP
 from run_metrics import dff, region_names, compartment_of, events       # noqa: E402
 
 R_CUT = 0.75
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def analyze_run(run: dict, root: Path, r_cut: float = R_CUT, window: int = 2):
@@ -82,7 +82,17 @@ def analyze_run(run: dict, root: Path, r_cut: float = R_CUT, window: int = 2):
     multi = [set(groups[i] for i, _ in e) for e in nets if len({i for i, _ in e}) >= 2]
     frac_local = float(np.mean([len(g) == 1 for g in multi])) if multi else float("nan")
     frac_all = float(np.mean([len(g) == k for g in multi])) if multi else float("nan")
+    # stability: does the grouping depend on the exact cut? Re-cut the same tree from
+    # r = 0.60 to 0.90 and compare each partition with the chosen one (adjusted Rand).
+    from sklearn.metrics import adjusted_rand_score
+    sweep = {}
+    for rc in np.round(np.arange(0.60, 0.901, 0.05), 2):
+        g2 = fcluster(Z, t=1 - rc, criterion="distance")
+        sweep[f"{rc:.2f}"] = {"n_groups": int(g2.max()), "ari_vs_chosen": round(float(adjusted_rand_score(groups, g2)), 3)}
+    stable = [k_ for k_, v_ in sweep.items() if v_["ari_vs_chosen"] >= 0.999]
+    stable_range = (min(stable), max(stable)) if stable else None
     out = {"behavior_base": run["behavior_base"], "mouse": run["mouse"], "date": run["date"], "version": __version__,
+           "r_cut_sweep": sweep, "grouping_stable_from_to": stable_range,
            "r_cut": r_cut, "n_regions": n, "n_groups": k,
            "groups": {names[labels[i]]: int(groups[i]) for i in range(n)},
            "compartments": {names[labels[i]]: comp[labels[i]] for i in range(n)},
@@ -143,7 +153,11 @@ def cohort(root: Path):
                      "frac_events_all_groups": j["frac_events_all_groups"],
                      "r_soma_branch": m.get("r_soma_branch"), "frac_branch_independent": m.get("frac_branch_independent"),
                      "branch_first_frac": m.get("branch_first_frac"),
-                     "r_soma_branch_quiet": m.get("r_soma_branch_quiet"), "r_soma_branch_active": m.get("r_soma_branch_active")})
+                     "r_soma_branch_quiet": m.get("r_soma_branch_quiet"), "r_soma_branch_active": m.get("r_soma_branch_active"),
+                     "reference": m.get("reference", "soma"),
+                     "grouping_stable_from": (j.get("grouping_stable_from_to") or [None, None])[0],
+                     "grouping_stable_to": (j.get("grouping_stable_from_to") or [None, None])[1],
+                     "n_groups_by_cut": " ".join(f"{k}:{v['n_groups']}" for k, v in (j.get("r_cut_sweep") or {}).items())})
     d = pd.DataFrame(rows)
     if d.empty:
         print("no coupling results yet"); return
@@ -152,6 +166,8 @@ def cohort(root: Path):
     X = d[feats].astype(float)
     msg = [f"{len(d)} cell(s) profiled -> stats/phenotype/cell_profiles.csv"]
     for _, r in d.iterrows():
+        msg.append(f"  {r.behavior_base}: grouping identical for cuts r={r.grouping_stable_from}..{r.grouping_stable_to}; "
+                   f"groups by cut {r.n_groups_by_cut}")
         msg.append(f"  {r.behavior_base}: {r.n_groups} group(s), separation {r.separation:+.2f}, "
                    f"soma{' + branch together' if r.soma_shares_group_with_branch else ' apart from branches'}, "
                    f"{100 * r.frac_events_within_one_group:.0f}% local events, r(soma,branch) {r.r_soma_branch:.2f}")
