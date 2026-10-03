@@ -24,6 +24,19 @@ trunk, everything else -> branch. Metrics:
   behavior state (from the published behavior CSV, on the imaging frame axis)
     r_soma_branch_quiet / _active   coupling in low / high arousal frames
                                     (active = pupil OR whisking above their median)
+  geometry and noise
+    regions[*].distance_um   distance from the soma along the dendrite (geodesic through the
+                             cell mask, median over the region's voxels); 'euclidean' flag
+                             if the region is not connected to the soma through the mask
+    regions[*].reliability   split-half reliability of the region's dF/F (voxels split into
+                             two interleaved halves, Spearman-Brown corrected): how much of
+                             the trace is signal rather than noise. Grows with region size.
+    r_soma_branch_corr       coupling corrected for each region's noise (disattenuated:
+                             r / sqrt(rel_soma * rel_branch), capped at 1). Removes the
+                             region-size effect so cells with different ROI sizes compare
+                             fairly. Shared noise (motion, scattered light) is not removed,
+                             so this is a conservative (still slightly high) estimate.
+    coupling_by_distance     per region: distance_um, r with soma (raw and corrected)
   expression proxy
     soma_f_raw               soma mean raw fluorescence (F, not dF/F): brighter = more
                              sensor. Comparable within a mouse at fixed laser power.
@@ -48,7 +61,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "code")); sys.path.insert(0, str(ROOT / "code/STEP7_workflow"))
 from common.voxel import resolve_voxel                        # noqa: E402
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def dff(t, f0_pct=10.0):
@@ -63,6 +76,38 @@ def robust_noise(t):
 def events(t, prom_frac=0.2, min_dist=5):
     pk, _ = find_peaks(t, prominence=prom_frac * (t.max() - t.min()), distance=min_dist)
     return pk
+
+
+def split_half_reliability(flat, idx, seed=0):
+    """Spearman-Brown corrected correlation between the mean traces of two interleaved
+    random halves of a region's voxels."""
+    if len(idx) < 8:
+        return float("nan")
+    rng = np.random.default_rng(seed); perm = rng.permutation(idx)
+    a = dff(flat[:, perm[0::2]].mean(1).astype(np.float64)); b = dff(flat[:, perm[1::2]].mean(1).astype(np.float64))
+    r = float(np.corrcoef(a, b)[0, 1])
+    return float(2 * r / (1 + r)) if r > -0.99 else float("nan")
+
+
+def distances_from_soma(seg, soma_label, mask, voxel):
+    """Median geodesic distance (um, through mask | regions) from the soma region to every
+    region; falls back to centroid Euclidean distance for regions not connected."""
+    from skimage.graph import MCP_Geometric
+    allowed = (np.asarray(mask) > 0) | (seg > 0)
+    cost = np.where(allowed, 1.0, np.inf)
+    mcp = MCP_Geometric(cost, sampling=tuple(voxel))
+    src = [tuple(p) for p in np.argwhere(seg == soma_label)]
+    dist, _ = mcp.find_costs(src)
+    out = {}
+    w = np.asarray(voxel, float)
+    sc = np.argwhere(seg == soma_label).mean(0)
+    for l in (int(v) for v in np.unique(seg) if v > 0):
+        d = dist[seg == l]
+        if np.isfinite(d).mean() > 0.5:
+            out[l] = (float(np.median(d[np.isfinite(d)])), "geodesic")
+        else:
+            out[l] = (float(np.linalg.norm((np.argwhere(seg == l).mean(0) - sc) * w)), "euclidean")
+    return out
 
 
 def compartment_of(name: str) -> str:
@@ -154,14 +199,34 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
         out["note"] = "needs a region named soma* and at least one branch region"
         return out
     s = by["soma"][0]; soma = tr[s]; soma_core = core[s]
+    # geometry and noise per region
+    mask_p = run_dir / f"{stem}_autoseg_labelmap_reviewed.tif"
+    cell_mask = tifffile.imread(mask_p) if mask_p.exists() else (seg > 0)
+    dist = distances_from_soma(seg, s, cell_mask, voxel)
+    rel = {l: split_half_reliability(flat, np.flatnonzero((seg == l).ravel())) for l in labels}
+    for l in labels:
+        out["regions"][str(l)].update({"distance_um": round(dist[l][0], 2), "distance_kind": dist[l][1],
+                                       "reliability": round(rel[l], 4) if rel[l] == rel[l] else None})
+    def r_corr(a_lab, b_lab, r_raw):
+        ra, rb = rel[a_lab], rel[b_lab]
+        if not (ra == ra and rb == rb) or ra <= 0 or rb <= 0:
+            return float("nan")
+        return float(min(1.0, r_raw / np.sqrt(ra * rb)))
     branches = by["branch"]; br_mean = np.mean([tr[l] for l in branches], axis=0)
     r = lambda a, b: float(np.corrcoef(a, b)[0, 1])
     out["r_soma_branch"] = float(np.mean([r(soma, tr[l]) for l in branches]))
     out["r_soma_branch_core"] = float(np.mean([r(soma_core, core[l]) for l in branches]))
     out["r_soma_branch_per_region"] = {names[l]: r(soma, tr[l]) for l in branches}
+    out["r_soma_branch_corr"] = float(np.nanmean([r_corr(s, l, r(soma, tr[l])) for l in branches]))
+    out["coupling_by_distance"] = [
+        {"region": names[l], "compartment": comp[l], "distance_um": round(dist[l][0], 2),
+         "r_with_soma": round(r(soma, tr[l]), 4), "r_with_soma_corr": round(r_corr(s, l, r(soma, tr[l])), 4),
+         "reliability": round(rel[l], 4), "voxels": int((seg == l).sum())}
+        for l in labels if l != s]
     if by["trunk"]:
         tk = np.mean([tr[l] for l in by["trunk"]], axis=0)
         out["r_soma_trunk"] = r(soma, tk); out["r_trunk_branch"] = r(tk, br_mean)
+        out["r_soma_trunk_corr"] = float(np.nanmean([r_corr(s, l, r(soma, tr[l])) for l in by["trunk"]]))
     # events
     ev = {l: events(tr[l], prom_frac) for l in labels}
     minutes = T / rate / 60.0

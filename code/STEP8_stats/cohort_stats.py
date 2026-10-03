@@ -30,7 +30,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 OUT = ROOT / "stats"
 
-METRICS = ["r_soma_branch", "r_soma_branch_core", "r_soma_trunk", "r_trunk_branch",
+METRICS = ["r_soma_branch", "r_soma_branch_corr", "r_soma_trunk_corr", "r_soma_branch_core", "r_soma_trunk", "r_trunk_branch",
            "frac_branch_independent", "frac_soma_independent", "frac_global", "branch_first_frac",
            "n_paired_events", "lag_soma_branch_frames", "r_soma_branch_quiet", "r_soma_branch_active",
            "soma_f_raw", "branch_f_raw", "soma_snr", "rate_soma_per_min", "rate_branch_per_min",
@@ -62,6 +62,35 @@ def collect() -> pd.DataFrame:
     return d.sort_values(["mouse", "date_dt", "rank"]).reset_index(drop=True)
 
 
+def collect_distance() -> pd.DataFrame:
+    rows = []
+    for f in glob.glob(str(ROOT / "rbp4_*/**/*_metrics.json"), recursive=True):
+        if "/old/" in f:
+            continue
+        m = json.load(open(f))
+        for c in m.get("coupling_by_distance", []):
+            rows.append({"behavior_base": m["behavior_base"], "mouse": m["mouse"], **c})
+    return pd.DataFrame(rows)
+
+
+def fig_distance(dd: pd.DataFrame, out: Path):
+    fig, ax = plt.subplots(figsize=(6.5, 4.4))
+    mk = {"trunk": "o", "branch": "^"}
+    colors = {b: c for b, c in zip(sorted(dd.behavior_base.unique()), plt.cm.tab10.colors)}
+    for b, g in dd.groupby("behavior_base"):
+        g = g.sort_values("distance_um")
+        ax.plot(g.distance_um, g.r_with_soma_corr, "-", color=colors[b], lw=1, alpha=0.6)
+        for _, r in g.iterrows():
+            ax.scatter(r.distance_um, r.r_with_soma_corr, marker=mk.get(r.compartment, "s"), color=colors[b], s=40, zorder=3)
+        ax.plot([], [], "-", color=colors[b], label=b.replace("rbp4_", "").replace("_phpeb", ""))
+    ax.scatter([], [], marker="o", color="0.4", label="trunk"); ax.scatter([], [], marker="^", color="0.4", label="branch")
+    ax.set_xlabel("distance from soma along the dendrite (um)"); ax.set_ylabel("r with soma (noise-corrected)")
+    ax.set_ylim(0, 1.02); ax.legend(fontsize=7, frameon=False)
+    ax.set_title("Coupling to the soma vs distance (one line per cell)", fontsize=10, loc="left")
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    fig.tight_layout(); fig.savefig(out.with_suffix(".png"), dpi=170); fig.savefig(out.with_suffix(".pdf")); plt.close(fig)
+
+
 def tests(d: pd.DataFrame) -> str:
     from scipy import stats
     L = []
@@ -70,6 +99,9 @@ def tests(d: pd.DataFrame) -> str:
     L.append("H1  Soma-dendrite independence")
     x = d["r_soma_branch"].dropna(); y = d["r_soma_trunk"].dropna()
     L.append(f"  r(soma,branch) mean {x.mean():.2f} [{x.min():.2f}..{x.max():.2f}]   r(soma,trunk) mean {y.mean():.2f}")
+    xc = d["r_soma_branch_corr"].dropna()
+    if len(xc):
+        L.append(f"  noise-corrected r(soma,branch) mean {xc.mean():.2f} [{xc.min():.2f}..{xc.max():.2f}] (removes region-size effects)")
     both = d.dropna(subset=["r_soma_branch", "r_soma_trunk"])
     if len(both) >= 2:
         w = stats.wilcoxon(both["r_soma_trunk"], both["r_soma_branch"], alternative="greater")
@@ -187,9 +219,20 @@ def main(argv=None):
     if d.empty:
         print("no metrics yet - run run_metrics.py --all"); return 1
     d.to_csv(OUT / "cohort_metrics.csv", index=False)
-    txt = tests(d); (OUT / "cohort_summary.txt").write_text(txt + "\n"); print(txt)
+    txt = tests(d)
+    dd = collect_distance()
+    if not dd.empty:
+        from scipy import stats as _st
+        dd.to_csv(OUT / "coupling_by_distance.csv", index=False)
+        fig_distance(dd, OUT / "fig_coupling_vs_distance")
+        rho = _st.spearmanr(dd.distance_um, dd.r_with_soma_corr) if len(dd) >= 4 else None
+        slopes = [np.polyfit(g.distance_um, g.r_with_soma_corr, 1)[0] * 100 for _, g in dd.groupby("behavior_base") if len(g) >= 2]
+        txt += ("\n\nCoupling vs distance from soma (noise-corrected, all regions)"
+                + (f"\n  pooled Spearman rho={rho.statistic:+.2f} p={rho.pvalue:.3g} over {len(dd)} regions" if rho else "")
+                + (f"\n  per-cell slope: {', '.join(f'{x:+.2f}' for x in slopes)} r per 100 um" if slopes else ""))
+    (OUT / "cohort_summary.txt").write_text(txt + "\n"); print(txt)
     fig_independence(d, OUT / "fig_independence"); fig_within_mouse(d, OUT / "fig_within_mouse"); fig_expression(d, OUT / "fig_expression")
-    print(f"\nwrote stats/cohort_metrics.csv ({len(d)} runs), cohort_summary.txt, fig_independence, fig_within_mouse, fig_expression")
+    print(f"\nwrote stats/cohort_metrics.csv ({len(d)} runs), cohort_summary.txt, fig_independence, fig_within_mouse, fig_expression, fig_coupling_vs_distance")
     return 0
 
 
