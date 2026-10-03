@@ -32,7 +32,7 @@ case "${1:-panel}" in
   regions) shift; "$PY" code/STEP7_workflow/wrap_segments_napari.py "$@" ;;
   figure)  shift; "$PY" code/STEP7_workflow/coherence_with_behavior.py --run "$@" ;;
   movies)  shift; b="$1"; shift; "$PY" code/STEP7_workflow/make_movies.py --run "$b" "$@" ;;
-  stats)   "$PY" code/STEP8_stats/run_metrics.py --all && "$PY" code/STEP8_stats/coupling_phenotype.py --all && "$PY" code/STEP8_stats/cohort_stats.py ;;
+  stats)   "$PY" code/STEP8_stats/run_metrics.py --all && "$PY" code/STEP8_stats/coupling_phenotype.py --all && "$PY" code/STEP8_stats/behavior_coupling.py --all && "$PY" code/STEP8_stats/cohort_stats.py ;;
   -h|--help|help) sed -n '2,14p' "$0" ;;
   *) echo "unknown command: $1"; sed -n '2,14p' "$0"; exit 1 ;;
 esac

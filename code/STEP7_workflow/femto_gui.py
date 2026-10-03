@@ -314,6 +314,7 @@ def run_gui() -> int:
         def stats_argv(self):
             return [[PYEXE, str(ROOT / "code/STEP8_stats/run_metrics.py"), "--all"],
                     [PYEXE, str(ROOT / "code/STEP8_stats/coupling_phenotype.py"), "--all"],
+                    [PYEXE, str(ROOT / "code/STEP8_stats/behavior_coupling.py"), "--all"],
                     [PYEXE, str(ROOT / "code/STEP8_stats/cohort_stats.py")]]
 
         def build_stats(self):

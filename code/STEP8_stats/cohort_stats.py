@@ -140,6 +140,25 @@ def tests(d: pd.DataFrame) -> str:
         L.append(f"  r(soma,branch) quiet {bs.r_soma_branch_quiet.mean():.2f} vs active {bs.r_soma_branch_active.mean():.2f} "
                  f"({int((bs.r_soma_branch_active > bs.r_soma_branch_quiet).sum())}/{len(bs)} runs more coupled when active)")
     L.append("")
+    L.append("Behavior (whole cell, cross-correlation within +-5 s, circular-shift null)")
+    nb = 0
+    for f in sorted(glob.glob(str(ROOT / "rbp4_*/**/*_behavior_coupling.json"), recursive=True)):
+        if "/old/" in f:
+            continue
+        j = json.load(open(f)); wc = j.get("regions", {}).get("whole cell")
+        if not wc:
+            continue
+        nb += 1
+        L.append(f"  {j['behavior_base']}: " + "; ".join(
+            f"{b} r0 {wc[b]['r_lag0']:+.2f}, peak {wc[b]['r_peak']:+.2f} at {wc[b]['lag_peak_s']:+.1f} s (p={wc[b]['p_peak']:.3f})"
+            for b in j["behaviors"] if b in wc))
+        sd = j.get("state_dependence")
+        if sd and sd.get("branch_only_events", 0) >= 5:
+            L.append(f"      branch-only events in active frames: {sd['branch_only_in_active']}/{sd['branch_only_events']} "
+                     f"(expected {100 * sd['frac_frames_active']:.0f}% by chance, p={sd['p_branch_only_state']:.2f})")
+    if not nb:
+        L.append("  (run behavior_coupling.py --all)")
+    L.append("")
     L.append("H2  Coupling vs time since injection / expression")
     dd = d.dropna(subset=["dpi", "r_soma_branch"])
     L.append(f"  days post-injection: {int(dd.dpi.min()) if len(dd) else '?'}..{int(dd.dpi.max()) if len(dd) else '?'}; "
