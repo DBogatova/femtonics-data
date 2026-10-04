@@ -628,6 +628,19 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     _timer = QTimer(); _timer.setSingleShot(True); _timer.setInterval(60)
     _timer.timeout.connect(lambda: regrow())
 
+    def _set(layer, arr):
+        cur = np.asarray(layer.data)
+        if cur.shape == arr.shape and cur.dtype == arr.dtype and np.array_equal(cur, arr):
+            return
+        layer.data = arr
+
+    # brush events arrive for every mouse move ('paint' and 'set_data'); coalesce them
+    _etimer = QTimer(); _etimer.setSingleShot(True); _etimer.setInterval(120)
+    _etimer.timeout.connect(lambda: apply_edits_now())
+
+    def apply_edits_soon():
+        _etimer.start()
+
     def rebuild_cache():
         # expensive geodesic maps: only when arcs, owners or the reference change
         S["caches"] = owner_caches(S["ref"], S["arcs"], S["owners"], voxel) if S["arcs"] else (None, None)
@@ -665,8 +678,8 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         m = drop_small_islands(m.astype(np.uint8), min_voxels=20)[0] > 0   # same cleanup as at save
         S["absorbing"] = True
         try:
-            mask_layer.data = m.astype(np.uint8); unc_layer.data = unc.astype(np.uint8)
-            int_layer.data = mi.astype(np.uint8)
+            _set(mask_layer, m.astype(np.uint8)); _set(unc_layer, unc.astype(np.uint8))
+            _set(int_layer, mi.astype(np.uint8))
         finally:
             S["absorbing"] = False
         S["expect_own"] = m.copy(); S["expect_other"] = mi.copy()
@@ -678,6 +691,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     def apply_edits_now():
         """Brush strokes take effect immediately: re-run only the cheap ownership step
         (your green/red, their red/magenta, your-cell-wins clip) on the grown masks."""
+        _etimer.stop()
         if not S["arcs"] or S.get("caches") is None:
             return
         er = np.asarray(edits_layer.data) == 1; ad = np.asarray(edits_layer.data) == 2
@@ -687,7 +701,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
         m = drop_small_islands(m.astype(np.uint8), min_voxels=20)[0] > 0
         S["absorbing"] = True
         try:
-            mask_layer.data = m.astype(np.uint8); int_layer.data = mi.astype(np.uint8)
+            _set(mask_layer, m.astype(np.uint8)); _set(int_layer, mi.astype(np.uint8))
         finally:
             S["absorbing"] = False
         S["expect_own"] = m.copy(); S["expect_other"] = mi.copy()
@@ -760,7 +774,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
     # any other change to the erase layer (fill tool, undo, programmatic) also re-applies
     # napari 0.6: brush strokes emit 'paint' (and 'set_data'); 'data' fires only on assignment
     for _ev in ("paint", "set_data", "data"):
-        getattr(erase_layer.events, _ev).connect(lambda e: apply_edits_now())
+        getattr(erase_layer.events, _ev).connect(lambda e: apply_edits_soon())
 
 
     def set_add(on):
@@ -827,7 +841,7 @@ def launch(stack_path, voxel_cli=None, channel="cofire_mean", alpha=0.5, radius_
             yield
         apply_edits_now()
     for _ev in ("paint", "set_data", "data"):
-        getattr(oedits_layer.events, _ev).connect(lambda e: apply_edits_now())
+        getattr(oedits_layer.events, _ev).connect(lambda e: apply_edits_soon())
 
     def set_erase(on):
         """Erase mode: select the erase layer with the brush; off: back to pan/zoom."""
