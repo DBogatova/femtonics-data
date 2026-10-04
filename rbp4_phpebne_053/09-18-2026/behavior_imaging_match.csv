@@ -1,0 +1,37 @@
+mouse,date,mesc_file,mesc_session,munit,scan_type,imaging_timestamp_utc,duration_s,n_t,n_slices,n_y,n_x,frame_rate_hz,pixel_x_um,pixel_y_um,voxel_z_um,span_x_um,span_y_um,imaging_comment,comment_run_number,planes_expected,trigger_andor_edges,trigger_mat,behavior_run,camera_frames_expected,camera_dir,camera_frames_found,camera_state,match_confidence,notes
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_5,ribbon_longitudinal,2026-09-18 16:20:21 UTC,5.02,204,,,,,,,,,,run 001 test,,204,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_6,ribbon_longitudinal,2026-09-18 16:21:39 UTC,5.02,204,,,,,,,,,,run 2. Test,,204,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_7,ribbon_longitudinal,2026-09-18 16:23:53 UTC,5.02,204,,,,,,,,,,run 3. test,,204,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_8,snake,2026-09-18 16:26:24 UTC,300.07,2615,,,,,,,,,,"Run 4. Okay snake, messy",,39225,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_9,snake,2026-09-18 16:41:31 UTC,30.05,318,,,,,,,,,,run 5. no cell,,4770,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_10,snake,2026-09-18 16:46:33 UTC,1.09,9,,,,,,,,,,bad,,135,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_11,snake,2026-09-18 16:46:48 UTC,10.08,83,,,,,,,,,,bad,,1245,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_12,ribbon_longitudinal,2026-09-18 16:47:31 UTC,10.08,62,,,,,,,,,,bad,,62,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_13,snake,2026-09-18 16:51:06 UTC,10.08,83,,,,,,,,,,test,,1245,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_14,snake,2026-09-18 16:52:38 UTC,300.11,2470,,,,,,,,,,Run 6. Not great soma dynamics,,37050,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_15,snake,2026-09-18 17:03:54 UTC,10.08,83,,,,,,,,,,"test, cell 3",,1245,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_16,snake,2026-09-18 17:04:34 UTC,10.08,83,,,,,,,,,,test,,1245,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_17,snake,2026-09-18 17:05:18 UTC,10.08,83,,,,,,,,,,test,,1245,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_18,snake,2026-09-18 17:05:53 UTC,10.24,26,,,,,,,,,,test,,702,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_19,snake,2026-09-18 17:06:33 UTC,10.24,26,,,,,,,,,,test,,702,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_20,snake,2026-09-18 17:07:47 UTC,10.24,26,,,,,,,,,,test,,702,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_21,snake,2026-09-18 17:08:57 UTC,300.11,2470,,,,,,,,,,"Run 7. Good dendrites, bad soma",,37050,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_27,snake,2026-09-18 17:45:24 UTC,10.0,78,,,,,,,,,,bad,,1170,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_28,ribbon_longitudinal,2026-09-18 17:45:56 UTC,10.0,1170,,,,,,,,,,bad,,1170,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_29,ribbon_longitudinal,2026-09-18 17:47:17 UTC,10.0,1170,,,,,,,,,,bad,,1170,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_30,ribbon_longitudinal,2026-09-18 17:47:41 UTC,30.0,3509,,,,,,,,,,,,3509,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_31,ribbon_longitudinal,2026-09-18 17:48:36 UTC,2.81,329,,,,,,,,,,bad,,329,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_32,ribbon_longitudinal,2026-09-18 17:50:22 UTC,30.0,3509,,,,,,,,,,bad,,3509,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_33,ribbon_longitudinal,2026-09-18 17:55:37 UTC,15.01,1755,,,,,,,,,,,,1755,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_35,ribbon_longitudinal,2026-09-18 17:58:15 UTC,15.01,1755,,,,,,,,,,fixed compensation,,1755,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_36,ribbon_longitudinal,2026-09-18 17:59:32 UTC,300.0,35088,,,,,,,,,,Run 8. Better bibbon,,35088,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,rbp4_phpebNe_53_20260918_112243.mesc,MSession_0,MUnit_37,snake,2026-09-18 18:06:15 UTC,300.0,2064,,,,,,,,,,Run 9. Fine snake,,35088,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run001_t1.mat,Run001,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run002_t1.mat,Run002,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run003_t1.mat,Run003,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run004_t1.mat,Run004,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run005_t1.mat,Run005,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run006_t1.mat,Run006,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run007_t1.mat,Run007,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run008_t1.mat,Run008,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_phpebne_053,09-18-2026,,,,,,,,,,,,,,,,,,,,0,Run009_t1.mat,Run009,,,,,no_imaging,NO imaging unit matches this trigger count

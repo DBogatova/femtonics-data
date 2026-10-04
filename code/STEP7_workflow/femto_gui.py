@@ -26,13 +26,15 @@ Run:  $PY code/STEP7_workflow/femto_gui.py
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
+CODE_ROOT = HERE.parents[1]   # real project root (for finding scripts; always from __file__)
+ROOT = Path(os.environ["FEMTO_ROOT"]).resolve() if os.environ.get("FEMTO_ROOT") else CODE_ROOT
 sys.path.insert(0, str(HERE))
 
 import femto_status as fs  # single source of truth for stages/commands
@@ -52,6 +54,8 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
     """(description, argv, needs_gui) for this run's next step.
     Mirrors femto_status's next_action strings; commands identical."""
     stage = run.get("stage", "?")
+    if run.get("mark"):                                   # your decision in run_marks.csv
+        return (run["next"]["label"], [], False)
     d = run.get("run_dir")
     stem = run.get("stem") or ""
     stack = run.get("stack")
@@ -60,20 +64,20 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
         return ("fetch 4D stack from cluster (extract on SCC: extract_top7.qsub)", [], False)
     if stage == "stack":
         return ("build reference volume",
-                [PYEXE, str(ROOT / "code/STEP3_auto/make_reference_volume.py"),
+                [PYEXE, str(CODE_ROOT / "code/STEP3_auto/make_reference_volume.py"),
                  str(stack), "--register-blocks"], False)
     if stage == "reference":
         return ("auto-segment cells",
-                [PYEXE, str(ROOT / "code/STEP3_auto/auto_segment.py"), str(stack)], False)
+                [PYEXE, str(CODE_ROOT / "code/STEP3_auto/auto_segment.py"), str(stack)], False)
     if stage == "auto_segmented":
         return ("trace + grow mask (napari)",
-                [PYEXE, str(ROOT / "code/STEP3_auto/trace_mask_napari.py"), str(stack)], True)
+                [PYEXE, str(CODE_ROOT / "code/STEP3_auto/trace_mask_napari.py"), str(stack)], True)
     if stage == "mask_reviewed":
         return ("one-click wrap soma/trunk/branches (napari)",
-                [PYEXE, str(ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], True)
+                [PYEXE, str(CODE_ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], True)
     if stage in ("segments_located", "coherence_built", "behavior_added"):
         return ("build coherence + behavior composite",
-                [PYEXE, str(ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
+                [PYEXE, str(CODE_ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
                  "--run", base], False)
     return ("complete - use 'Edit mask' / 'Edit regions' to revise it, then 'Build figure + movies'", [], False)
 
@@ -81,7 +85,7 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
 # ---------------------------------------------------------------------------
 def selftest() -> int:
     runs = build_runs()
-    assert len(runs) == 44, f"expected 44 runs, got {len(runs)}"
+    assert len(runs) >= 44, f"expected at least 44 runs, got {len(runs)}"
     stages = {}
     n_cmd = 0
     for r in runs:
@@ -92,6 +96,10 @@ def selftest() -> int:
             n_cmd += 1
     print("stage tally:", stages)
     print(f"runnable commands built: {n_cmd}")
+    # Count imaging-only runs if present
+    n_io = sum(1 for r in runs if r.get("_imaging_only"))
+    if n_io:
+        print(f"imaging-only runs: {n_io}")
     print("SELFTEST PASS")
     return 0
 
@@ -129,6 +137,12 @@ def run_gui() -> int:
             self.b_emask.setToolTip("Open the mask tool on this run, whatever its stage (resumes your saved session)")
             self.b_ereg = QtWidgets.QPushButton("Edit regions")
             self.b_ereg.setToolTip("Open the region tool on this run, whatever its stage")
+            self.b_mark = QtWidgets.QPushButton("Mark run…")
+            self.b_mark.setToolTip("Exclude this run from everything, or set it aside to re-analyze later. "
+                                   "Files are kept; clear the mark to bring it back.")
+            self.b_ign = QtWidgets.QPushButton("Ignore regions…")
+            self.b_ign.setToolTip("Leave chosen regions (e.g. branch2) out of the figure and all statistics, "
+                                  "without changing the mask or regions. Untick to bring them back.")
             self.b_fig = QtWidgets.QPushButton("Build figure + movies")
             self.b_mov = QtWidgets.QPushButton("Build movies only")
             self.b_stats = QtWidgets.QPushButton("Statistics (all cells)")
@@ -137,7 +151,7 @@ def run_gui() -> int:
             self.b_ref = QtWidgets.QPushButton("Refresh")
             self.chain = QtWidgets.QCheckBox("chain automatic steps")
             self.chain.setChecked(True)
-            for b in (self.b_auto, self.b_gui, self.b_emask, self.b_ereg, self.b_fig, self.b_mov, self.b_stats, self.b_ref):
+            for b in (self.b_auto, self.b_gui, self.b_emask, self.b_ereg, self.b_ign, self.b_mark, self.b_fig, self.b_mov, self.b_stats, self.b_ref):
                 btns.addWidget(b)
             btns.addWidget(self.chain)
             btns.addStretch()
@@ -194,6 +208,8 @@ def run_gui() -> int:
             self.b_stats.clicked.connect(self.build_stats)
             self.b_emask.clicked.connect(lambda: self.reopen("mask"))
             self.b_ereg.clicked.connect(lambda: self.reopen("regions"))
+            self.b_ign.clicked.connect(self.edit_ignore)
+            self.b_mark.clicked.connect(self.edit_mark)
             self.b_fig.clicked.connect(lambda: self.build_figure(with_movies=True))
             self.b_mov.clicked.connect(lambda: self.build_figure(with_movies=True, figure=False))
             self.log_signal.connect(self.log.appendPlainText)
@@ -215,7 +231,11 @@ def run_gui() -> int:
                          r.get("stage", "?"), ("[GUI] " if gui else "") + desc]
                 for j, txt in enumerate(cells):
                     it = QtWidgets.QTableWidgetItem(txt)
-                    if r.get("stage") == "complete":
+                    if r.get("mark") == "excluded":
+                        it.setForeground(QtGui.QColor("#c62828"))
+                    elif r.get("mark") == "revisit":
+                        it.setForeground(QtGui.QColor("#ef6c00"))
+                    elif r.get("stage") == "complete":
                         it.setForeground(QtGui.QColor("#2e7d32"))
                     elif r.get("stage") == "not_local":
                         it.setForeground(QtGui.QColor("#9e9e9e"))
@@ -298,11 +318,76 @@ def run_gui() -> int:
             if which == "mask":
                 if not Path(str(stack).replace(".tif", "_ref3d.tif")).exists():
                     self.logline(f"[{r.get('behavior_base')}] no reference volume yet - run the automatic steps first"); return
-                self.launch_gui([PYEXE, str(ROOT / "code/STEP3_auto/trace_mask_napari.py"), str(stack)], "mask tool")
+                self.launch_gui([PYEXE, str(CODE_ROOT / "code/STEP3_auto/trace_mask_napari.py"), str(stack)], "mask tool")
             else:
                 if not Path(str(stack).replace(".tif", "_autoseg_labelmap_reviewed.tif")).exists():
                     self.logline(f"[{r.get('behavior_base')}] no saved mask yet - use Edit mask first"); return
-                self.launch_gui([PYEXE, str(ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], "region tool")
+                self.launch_gui([PYEXE, str(CODE_ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], "region tool")
+
+        def edit_mark(self):
+            """Exclude / revisit later / analyze normally -> run_marks.csv."""
+            r = self.selected()
+            if r is None:
+                return
+            sys.path.insert(0, str(CODE_ROOT / "code"))
+            from common import run_marks as rm
+            base = r.get("behavior_base", "")
+            dlg = QtWidgets.QDialog(self); dlg.setWindowTitle(f"Mark run - {base}")
+            v = QtWidgets.QVBoxLayout(dlg)
+            opts = [(None, "Analyze normally"), ("revisit", "Set aside - re-analyze later"),
+                    ("excluded", "Exclude - not analyzable")]
+            radios = []
+            for key, label in opts:
+                rb = QtWidgets.QRadioButton(label); rb.setChecked(r.get("mark") == key); v.addWidget(rb); radios.append((key, rb))
+            v.addWidget(QtWidgets.QLabel("Reason:"))
+            reason = QtWidgets.QLineEdit(r.get("mark_reason", ""))
+            reason.setPlaceholderText("e.g. multiple cells, part of the cell out of frame")
+            v.addWidget(reason)
+            v.addWidget(QtWidgets.QLabel("Files are kept. A marked run is greyed out here, its automatic steps\n"
+                                         "are not run, and it is left out of all statistics."))
+            bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+            bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject); v.addWidget(bb)
+            if dlg.exec_() != QtWidgets.QDialog.Accepted:
+                return
+            key = next(k for k, rb in radios if rb.isChecked())
+            rm.set_mark(base, key, reason.text().strip())
+            self.logline(f"[{base}] " + ({None: "analyzed normally", "revisit": "set aside to re-analyze later",
+                                          "excluded": "excluded"}[key]) + (f" - {reason.text().strip()}" if reason.text().strip() else "")
+                         + " - press 'Statistics' to update the cohort")
+            self.refresh()
+
+        def edit_ignore(self):
+            """Tick-box dialog over the run's region names -> <stem>_ignore.json."""
+            r = self.selected()
+            if r is None:
+                return
+            stack = self.stack_path(r)
+            seg = Path(str(stack).replace(".tif", "_segments_final.tif")) if stack else None
+            if seg is None or not seg.exists():
+                self.logline(f"[{r.get('behavior_base')}] no regions yet - use Edit regions first"); return
+            sys.path.insert(0, str(CODE_ROOT / "code"))
+            from common import regions as rg
+            names = [n for _, n in sorted(rg._names_from_json(seg).items())]
+            cur = {n.lower() for n in rg.ignored_names(seg)}
+            dlg = QtWidgets.QDialog(self); dlg.setWindowTitle(f"Ignore regions - {r.get('behavior_base')}")
+            v = QtWidgets.QVBoxLayout(dlg)
+            v.addWidget(QtWidgets.QLabel("Ticked regions are left out of the figure and all statistics.\n"
+                                         "The mask and regions are not changed."))
+            boxes = []
+            for n in names:
+                cb = QtWidgets.QCheckBox(n); cb.setChecked(n.lower() in cur); v.addWidget(cb); boxes.append(cb)
+            reason = QtWidgets.QLineEdit(); reason.setPlaceholderText("reason (optional), e.g. suspected other cell")
+            v.addWidget(reason)
+            bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+            bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject); v.addWidget(bb)
+            if dlg.exec_() != QtWidgets.QDialog.Accepted:
+                return
+            chosen = [cb.text() for cb in boxes if cb.isChecked()]
+            rg.main([str(seg), "--clear"])
+            if chosen:
+                rg.main([str(seg), *chosen] + (["--reason", reason.text().strip()] if reason.text().strip() else []))
+            self.logline(f"[{r.get('behavior_base')}] ignored in figure + statistics: {', '.join(chosen) or '(none)'}"
+                         " - press 'Build figure + movies' and 'Statistics' to update")
 
         def stack_path(self, r):
             rd, st = r.get("run_dir"), r.get("stem")
@@ -312,10 +397,10 @@ def run_gui() -> int:
             return pth if pth.exists() else None
 
         def stats_argv(self):
-            return [[PYEXE, str(ROOT / "code/STEP8_stats/run_metrics.py"), "--all"],
-                    [PYEXE, str(ROOT / "code/STEP8_stats/coupling_phenotype.py"), "--all"],
-                    [PYEXE, str(ROOT / "code/STEP8_stats/behavior_coupling.py"), "--all"],
-                    [PYEXE, str(ROOT / "code/STEP8_stats/cohort_stats.py")]]
+            return [[PYEXE, str(CODE_ROOT / "code/STEP8_stats/run_metrics.py"), "--all"],
+                    [PYEXE, str(CODE_ROOT / "code/STEP8_stats/coupling_phenotype.py"), "--all"],
+                    [PYEXE, str(CODE_ROOT / "code/STEP8_stats/behavior_coupling.py"), "--all"],
+                    [PYEXE, str(CODE_ROOT / "code/STEP8_stats/cohort_stats.py")]]
 
         def build_stats(self):
             if self.busy:
@@ -334,11 +419,11 @@ def run_gui() -> int:
             seq = []
             disp = self.display_args()
             if figure:
-                seq.append([PYEXE, str(ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
+                seq.append([PYEXE, str(CODE_ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
                             "--run", base, *disp] + (["--force"] if self.mv_force.isChecked() else []))
             kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
             if with_movies and kinds:
-                mv = [PYEXE, str(ROOT / "code/STEP7_workflow/make_movies.py"), "--run", base,
+                mv = [PYEXE, str(CODE_ROOT / "code/STEP7_workflow/make_movies.py"), "--run", base,
                       "--kinds", *kinds, *disp]
                 if self.mv_force.isChecked():
                     mv.append("--force")
@@ -377,7 +462,7 @@ def run_gui() -> int:
                 fresh = [x for x in build_runs() if x.get("behavior_base") == r.get("behavior_base")]
                 kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
                 if fresh and fresh[0].get("stage") == "complete" and kinds and self.chain.isChecked():
-                    mv = [PYEXE, str(ROOT / "code/STEP7_workflow/make_movies.py"),
+                    mv = [PYEXE, str(CODE_ROOT / "code/STEP7_workflow/make_movies.py"),
                           "--run", r.get("behavior_base"), "--kinds", *kinds,
                           *self.display_args()]
                     if self.mv_force.isChecked():

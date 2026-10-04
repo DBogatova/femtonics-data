@@ -1,0 +1,25 @@
+mouse,date,mesc_file,mesc_session,munit,scan_type,imaging_timestamp_utc,duration_s,n_t,n_slices,n_y,n_x,frame_rate_hz,pixel_x_um,pixel_y_um,voxel_z_um,span_x_um,span_y_um,imaging_comment,comment_run_number,planes_expected,trigger_andor_edges,trigger_mat,behavior_run,camera_frames_expected,camera_dir,camera_frames_found,camera_state,match_confidence,notes
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_6,snake,2026-09-28 20:08:43 UTC,15.01,111,,,,,,,,,,"cell 1 test, no zcomp",,1554,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_7,snake,2026-09-28 20:09:54 UTC,15.01,111,,,,,,,,,,cell 1zcomp,,1554,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_8,snake,2026-09-28 20:10:44 UTC,15.01,111,,,,,,,,,,,,1554,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_9,snake,2026-09-28 20:11:52 UTC,15.18,71,,,,,,,,,,test cell 1,,1278,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_10,snake,2026-09-28 20:13:47 UTC,13.72,63,,,,,,,,,,,,945,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_11,snake,2026-09-28 20:16:43 UTC,300.18,1643,,,,,,,,,,"Run 1. Decent snake, no soma. cell 1",,23002,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_12,snake,2026-09-28 20:28:40 UTC,15.11,109,,,,,,,,,,,,1526,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_13,snake,2026-09-28 20:30:48 UTC,15.11,109,,,,,,,,,,no water,,1526,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_14,snake,2026-09-28 20:32:30 UTC,15.11,109,,,,,,,,,,cell 2 bad. maybe moved,,1526,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_15,snake,2026-09-28 20:35:16 UTC,15.11,109,,,,,,,,,,bad cell 2 maybe moved,,1526,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_16,snake,2026-09-28 20:39:17 UTC,15.11,109,,,,,,,,,,bad cell2,,1526,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_17,snake,2026-09-28 20:40:08 UTC,15.04,74,,,,,,,,,,,,1036,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_18,snake,2026-09-28 20:40:43 UTC,15.01,47,,,,,,,,,,bad cell 2,,1034,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_19,snake,2026-09-28 20:41:18 UTC,15.01,47,,,,,,,,,,bad cell 2,,1034,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_20,snake,2026-09-28 20:42:15 UTC,15.01,47,,,,,,,,,,bad cell 2,,1034,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_21,snake,2026-09-28 20:43:16 UTC,15.01,47,,,,,,,,,,bad cell 2,,1034,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_22,snake,2026-09-28 20:44:57 UTC,300.1,2605,,,,,,,,,,run 2. fine snake. cell 2,,41680,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_23,snake,2026-09-28 20:58:46 UTC,15.01,115,,,,,,,,,,bad cell 3,,1840,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_24,snake,2026-09-28 21:00:06 UTC,5.88,45,,,,,,,,,,no pmt,,720,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_25,snake,2026-09-28 21:00:24 UTC,30.03,230,,,,,,,,,,bad cell 3,,3680,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,rbp4_155_20260928_151318.mesc,MSession_0,MUnit_26,snake,2026-09-28 21:02:48 UTC,30.03,230,,,,,,,,,,bad cell 3,,3680,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-28-2026,,,,,,,,,,,,,,,,,,,,0,Run001_t1.mat,Run001,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_155,09-28-2026,,,,,,,,,,,,,,,,,,,,0,Run002_t1.mat,Run002,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_155,09-28-2026,,,,,,,,,,,,,,,,,,,,0,Run003_t1.mat,Run003,,,,,no_imaging,NO imaging unit matches this trigger count

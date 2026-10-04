@@ -1,0 +1,16 @@
+mouse,date,mesc_file,mesc_session,munit,scan_type,imaging_timestamp_utc,duration_s,n_t,n_slices,n_y,n_x,frame_rate_hz,pixel_x_um,pixel_y_um,voxel_z_um,span_x_um,span_y_um,imaging_comment,comment_run_number,planes_expected,trigger_andor_edges,trigger_mat,behavior_run,camera_frames_expected,camera_dir,camera_frames_found,camera_state,match_confidence,notes
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_6,ribbon_longitudinal,2026-09-23 18:56:42 UTC,30.09,236,,,,,,,,,,bad ribbon,,236,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_7,snake,2026-09-23 18:59:11 UTC,30.6,24,,,,,,,,,,bad snake. So confused,,240,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_8,ribbon_longitudinal,2026-09-23 19:02:47 UTC,30.09,236,,,,,,,,,,"another bad ribbon, I think the signal to noise is just aweful",,236,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_9,snake,2026-09-23 19:04:34 UTC,300.9,236,,,,,,,,,,slow,,2360,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_10,ribbon_longitudinal,2026-09-23 19:15:00 UTC,30.0,4445,,,,,,,,,,bad ribbon,,4445,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_11,ribbon_longitudinal,2026-09-23 19:15:53 UTC,30.07,405,,,,,,,,,,bad ribbon,,405,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_12,ribbon_longitudinal,2026-09-23 19:19:50 UTC,30.04,357,,,,,,,,,,bad ribbon,,357,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_13,ribbon_longitudinal,2026-09-23 19:21:49 UTC,30.04,357,,,,,,,,,,bad ribbon,,357,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_16,ribbon_longitudinal,2026-09-23 19:44:09 UTC,30.1,304,,,,,,,,,,bad ribbon,,304,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_17,ribbon_longitudinal,2026-09-23 19:45:14 UTC,30.1,304,,,,,,,,,,bad ribbon,,304,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_18,snake,2026-09-23 19:47:05 UTC,30.11,223,,,,,,,,,,maybe okay snake,,3345,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,rbp4_155_156_20260923_140154.mesc,MSession_0,MUnit_19,snake,2026-09-23 19:48:09 UTC,300.11,2223,,,,,,,,,,Run 4. okay snake,,33345,,,,,,,,no_behavior,NO trigger file for this imaging run
+rbp4_155,09-23-2026,,,,,,,,,,,,,,,,,,,,0,Run001_t1.mat,Run001,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_155,09-23-2026,,,,,,,,,,,,,,,,,,,,0,Run003_t1.mat,Run003,,,,,no_imaging,NO imaging unit matches this trigger count
+rbp4_155,09-23-2026,,,,,,,,,,,,,,,,,,,,0,Run004_t1.mat,Run004,,,,,no_imaging,NO imaging unit matches this trigger count

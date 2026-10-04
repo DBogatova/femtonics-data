@@ -45,6 +45,7 @@ CLI
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import csv
 import subprocess
@@ -73,7 +74,15 @@ STAGE_IDX = {s: i for i, s in enumerate(STAGES)}
 # repo layout
 # ---------------------------------------------------------------------------
 def project_root() -> Path:
-    """femtonics-data/ (this file lives in femtonics-data/code/STEP7_workflow/)."""
+    """femtonics-data/ (this file lives in femtonics-data/code/STEP7_workflow/).
+
+    Honors the FEMTO_ROOT environment variable when set (absolute path to a mirror
+    tree that has its own root CSVs).  Without it, returns the real project root
+    derived from this file's location.
+    """
+    env = os.environ.get("FEMTO_ROOT")
+    if env:
+        return Path(env).resolve()
     return Path(__file__).resolve().parents[2]
 
 
@@ -134,6 +143,43 @@ def load_runs(root: Path) -> list[dict]:
             }
         )
     runs.sort(key=lambda d: d["rank"])
+
+    # Append imaging-only runs from <root>/imaging_only_runs.csv (if present).
+    # These are runs without paired behavior data; they get ranks continuing after
+    # the max ranked run, priority P5, and behavior fields left empty.
+    io_csv = root / "imaging_only_runs.csv"
+    if io_csv.exists():
+        io_rows = _read_csv(io_csv)
+        max_rank = max((r["rank"] for r in runs), default=0)
+        for i, row in enumerate(io_rows, start=1):
+            bstatus = (row.get("behavior_status") or "missing").strip()
+            runs.append(
+                {
+                    "rank": max_rank + i,
+                    "priority": "P5",
+                    "mouse": (row.get("mouse") or "").strip(),
+                    "date": (row.get("date") or "").strip(),
+                    "munit": (row.get("munit") or "").strip(),
+                    "behavior_run": (row.get("behavior_run_number") or row.get("behavior_run") or "").strip(),
+                    "behavior_base": (row.get("behavior_base") or "").strip(),
+                    "frame_rate_hz": (row.get("frame_rate_hz") or "").strip(),
+                    "voxel_zyx_um": (row.get("voxel_zyx_um") or "").strip(),
+                    "imaging_quality": (row.get("imaging_quality") or "").strip(),
+                    "quality_score": (row.get("quality_score") or "").strip(),
+                    "behavior_frame_loss_pct": "",
+                    "behavior_warnings": "",
+                    "quality_notes": (row.get("quality_notes") or "").strip(),
+                    "session_dir": (row.get("session_dir") or "").strip(),
+                    "extracted_tif": (row.get("extracted_tif") or "").strip(),
+                    "extracted_tif_other_candidates": "",
+                    "extracted_tif_suspect_nz": "",
+                    # Marker fields for imaging-only runs
+                    "_imaging_only": True,
+                    "_behavior_status": bstatus,
+                    "_run_dir_hint": (row.get("run_dir") or "").strip(),
+                    "_stem_hint": (row.get("stem") or "").strip(),
+                }
+            )
     return runs
 
 
@@ -266,6 +312,21 @@ def resolve_run_dirs(root: Path, runs: list[dict]) -> None:
     # phase 3: still not local -> record a best-effort run_dir for display only
     for run in runs:
         if run["run_dir"] is None:
+            # imaging-only runs: check the explicit run_dir/stem hint from CSV
+            hint = run.get("_run_dir_hint", "")
+            stem_hint = run.get("_stem_hint", "")
+            if hint:
+                d = root / hint
+                clean = _clean_in(d)
+                if clean and d not in claimed:
+                    claimed[d] = run["rank"]
+                    run["run_dir"], run["stack"], run["stem"] = d, clean, clean.stem
+                    continue
+                elif clean:
+                    # dir exists + clean.tif but already claimed — try stem hint directly
+                    if stem_hint and (d / f"{stem_hint}.tif").exists():
+                        run["run_dir"], run["stack"], run["stem"] = d, d / f"{stem_hint}.tif", stem_hint
+                        continue
             ex = run["extracted_tif"]
             sroot = _session_root(root, run)
             run["run_dir"] = (sroot / ex).parent if ex else sroot
@@ -361,32 +422,47 @@ def next_action(run: dict, stage: str) -> dict:
     vx = voxel_args(run)
     base = run["behavior_base"]
 
+    # Imaging-only behavior suffix: automatic imaging steps stay runnable
+    is_io = run.get("_imaging_only", False)
+    bstatus = run.get("_behavior_status", "paired")
+    need_beh = is_io and bstatus != "paired"
+    beh_suffix = " — needs behavior (camera tracking)" if need_beh else ""
+
     if stage == "not_local":
         src = run["extracted_tif"] or "(no recorded path)"
-        return {"label": f"fetch 4D stack ({src})", "cmd": None, "gui": False, "runnable": False}
+        # removed on purpose to save space? RECOVERY_4D.csv knows how to rebuild it
+        man = project_root() / "RECOVERY_4D.csv"
+        if man.exists() and run.get("session_dir") and run.get("extracted_tif"):
+            import csv as _csv
+            want = f"{run['session_dir']}/{run['extracted_tif']}"
+            for r in _csv.DictReader(open(man, newline="")):
+                if r.get("removed") and r["path"] == want:
+                    return {"label": f"4D stack removed to save space - restore with: femto restore {want}{beh_suffix}",
+                            "cmd": None, "gui": False, "runnable": False}
+        return {"label": f"fetch 4D stack ({src}){beh_suffix}", "cmd": None, "gui": False, "runnable": False}
     if stage == "stack":
-        return {"label": "build reference volume", "gui": False, "runnable": True,
+        return {"label": f"build reference volume{beh_suffix}", "gui": False, "runnable": True,
                 "cmd": [VENV_PY, "code/STEP3_auto/make_reference_volume.py", stack_s]}
     if stage == "reference":
-        return {"label": "auto-segment cells", "gui": False, "runnable": True,
+        return {"label": f"auto-segment cells{beh_suffix}", "gui": False, "runnable": True,
                 "cmd": [VENV_PY, "code/STEP3_auto/auto_segment.py", stack_s]}
     if stage == "auto_segmented":
         cmd = [VENV_PY, "code/STEP3_auto/trace_mask_napari.py", stack_s]
         if vx:
             cmd += ["--voxel", *vx]
-        return {"label": "trace + grow mask (napari GUI)", "cmd": cmd, "gui": True, "runnable": False}
+        return {"label": f"trace + grow mask (napari GUI){beh_suffix}", "cmd": cmd, "gui": True, "runnable": False}
     if stage == "mask_reviewed":
         cmd = [VENV_PY, "code/STEP7_workflow/wrap_segments_napari.py", stack_s]
         if vx:
             cmd += ["--voxel", *vx]
-        return {"label": "one-click anatomy wrap (napari GUI)", "cmd": cmd, "gui": True, "runnable": False}
+        return {"label": f"one-click anatomy wrap (napari GUI){beh_suffix}", "cmd": cmd, "gui": True, "runnable": False}
     if stage in ("segments_located", "coherence_built", "behavior_added"):
         label = {"segments_located": "build coherence + behavior composite",
                  "coherence_built": "add behavior + composite",
                  "behavior_added": "build the composite"}[stage]
-        return {"label": label, "gui": False, "runnable": True,
-                "cmd": [VENV_PY, "code/STEP7_workflow/coherence_with_behavior.py", "--run", base]}
-    return {"label": "complete - nothing to do", "cmd": None, "gui": False, "runnable": False}
+        return {"label": f"{label}{beh_suffix}", "gui": False, "runnable": True,
+                "cmd": [VENV_PY, "code/STEP7_workflow/coherence_with_behavior.py", "--run", base] if base else None}
+    return {"label": f"complete - nothing to do{beh_suffix}", "cmd": None, "gui": False, "runnable": False}
 
 
 def cmd_display(cmd: list[str] | None) -> str:
@@ -408,6 +484,18 @@ def build_status(root: Path) -> list[dict]:
         run["stage"] = stage_from_artifacts(a)
         run["checklist"] = checklist_str(a)
         run["next"] = next_action(run, run["stage"])
+    # your per-run decision (run_marks.csv in the real project root): excluded / revisit
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from common.run_marks import load_marks
+    marks = load_marks()
+    for run in runs:
+        m = marks.get(run.get("behavior_base", ""))
+        run["mark"] = m["mark"] if m else None
+        run["mark_reason"] = m.get("reason", "") if m else ""
+        if run["mark"]:
+            what = "EXCLUDED" if run["mark"] == "excluded" else "REVISIT LATER"
+            run["next"] = {"label": f"{what}" + (f": {run['mark_reason']}" if run["mark_reason"] else ""),
+                           "cmd": None, "gui": False, "runnable": False}
     return runs
 
 
@@ -465,7 +553,7 @@ def print_table(runs: list[dict]) -> None:
 
 
 def cmd_next(runs: list[dict], root: Path, run_it: bool) -> int:
-    cand = [r for r in runs if r["stack"] is not None and r["stage"] != "complete"]
+    cand = [r for r in runs if r["stack"] is not None and r["stage"] != "complete" and not r.get("mark")]
     if not cand:
         print("All local runs are complete (or no local stacks). Nothing to do.")
         return 0

@@ -54,3 +54,24 @@ __pycache__/
 stats/
 !code/**/*.md
 !USER_GUIDE.md
+!run_marks.csv
+!RECOVERY_4D.csv
+
+# --- Hand curation sidecars (small, irreproducible) and provenance ----------
+!**/*_segments_final.tif
+!**/*_segments_final.json
+!**/*_autoseg_reviewed.json
+!**/*_trace_session.npz
+!**/*_ignore.json
+!**/SOURCE_scc_ayla.md
+!**/behavior_imaging_match.csv
+!imaging_only_runs.csv
+!run_identity.csv
+
+# --- Automatic mirror: regenerable (femto auto ...); keep only state + report
+auto_pipeline/**
+!auto_pipeline/
+!auto_pipeline/RESUME_STATE.json
+!auto_pipeline/results/
+!auto_pipeline/results/REPORT.md
+!auto_pipeline/results/RESULTS.json

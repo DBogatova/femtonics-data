@@ -15,13 +15,18 @@ cli_value)`. Resolution order:
 `--voxel auto` / omitting --voxel means "use metadata".
 """
 from __future__ import annotations
-import csv, re, sys
+import csv, os, re, sys
 from pathlib import Path
 
 PROJECT_MARKER = "behavior_imaging_master.csv"
 
 
 def _project_root(p: Path) -> Path | None:
+    env = os.environ.get("FEMTO_ROOT")
+    if env:
+        r = Path(env).resolve()
+        if (r / PROJECT_MARKER).exists():
+            return r
     for d in [p] + list(p.parents):
         if (d / PROJECT_MARKER).exists():
             return d
@@ -29,14 +34,17 @@ def _project_root(p: Path) -> Path | None:
 
 
 def _run_ident(stack_path: Path):
-    """(mouse, MM-DD-YYYY, run_number) from <mouse>/<date>/.../run<NN>/file."""
+    """(mouse, MM-DD-YYYY, run_number_or_munit, folder_name) from <mouse>/<date>/.../run<NN>/file or munit<NN>/file."""
     parts = stack_path.resolve().parts
     run_dir = next((q for q in reversed(parts) if re.fullmatch(r"run\d+", q)), None)
+    munit_dir = next((q for q in reversed(parts) if re.fullmatch(r"munit\d+", q)), None) if run_dir is None else None
     date = next((q for q in parts if re.fullmatch(r"\d{2}-\d{2}-\d{4}", q)), None)
-    if run_dir is None or date is None:
+    folder = run_dir or munit_dir
+    if folder is None or date is None:
         return None
     mouse = parts[parts.index(date) - 1]
-    return mouse, date, int(run_dir[3:])
+    num = int(re.search(r"\d+", folder).group())
+    return mouse, date, num, folder
 
 
 def _from_master(stack_path: Path):
@@ -44,25 +52,55 @@ def _from_master(stack_path: Path):
     ident = _run_ident(stack_path)
     if root is None or ident is None:
         return None
-    mouse, date, run = ident
+    mouse, date, run_num, folder = ident
     mm, dd, yyyy = date.split("-")
     date_short = f"{yyyy[2:]}-{mm}-{dd}"                 # filenames use yy-mm-dd
-    with open(root / PROJECT_MARKER, newline="") as fh:
-        for row in csv.DictReader(fh):
-            if row.get("mouse", "") != mouse:
-                continue
-            if date_short not in (row.get("date", ""), row.get("behavior_base", "")) \
-                    and date not in row.get("date", ""):
-                continue
-            m = re.search(r"(\d+)", str(row.get("behavior_run_number") or row.get("behavior_run") or ""))
-            if not m or int(m.group(1)) != run:
-                continue
-            try:
-                xy = float(row["pixel_x_um"]); z = float(row["voxel_z_um"])
-            except (KeyError, ValueError):
-                return None
-            if xy > 0 and z > 0:
-                return (z, xy, xy), f"{PROJECT_MARKER} row {row.get('behavior_base', mouse)}"
+    is_munit = folder.startswith("munit")
+    # Check behavior_imaging_master.csv first, then imaging_only_runs.csv
+    csvs_to_check = [root / PROJECT_MARKER]
+    io_csv = root / "imaging_only_runs.csv"
+    if io_csv.exists():
+        csvs_to_check.append(io_csv)
+    for csv_path in csvs_to_check:
+        with open(csv_path, newline="") as fh:
+            for row in csv.DictReader(fh):
+                if row.get("mouse", "") != mouse:
+                    continue
+                if date_short not in (row.get("date", ""), row.get("behavior_base", "")) \
+                        and date not in row.get("date", ""):
+                    continue
+                if is_munit:
+                    # For munit folders, match by run_dir or stem containing munitNN
+                    rd = row.get("run_dir", "")
+                    stem = row.get("stem", "")
+                    if not (rd and folder in rd) and not (stem and folder in stem):
+                        continue
+                else:
+                    m = re.search(r"(\d+)", str(row.get("behavior_run_number") or row.get("behavior_run") or ""))
+                    if not m or int(m.group(1)) != run_num:
+                        # Also try matching by run_dir or stem for imaging-only runs
+                        rd = row.get("run_dir", "")
+                        stem = row.get("stem", "")
+                        if not (rd and f"run{run_num:02d}" in rd) and not (stem and f"run{run_num:02d}" in stem) \
+                           and not (rd and f"run{run_num}" in rd) and not (stem and f"run{run_num}" in stem):
+                            continue
+                # Try voxel_zyx_um first (from imaging_only_runs.csv), then pixel_x_um/voxel_z_um
+                vzy = row.get("voxel_zyx_um", "").strip()
+                if vzy:
+                    parts = [p.strip() for p in vzy.split("/") if p.strip()]
+                    if len(parts) == 3:
+                        try:
+                            z, y, x = float(parts[0]), float(parts[1]), float(parts[2])
+                            if z > 0 and y > 0 and x > 0:
+                                return (z, y, x), f"{csv_path.name} row {row.get('behavior_base', mouse)}"
+                        except ValueError:
+                            pass
+                try:
+                    xy = float(row["pixel_x_um"]); z = float(row["voxel_z_um"])
+                except (KeyError, ValueError):
+                    continue
+                if xy > 0 and z > 0:
+                    return (z, xy, xy), f"{csv_path.name} row {row.get('behavior_base', mouse)}"
     return None
 
 
@@ -70,8 +108,9 @@ def _from_summary(stack_path: Path):
     ident = _run_ident(stack_path)
     if ident is None:
         return None
+    mouse, date, run_num, folder = ident
     parts = stack_path.resolve().parts
-    date_idx = parts.index(ident[1])
+    date_idx = parts.index(date)
     session = Path(*parts[: date_idx + 1])
     for csvp in sorted((session / "raw").glob("*.summary.csv")) if (session / "raw").exists() else []:
         with open(csvp, newline="") as fh:

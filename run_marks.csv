@@ -1,0 +1,8 @@
+behavior_base,mark,reason,updated
+rbp4_141_phpeb_26-06-17_Run001,revisit,,2026-10-03T23:06:33
+rbp4_phpebne_050_26-09-15_Run009,revisit,"[auto-QC] large motion drift: reference volume needed block registration, traces are unregistered - check before use",2026-10-04T01:10:14
+rbp4_phpebne_050_26-09-15_Run019,revisit,"[auto-QC] large motion drift: reference volume needed block registration, traces are unregistered - check before use",2026-10-04T01:10:14
+rbp4_phpebne_053_26-09-14_MUnit16,revisit,[auto-QC] cell sits on the tube's Z edge for 80% of its length (partly out of frame); comment: forgot behavior,2026-10-04T01:37:07
+rbp4_phpebne_053_26-09-18_MUnit21,revisit,"[auto-QC] automatic mask missed the dendrite (activity outside the mask 6.6x inside; the dendrite is clearly visible - hand-mask it); comment: good dendrites, bad soma",2026-10-04T01:37:07
+rbp4_phpebne_053_26-09-18_MUnit37,revisit,[auto-QC] cell runs along the tube's Z edge for 83% of its length (partly out of frame); right half of the tube bright through all planes - check,2026-10-04T01:37:07
+rbp4_phpebne_053_26-09-18_MUnit9,revisit,[auto-QC] no cell (imaging comment: 'run 5. no cell'); no regions could be placed,2026-10-04T01:09:42

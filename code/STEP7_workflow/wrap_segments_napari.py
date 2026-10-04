@@ -637,15 +637,23 @@ def run_check(target, voxel_cli=None, min_arc_vox=1, soma_factor=SOMA_FACTOR) ->
           f"(soma if region max >= {soma_factor:g}x = {soma_factor*res['median_arc_radius']:.3f})")
     print(f"  soma auto-suggested?     : {res['soma_suggested']}")
 
-    # region must be non-empty and junction-bounded (strictly inside the mask, >1 arc)
+    # region must be non-empty and, on branched skeletons, junction-bounded
+    # (strictly inside the mask, >1 arc).  On unbranched skeletons (n_arcs == 1)
+    # there are no junctions to bound against; the region is the soma blob or
+    # the whole arc territory — both are valid.
     non_empty = res["size"] > 0
-    bounded = (res["size"] < int(mask.sum())) and (res["n_arcs"] >= 2)
+    unbranched = res["n_arcs"] <= 1
+    bounded = unbranched or ((res["size"] < int(mask.sum())) and (res["n_arcs"] >= 2))
     print(f"  non-empty region         : {non_empty}")
-    print(f"  bounded by junctions     : {bounded}  "
-          f"(region {res['size']} < mask {int(mask.sum())}, arcs {res['n_arcs']} >= 2)")
+    if unbranched:
+        print(f"  unbranched skeleton      : True  (n_arcs={res['n_arcs']}, no junctions -> "
+              f"junction-bounded check skipped)")
+    else:
+        print(f"  bounded by junctions     : {bounded}  "
+              f"(region {res['size']} < mask {int(mask.sum())}, arcs {res['n_arcs']} >= 2)")
     if not (non_empty and bounded):
         ok = False
-        print("  FAIL: region empty or not junction-bounded")
+        print("  FAIL: region empty" + ("" if unbranched else " or not junction-bounded"))
     if not res["soma_suggested"]:
         if cache["soma_blob"].any() and cache["soma_blob"][tuple(res["click"])]:
             ok = False

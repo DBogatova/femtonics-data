@@ -9,15 +9,26 @@
 #   femto figure <run>       build the coherence+behavior composite for a behavior_base
 #   femto movies <run> [--kinds dual time structure] [--force]   3D movies from the regions
 #   femto stats              per-run metrics for every cell + cohort table/summary/figures (stats/)
+#   femto restore PATH|all     re-extract 4D stacks removed to save space (RECOVERY_4D.csv)
+#   femto mark RUN exclude|revisit|clear [--reason TEXT]  set a whole run aside (files kept)
+#   femto ignore RUN_DIR NAME...  leave named regions out of figures + statistics (--keep NAME / --clear)
+#   femto auto <cmd> [args]  run any of the above on the automatic mirror tree (auto_pipeline/)
+#                            e.g.  femto auto panel   /   femto auto stats   /   femto auto status
 #
 # Everything runs from the project root with the project virtualenv; a log of the last
 # panel session is kept at /tmp/femto_gui.log.
 set -euo pipefail
 ROOT="/Users/daria/Desktop/femtonics-data"
+AUTO_ROOT="$ROOT/auto_pipeline"
 PY="/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/.venv311/bin/python"
 cd "$ROOT"
 
 case "${1:-panel}" in
+  auto)
+    # Re-dispatch with FEMTO_ROOT pointing to the mirror tree.
+    shift
+    export FEMTO_ROOT="$AUTO_ROOT"
+    exec "$0" "${@:-panel}" ;;
   panel)
     if pgrep -f "femto_gui.py" > /dev/null; then
       echo "control panel is already running - bringing it to front"
@@ -30,9 +41,12 @@ case "${1:-panel}" in
   next)    "$PY" code/STEP7_workflow/femto_status.py --next ;;
   trace)   shift; "$PY" code/STEP3_auto/trace_mask_napari.py "$@" ;;
   regions) shift; "$PY" code/STEP7_workflow/wrap_segments_napari.py "$@" ;;
+  ignore)  shift; "$PY" code/common/regions.py "$@" ;;
+  mark)    shift; "$PY" code/common/run_marks.py "$@" ;;
+  restore) shift; "$PY" code/STEP1_extract/recover_4d.py restore "${1:-all}" ;;
   figure)  shift; "$PY" code/STEP7_workflow/coherence_with_behavior.py --run "$@" ;;
   movies)  shift; b="$1"; shift; "$PY" code/STEP7_workflow/make_movies.py --run "$b" "$@" ;;
   stats)   "$PY" code/STEP8_stats/run_metrics.py --all && "$PY" code/STEP8_stats/coupling_phenotype.py --all && "$PY" code/STEP8_stats/behavior_coupling.py --all && "$PY" code/STEP8_stats/cohort_stats.py ;;
-  -h|--help|help) sed -n '2,14p' "$0" ;;
-  *) echo "unknown command: $1"; sed -n '2,14p' "$0"; exit 1 ;;
+  -h|--help|help) sed -n '2,15p' "$0" ;;
+  *) echo "unknown command: $1"; sed -n '2,15p' "$0"; exit 1 ;;
 esac

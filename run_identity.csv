@@ -1,0 +1,29 @@
+mouse,date,folder,folder_number,probe_file,probe_is_raw,shape,n_shape_candidates,resolved_munit,behavior_run,method,margin,note
+rbp4_132_phpeb,06-08-2026,rbp4_132_phpeb/06-08-2026/preprocessed/run3,3,rbp4_132_phpeb_26-06-08_Run003_4D.tif,yes,1337x13x23x360,2,MUnit_5,Run003,exact pixel match vs .mesc,39.641 vs 0.000,
+rbp4_132_phpeb,06-08-2026,rbp4_132_phpeb/06-08-2026/preprocessed/run4,4,rbp4_132_phpeb_26-06-08_Run004_4D.tif,yes,1337x13x23x360,2,MUnit_6,Run004,exact pixel match vs .mesc,39.641 vs 0.000,
+rbp4_139_phpeb,06-12-2026,rbp4_139_phpeb/06-12-2026/traces/run4,4,run43d.tif,yes,946x16x22x468,0,,,,,shape matches no unit in this session's metadata
+rbp4_139_phpeb,06-12-2026,rbp4_139_phpeb/06-12-2026/traces/run5,5,3dstack.tif,yes,1057x15x21x432,2,MUnit_6,Run005,exact pixel match vs .mesc,48.754 vs 0.000,
+rbp4_140_phpeb,06-18-2026,rbp4_140_phpeb/06-18-2026/preprocessed/run1,1,run13d.tif,yes,1558x18x19x360,2,MUnit_1,Run001,exact pixel match vs .mesc,78.445 vs 0.000,
+rbp4_140_phpeb,06-18-2026,rbp4_140_phpeb/06-18-2026/preprocessed/run2,2,run23d.tif,yes,1558x18x19x360,2,MUnit_2,Run002,exact pixel match vs .mesc,78.445 vs 0.000,
+rbp4_140_phpeb,06-18-2026,rbp4_140_phpeb/06-18-2026/preprocessed/run3,3,rbp4_140_phpeb_26-06-18_Run003_4D.tif,yes,1375x18x19x408,1,MUnit_3,Run003,unique shape,,
+rbp4_140_phpeb,06-18-2026,rbp4_140_phpeb/06-18-2026/preprocessed/run4,4,rbp4_140_phpeb_26-06-18_Run004_4D.tif,yes,1669x18x19x336,1,MUnit_4,Run004,unique shape,,
+rbp4_140_phpeb,06-23-2026,rbp4_140_phpeb/06-23-2026/preprocessed/run1,1,run13d.tif,yes,1249x16x20x600,1,MUnit_1,Run001,unique shape,,
+rbp4_140_phpeb,06-23-2026,rbp4_140_phpeb/06-23-2026/preprocessed/run2,2,run23d.tif,yes,1189x16x20x630,1,MUnit_2,Run002,unique shape,,
+rbp4_140_phpeb,06-23-2026,rbp4_140_phpeb/06-23-2026/preprocessed/run3,3,run33d.tif,yes,1086x16x20x690,1,MUnit_3,Run003,unique shape,,
+rbp4_140_phpeb,06-23-2026,rbp4_140_phpeb/06-23-2026/preprocessed/run4,4,run43d.tif,yes,1561x16x20x480,1,MUnit_4,Run004,unique shape,,
+rbp4_140_phpeb,06-23-2026,rbp4_140_phpeb/06-23-2026/preprocessed/run5,5,rbp4_140_phpeb_26-06-23_Run005_4D.tif,yes,1202x19x25x504,1,MUnit_7,Run005,unique shape,,
+rbp4_140_phpeb,06-23-2026,rbp4_140_phpeb/06-23-2026/preprocessed/run6,6,rbp4_140_phpeb_26-06-23_Run006_4D.tif,yes,1178x19x21x544,1,MUnit_8,Run006,unique shape,,
+rbp4_141_phpeb,06-17-2026,rbp4_141_phpeb/06-17-2026/preprocessed/run2,2,rbp4_141_2026-06-17_run2_4D.tif,yes,1102x20x17x320,1,MUnit_2,Run001,unique shape,,MISNAMED: folder says run2 but this is behavior Run001.
+rbp4_141_phpeb,06-17-2026,rbp4_141_phpeb/06-17-2026/preprocessed/run5,5,run5_clean.tif,no (processed),1383x20x17x340,3,MUnit_5,Run004,lowest pixel difference vs .mesc,55.845 vs 7.139,MISNAMED: folder says run5 but this is behavior Run004.
+rbp4_141_phpeb,06-17-2026,rbp4_141_phpeb/06-17-2026/preprocessed/run7,7,run7_clean.tif,no (processed),1230x18x19x456,3,MUnit_7,Run006,lowest pixel difference vs .mesc,47.586 vs 5.924,MISNAMED: folder says run7 but this is behavior Run006.
+rbp4_141_phpeb,06-17-2026,rbp4_141_phpeb/06-17-2026/preprocessed/run9,9,rbp4_141_phpeb_26-06-17_Run009_4D.tif,yes,1375x18x19x408,1,MUnit_10,Run009,unique shape,,
+rbp4_141_phpeb,06-23-2026,rbp4_141_phpeb/06-23-2026/preprocessed/run1,1,run13d.tif,yes,1249x20x32x460,1,MUnit_10,Run001,unique shape,,
+rbp4_141_phpeb,06-25-2026,rbp4_141_phpeb/06-25-2026/preprocessed/run3,3,run33d.tif,yes,1869x15x19x360,0,,,,,shape matches no unit in this session's metadata
+rbp4_141_phpeb,06-25-2026,rbp4_141_phpeb/06-25-2026/preprocessed/run4,4,run43d.tif,yes,1821x21x19x264,1,MUnit_5,Run004,unique shape,,
+rbp4_141_phpeb,06-25-2026,rbp4_141_phpeb/06-25-2026/preprocessed/run5,5,run53d.tif,yes,1431x21x19x336,3,MUnit_6,Run005,exact pixel match vs .mesc,108.353 vs 0.000,
+rbp4_141_phpeb,06-25-2026,rbp4_141_phpeb/06-25-2026/preprocessed/run7,7,run73d.tif,yes,1431x21x19x336,3,MUnit_8,Run007,exact pixel match vs .mesc,104.402 vs 0.000,
+rbp4_phpebach,06-26-2026,rbp4_phpebach/06-26-2026/run4,4,run43d.tif,yes,1581x19x19x392,1,MUnit_5,Run004,unique shape,,
+rbp4_phpebach,06-26-2026,rbp4_phpebach/06-26-2026/run4/run2,2,run2_clean.tif,no (processed),1649x19x17x360,0,,,,,shape matches no unit in this session's metadata
+rbp4_phpebach,06-26-2026,rbp4_phpebach/06-26-2026/run5,5,run53d.tif,yes,1302x19x19x476,4,MUnit_6,Run005,exact pixel match vs .mesc,91.584 vs 0.000,
+rbp4_phpebach,06-26-2026,rbp4_phpebach/06-26-2026/run6,6,run6_clean.tif,no (processed),1302x19x19x476,4,MUnit_7,Run007,lowest pixel difference vs .mesc,91.051 vs 13.996,MISNAMED: folder says run6 but this is behavior Run007.
+rbp4_phpebach,06-26-2026,rbp4_phpebach/06-26-2026/run7,7,run73d.tif,yes,1302x19x19x476,4,MUnit_9,Run009,exact pixel match vs .mesc,99.395 vs 0.000,MISNAMED: folder says run7 but this is behavior Run009.

@@ -51,7 +51,7 @@ trunk, everything else -> branch. Metrics:
   python code/STEP8_stats/run_metrics.py --run <behavior_base>
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json, os, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -60,11 +60,13 @@ from scipy import ndimage as ndi
 from scipy.signal import find_peaks
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
-sys.path.insert(0, str(ROOT / "code")); sys.path.insert(0, str(ROOT / "code/STEP7_workflow"))
+_CODE_ROOT = HERE.parents[1]   # real project root (for code imports, always from __file__)
+ROOT = Path(os.environ["FEMTO_ROOT"]).resolve() if os.environ.get("FEMTO_ROOT") else _CODE_ROOT
+sys.path.insert(0, str(_CODE_ROOT / "code")); sys.path.insert(0, str(_CODE_ROOT / "code/STEP7_workflow"))
 from common.voxel import resolve_voxel                        # noqa: E402
+from common.regions import apply_ignore, newest_input_mtime   # noqa: E402
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 def dff(t, f0_pct=10.0):
@@ -117,7 +119,7 @@ def guideline_deep_end_first(run, root) -> bool:
     """True if scan column 0 is the deep (soma) end of the snake guideline. Default True."""
     try:
         import h5py, glob
-        sys.path.insert(0, str(root / "code/STEP1_extract"))
+        sys.path.insert(0, str(_CODE_ROOT / "code/STEP1_extract"))
         from summarize_mesc import parse_json_attr
         session = (root / run["run_dir"]).parents[1] if (root / run["run_dir"]).parent.name == "preprocessed" else (root / run["run_dir"]).parent
         mesc = sorted(glob.glob(str(session / "raw" / "*.mesc")))
@@ -204,6 +206,8 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
     T = stack.shape[0]; rate = float(run.get("frame_rate_hz") or 0) or T / 240.0
     labels = sorted(int(v) for v in np.unique(seg) if v > 0)
     names = region_names(seg_p.with_suffix(".json"), labels)
+    seg, ignored, _ign_labels = apply_ignore(seg, names, seg_p)      # <stem>_ignore.json
+    labels = [l for l in labels if l not in _ign_labels]
     comp = {l: compartment_of(names[l]) for l in labels}
     flat = stack.reshape(T, -1)
     def trace(mask):
@@ -215,14 +219,14 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
         er = ndi.binary_erosion(seg == l, structure=np.ones((3, 3, 3)))
         core[l] = dff(trace(er)) if er.sum() >= 20 else tr[l]
     by = {c: [l for l in labels if comp[l] == c] for c in ("soma", "trunk", "branch")}
-    out = {"behavior_base": run["behavior_base"], "mouse": run["mouse"], "date": run["date"],
+    out = {"behavior_base": run.get("behavior_base") or f"{run['mouse']}_{run.get('munit', '?')}", "mouse": run["mouse"], "date": run["date"],
            "rank": int(run.get("rank", 0)), "frame_rate_hz": rate, "T": int(T),
            "imaging_quality": run.get("quality"), "n_regions": len(labels),
            "regions": {str(l): {"name": names[l], "compartment": comp[l], "voxels": int((seg == l).sum())} for l in labels},
-           "params": {"window_frames": window, "prom_frac": prom_frac, "version": __version__}}
-    if not by["branch"]:
-        out["note"] = "needs at least one branch region"
-        return out
+           "params": {"window_frames": window, "prom_frac": prom_frac, "version": __version__},
+           "ignored_regions": ignored}
+    # cells without a branch region still get the reference, distances, coupling by
+    # distance and reference-trunk coupling; only the branch metrics are skipped (note).
     if by["soma"]:
         s = by["soma"][0]; out["reference"] = "soma"
     elif by["trunk"]:
@@ -251,12 +255,14 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
         if not (ra == ra and rb == rb) or ra <= 0 or rb <= 0:
             return float("nan")
         return float(min(1.0, r_raw / np.sqrt(ra * rb)))
-    branches = by["branch"]; br_mean = np.mean([tr[l] for l in branches], axis=0)
+    branches = by["branch"]
     r = lambda a, b: float(np.corrcoef(a, b)[0, 1])
-    out["r_soma_branch"] = float(np.mean([r(soma, tr[l]) for l in branches]))
-    out["r_soma_branch_core"] = float(np.mean([r(soma_core, core[l]) for l in branches]))
-    out["r_soma_branch_per_region"] = {names[l]: r(soma, tr[l]) for l in branches}
-    out["r_soma_branch_corr"] = float(np.nanmean([r_corr(s, l, r(soma, tr[l])) for l in branches]))
+    br_mean = np.mean([tr[l] for l in branches], axis=0) if branches else None
+    if branches:
+        out["r_soma_branch"] = float(np.mean([r(soma, tr[l]) for l in branches]))
+        out["r_soma_branch_core"] = float(np.mean([r(soma_core, core[l]) for l in branches]))
+        out["r_soma_branch_per_region"] = {names[l]: r(soma, tr[l]) for l in branches}
+        out["r_soma_branch_corr"] = float(np.nanmean([r_corr(s, l, r(soma, tr[l])) for l in branches]))
     out["coupling_by_distance"] = [
         {"region": names[l], "compartment": comp[l], "distance_um": round(dist[l][0], 2),
          "r_with_soma": round(r(soma, tr[l]), 4), "r_with_soma_corr": round(r_corr(s, l, r(soma, tr[l])), 4),
@@ -264,8 +270,13 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
         for l in labels if l != s]
     if by["trunk"]:
         tk = np.mean([tr[l] for l in by["trunk"]], axis=0)
-        out["r_soma_trunk"] = r(soma, tk); out["r_trunk_branch"] = r(tk, br_mean)
+        out["r_soma_trunk"] = r(soma, tk)
+        if branches:
+            out["r_trunk_branch"] = r(tk, br_mean)
         out["r_soma_trunk_corr"] = float(np.nanmean([r_corr(s, l, r(soma, tr[l])) for l in by["trunk"]]))
+    if not branches:
+        out["note"] = "no branch region: branch metrics skipped (reference, distances and trunk coupling computed)"
+        return out
     # events
     ev = {l: events(tr[l], prom_frac) for l in labels}
     minutes = T / rate / 60.0
@@ -316,24 +327,31 @@ def main(argv=None):
     args = ap.parse_args(argv)
     from femto_status import build_status
     runs = [r for r in build_status(ROOT) if r.get("run_dir") and r.get("stem")]
+    for r in [r for r in runs if r.get("mark")]:
+        bb = r.get("behavior_base") or f"{r['mouse']}_{r.get('munit', '?')}"
+        print(f"  {bb}: skipped ({r['mark']}{': ' + r['mark_reason'] if r.get('mark_reason') else ''})")
+    runs = [r for r in runs if not r.get("mark")]                 # run_marks.csv: excluded / revisit
     if args.run:
-        runs = [r for r in runs if r["behavior_base"] == args.run]
+        runs = [r for r in runs if r.get("behavior_base") == args.run
+                or (r.get("_imaging_only") and f"{r['mouse']}_{r.get('munit', '')}" == args.run)]
     n = 0
     for r in runs:
         run_dir = ROOT / r["run_dir"]; out_p = run_dir / f"{r['stem']}_metrics.json"
         seg_p = run_dir / f"{r['stem']}_segments_final.tif"
         if not seg_p.exists():
             continue
-        if out_p.exists() and out_p.stat().st_mtime >= seg_p.stat().st_mtime and not args.force:
-            print(f"  {r['behavior_base']}: metrics up to date"); n += 1; continue
+        if out_p.exists() and out_p.stat().st_mtime >= newest_input_mtime(seg_p) and not args.force:
+            bb = r.get("behavior_base") or f"{r['mouse']}_{r.get('munit', '?')}"
+            print(f"  {bb}: metrics up to date"); n += 1; continue
         m = metrics_for_run(r, ROOT, args.window, args.prom_frac)
         if m is None:
             continue
         out_p.write_text(json.dumps(m, indent=2, default=float))
+        bb = r.get("behavior_base") or f"{r['mouse']}_{r.get('munit', '?')}"
         msg = m.get("note") or (f"r(soma,branch)={m['r_soma_branch']:.2f} core={m['r_soma_branch_core']:.2f} "
                                 f"branch-independent={m['frac_branch_independent']:.2f} "
                                 f"branch-first={m.get('branch_first_frac', float('nan')):.2f}")
-        print(f"  {r['behavior_base']}: {msg}"); n += 1
+        print(f"  {bb}: {msg}"); n += 1
     print(f"done: {n} run(s)")
     return 0
 

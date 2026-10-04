@@ -49,12 +49,15 @@ from pathlib import Path
 
 # import the shared status/resolution logic (same directory, unmodified)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import femto_status as fs  # noqa: E402
+from common.regions import ignore_path, ignored_names  # noqa: E402
 
 DISPLAY = {"mask": False, "edge_um": 2.0, "hide_other": True}          # cell-picture display mask (set from CLI)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.display_mask import options_match, write_options   # noqa: E402
-COHERENCE_TOOL = "code/extra/segment_event_coherence.py"          # relative to root
+_CODE_ROOT = Path(__file__).resolve().parents[2]   # real project root (for scripts)
+COHERENCE_TOOL = str(_CODE_ROOT / "code/extra/segment_event_coherence.py")
 BEHAVIOR_TOOL = "/Users/daria/Desktop/behavior-tracking-daria/batch/coherence_behavior.py"
 
 STAGE_READY_IDX = fs.STAGE_IDX["segments_located"]
@@ -104,7 +107,7 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
     coh_pdf = run_dir / f"{stem}_coherence.pdf"
     events = run_dir / f"{stem}_coherence_network_events.csv"
 
-    deps = [Path(lm)] + [Path(run_dir) / f"{stem}{suf}" for suf in
+    deps = [Path(lm), ignore_path(Path(lm))] + [Path(run_dir) / f"{stem}{suf}" for suf in
                          ("_autoseg_labelmap_reviewed.tif", "_exclude_labelmap.tif")]
     newest = max(d.stat().st_mtime for d in deps if d.exists())
     up_to_date = (coh_png.exists() and events.exists() and coh_png.stat().st_mtime >= newest
@@ -127,6 +130,13 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
                 pass
         order, names = region_names_and_order(Path(lm))
         if order:
+            ign = {n.lower() for n in ignored_names(Path(lm))}
+            drop = [o for o, nm in zip(order, names) if nm.lower() in ign]
+            if drop:
+                kept = [(o, nm) for o, nm in zip(order, names) if nm.lower() not in ign]
+                order, names = [o for o, _ in kept], [nm for _, nm in kept]
+                cmd += ["--exclude", *[str(o) for o in drop]]
+                print(f"  coherence: ignoring {', '.join(n for n in ignored_names(Path(lm)))} (<stem>_ignore.json)")
             cmd += ["--order", *[str(o) for o in order], "--names", *names]
             print(f"  coherence: region names (proximal->distal): {', '.join(names)}")
         cmd += ["--mask"] if DISPLAY["mask"] else ["--no-mask"]
@@ -286,6 +296,19 @@ def title_lines(run) -> list[str]:
     return lines
 
 
+def _title_lines_imaging_only(run) -> list[str]:
+    """Title lines for imaging-only runs (no behavior_base to parse)."""
+    mouse = run.get("mouse", "?")
+    fr = run.get("frame_rate_hz", "?")
+    munit = run.get("munit", "?")
+    date = run.get("date", "?")
+    l1 = f"{mouse}   {date}   ({munit})   [no behavior]"
+    l2 = f"imaging {fr} Hz"
+    bstatus = run.get("_behavior_status", "missing")
+    l3 = f"behavior status: {bstatus}"
+    return [l1, l2, l3]
+
+
 def compose(coh_png: Path, beh_png: Path, out_png: Path, out_pdf: Path,
             titles: list[str], dpi: int) -> tuple[int, int, int]:
     import matplotlib
@@ -372,15 +395,73 @@ def vector_stack_pdf(parts, titles, out_pdf: Path, width_pt: float = 864.0):
 # ---------------------------------------------------------------------------
 def process_run(run, root, force: bool, dpi: int) -> dict:
     run_dir, stem = run["run_dir"], run["stem"]
-    print(f"\n=== {run['behavior_base']}  (rank {run['rank']}, stage {run['stage']}) ===")
+    print(f"\n=== {run.get('behavior_base') or run.get('mouse', '?')}  (rank {run['rank']}, stage {run['stage']}) ===")
     print(f"  run dir : {run_dir}")
 
     written, reused = [], []
     scratch = Path(tempfile.mkdtemp(prefix="cohbeh_"))
+
+    # Check if this run has behavior data
+    has_behavior_base = bool(run.get("behavior_base", "").strip())
+    is_imaging_only = run.get("_imaging_only", False)
+    behavior_status = run.get("_behavior_status", "paired")
+    skip_behavior = (not has_behavior_base) or (is_imaging_only and behavior_status != "paired")
+    if not skip_behavior:
+        # ranked run, but is its behavior CSV actually on disk? (e.g. rbp4_139: not yet)
+        sess = Path(run_dir)
+        while sess.parent != sess and not re.fullmatch(r"\d\d-\d\d-\d{4}", sess.name):
+            sess = sess.parent
+        run_id = run["behavior_base"].rsplit("_", 1)[-1]
+        if not any((sess / "behavior").rglob(f"*{run_id}*.csv")) if (sess / "behavior").exists() else True:
+            skip_behavior, behavior_status = True, "behavior CSV not on disk"
+
     try:
         coh_png, events_csv, coh_dir, coh_regen = ensure_coherence(run, root, scratch, force)
         coh_written_here = coh_regen and coh_dir == run_dir
         (written if coh_written_here else reused).append(coh_png)
+
+        if skip_behavior:
+            print(f"  behavior: SKIPPED (imaging-only run, behavior_status={behavior_status})")
+            # Produce the composite without the behavior panel:
+            # coherence figure alone is the full output
+            out_png = run_dir / f"{stem}_coherence_full.png"
+            out_pdf = run_dir / f"{stem}_coherence_full.pdf"
+            archive([out_png, out_pdf], run_dir)
+
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            import matplotlib.image as mpimg
+
+            coh_img = mpimg.imread(coh_png)
+            ch, cw = coh_img.shape[:2]
+            titles = _title_lines_imaging_only(run)
+            fig_w = 12.0
+            title_in = 0.28 * len(titles) + 0.35
+            coh_in = fig_w * ch / cw
+            fig_h = title_in + coh_in
+
+            fig = plt.figure(figsize=(fig_w, fig_h))
+            gs = fig.add_gridspec(2, 1, height_ratios=[title_in, coh_in], hspace=0.015)
+            axt = fig.add_subplot(gs[0]); axt.axis("off")
+            axt.text(0.008, 0.92, titles[0], transform=axt.transAxes, ha="left", va="top",
+                     fontsize=13, fontweight="bold")
+            axt.text(0.008, 0.40, "\n".join(titles[1:]), transform=axt.transAxes, ha="left",
+                     va="top", fontsize=9.5, family="monospace")
+            axc = fig.add_subplot(gs[1]); axc.imshow(coh_img, aspect="auto"); axc.axis("off")
+            fig.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.0)
+            fig.savefig(out_png, dpi=dpi); plt.close(fig)
+
+            # Simple raster PDF
+            fig = plt.figure(figsize=(fig_w, fig_h))
+            ax = fig.add_axes([0, 0, 1, 1]); ax.imshow(mpimg.imread(out_png)); ax.axis("off")
+            fig.savefig(out_pdf); plt.close(fig)
+            written += [out_png, out_pdf]
+
+            print(f"  composed (no behavior): {out_png.name}  ({ch}px coherence)")
+            return {"ok": True, "composite": out_png, "composite_h": ch,
+                    "coherence_h": ch, "behavior_h": 0,
+                    "written": written, "reused": reused, "no_behavior": True}
 
         beh_png, beh_status = ensure_behavior(run, root, scratch, coh_dir, events_csv, force)
         (written if beh_status == "written" else reused).append(beh_png)
@@ -407,7 +488,10 @@ def find_run(runs, key: str, by_dir: bool):
                 return r
         return None
     for r in runs:
-        if r["behavior_base"] == key:
+        if r.get("behavior_base") == key:
+            return r
+        # Also match by mouse+munit for imaging-only runs without a behavior_base
+        if r.get("_imaging_only") and not r.get("behavior_base") and key == f"{r['mouse']}_{r['munit']}":
             return r
     return None
 

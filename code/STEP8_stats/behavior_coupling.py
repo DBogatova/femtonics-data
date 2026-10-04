@@ -20,7 +20,7 @@ the cohort is collected by cohort_stats.py.
   python code/STEP8_stats/behavior_coupling.py --all
 """
 from __future__ import annotations
-import argparse, glob, json, sys
+import argparse, glob, json, os, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -32,9 +32,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
-sys.path.insert(0, str(ROOT / "code")); sys.path.insert(0, str(ROOT / "code/STEP7_workflow")); sys.path.insert(0, str(HERE))
+_CODE_ROOT = HERE.parents[1]
+ROOT = Path(os.environ["FEMTO_ROOT"]).resolve() if os.environ.get("FEMTO_ROOT") else _CODE_ROOT
+sys.path.insert(0, str(_CODE_ROOT / "code")); sys.path.insert(0, str(_CODE_ROOT / "code/STEP7_workflow")); sys.path.insert(0, str(HERE))
 from run_metrics import dff, region_names, compartment_of, events, guideline_deep_end_first   # noqa: E402
+from common.regions import apply_ignore, newest_input_mtime   # noqa: E402
 
 __version__ = "0.1.0"
 MAX_LAG_S = 5.0
@@ -101,7 +103,8 @@ def analyze_run(run: dict, root: Path):
     seg_p = run_dir / f"{stem}_segments_final.tif"
     if not seg_p.exists():
         return None
-    base = run["behavior_base"]; run_id = base.split("_")[-1]
+    base = run.get("behavior_base") or f"{run['mouse']}_{run.get('munit', '?')}"
+    run_id = base.split("_")[-1] if "_" in base else ""
     stack = tifffile.imread(run_dir / f"{stem}.tif"); seg = tifffile.imread(seg_p); T = stack.shape[0]
     rate = float(run.get("frame_rate_hz") or 0) or T / 240.0
     tv, tsrc = volume_times(sdir, run_id, T, rate)
@@ -109,12 +112,16 @@ def analyze_run(run: dict, root: Path):
     if not beh:
         return {"behavior_base": base, "note": "no behavior data"}
     labels = sorted(int(v) for v in np.unique(seg) if v > 0)
-    names = region_names(seg_p.with_suffix(".json"), labels); comp = {l: compartment_of(names[l]) for l in labels}
+    names = region_names(seg_p.with_suffix(".json"), labels)
+    seg, _ignored, _ign = apply_ignore(seg, names, seg_p)          # <stem>_ignore.json
+    labels = [l for l in labels if l not in _ign]
+    comp = {l: compartment_of(names[l]) for l in labels}
     flat = stack.reshape(T, -1)
     tr = {names[l]: dff(flat[:, np.flatnonzero((seg == l).ravel())].mean(1).astype(np.float64)) for l in labels}
     tr["whole cell"] = dff(flat[:, np.flatnonzero((seg > 0).ravel())].mean(1).astype(np.float64))
     L = int(round(MAX_LAG_S * rate))
     res = {"behavior_base": base, "mouse": run["mouse"], "date": run["date"], "version": __version__,
+           "ignored_regions": _ignored,
            "time_source": tsrc, "max_lag_s": MAX_LAG_S, "regions": {}, "behaviors": list(beh)}
     for rn, t in tr.items():
         row = {"compartment": comp.get(next((l for l in labels if names[l] == rn), -1), "cell") if rn != "whole cell" else "cell"}
@@ -180,20 +187,28 @@ def main(argv=None):
     args = ap.parse_args(argv)
     from femto_status import build_status
     runs = [r for r in build_status(ROOT) if r.get("run_dir") and r.get("stem")]
+    for r in [r for r in runs if r.get("mark")]:
+        bb = r.get("behavior_base") or f"{r['mouse']}_{r.get('munit', '?')}"
+        print(f"  {bb}: skipped ({r['mark']}{': ' + r['mark_reason'] if r.get('mark_reason') else ''})")
+    runs = [r for r in runs if not r.get("mark")]                 # run_marks.csv: excluded / revisit
     if args.run:
-        runs = [r for r in runs if r["behavior_base"] == args.run]
+        runs = [r for r in runs if r.get("behavior_base") == args.run
+                or (r.get("_imaging_only") and f"{r['mouse']}_{r.get('munit', '')}" == args.run)]
     n = 0
     for r in runs:
         seg_p = ROOT / r["run_dir"] / f"{r['stem']}_segments_final.tif"; out_p = ROOT / r["run_dir"] / f"{r['stem']}_behavior_coupling.json"
         if not seg_p.exists():
             continue
-        if out_p.exists() and out_p.stat().st_mtime >= seg_p.stat().st_mtime and not args.force:
+        if out_p.exists() and out_p.stat().st_mtime >= newest_input_mtime(seg_p) and not args.force:
             n += 1; continue
         res = analyze_run(r, ROOT); n += 1
+        bb = r.get("behavior_base") or f"{r['mouse']}_{r.get('munit', '?')}"
         if res and "note" not in res:
             wc = res["regions"]["whole cell"]
-            print(f"  {r['behavior_base']}: " + "; ".join(
+            print(f"  {bb}: " + "; ".join(
                 f"{b} r0 {wc[b]['r_lag0']:+.2f} peak {wc[b]['r_peak']:+.2f}@{wc[b]['lag_peak_s']:+.1f}s p={wc[b]['p_peak']:.3f}" for b in res["behaviors"]))
+        elif res and "note" in res:
+            print(f"  {bb}: {res['note']}")
     print(f"done: {n} run(s)")
     return 0
 

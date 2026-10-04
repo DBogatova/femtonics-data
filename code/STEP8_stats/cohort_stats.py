@@ -18,7 +18,7 @@ Tests (statsmodels if installed, else plain):
   Halo control : r_core vs r_full (paired). If coupling were halo, core << full.
 """
 from __future__ import annotations
-import argparse, json, sys, glob
+import argparse, json, os, sys, glob
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -27,8 +27,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
+ROOT = Path(os.environ["FEMTO_ROOT"]).resolve() if os.environ.get("FEMTO_ROOT") else HERE.parents[1]
 OUT = ROOT / "stats"
+sys.path.insert(0, str(HERE.parents[1] / "code"))
+from common.run_marks import is_set_aside, load_marks   # noqa: E402  (run_marks.csv: excluded / revisit)
 
 METRICS = ["r_soma_branch", "r_soma_branch_corr", "r_soma_trunk_corr", "r_soma_branch_core", "r_soma_trunk", "r_trunk_branch",
            "frac_branch_independent", "frac_soma_independent", "frac_global", "branch_first_frac",
@@ -43,24 +45,32 @@ def collect() -> pd.DataFrame:
         if "/old/" in f:
             continue
         m = json.load(open(f))
-        if "note" in m:
+        if "note" in m or is_set_aside(m.get("behavior_base", "")):
             continue
         row = {k: m.get(k) for k in ["behavior_base", "mouse", "date", "rank", "frame_rate_hz", "T",
                                      "imaging_quality", "n_regions", "reference", "reference_region"] + METRICS}
         row["reference"] = row.get("reference") or "soma"
         row["n_branch_regions"] = sum(1 for v in m["regions"].values() if v["compartment"] == "branch")
         row["metrics_file"] = str(Path(f).relative_to(ROOT))
+        # Mark imaging-only: no behavior_state keys present
+        row["has_behavior"] = m.get("r_soma_branch_quiet") is not None or m.get("r_soma_branch_active") is not None
         rows.append(row)
     d = pd.DataFrame(rows)
     if d.empty:
         return d
-    mice = pd.read_csv(ROOT / "mice.csv", parse_dates=["injection_date"])
+    mice = pd.read_csv(ROOT / "mice.csv")
+    # Parse injection_date carefully — some rows may be blank
+    mice["injection_date"] = pd.to_datetime(mice["injection_date"], errors="coerce")
     d = d.merge(mice[["mouse", "injection_date", "line", "virus"]], on="mouse", how="left")
-    d["date_dt"] = pd.to_datetime(d["date"], format="%m-%d-%Y")
+    d["date_dt"] = pd.to_datetime(d["date"], format="%m-%d-%Y", errors="coerce")
     d["dpi"] = (d["date_dt"] - d["injection_date"]).dt.days
+    # Build short label — handle missing behavior_base for imaging-only runs
+    run_num = d["behavior_base"].str.extract(r"Run(\d+)")[0]
+    run_num = run_num.fillna("?")
     d["short"] = d["mouse"].str.replace("rbp4_", "", regex=False) + " " + d["date"].str[:5] + " r" + \
-        d["behavior_base"].str.extract(r"Run(\d+)")[0].astype(int).astype(str) + \
-        np.where(d["reference"] == "proximal_trunk", " (no soma)", "")
+        run_num.astype(str) + \
+        np.where(d["reference"] == "proximal_trunk", " (no soma)", "") + \
+        np.where(~d["has_behavior"], " [no beh]", "")
     return d.sort_values(["mouse", "date_dt", "rank"]).reset_index(drop=True)
 
 
@@ -70,6 +80,8 @@ def collect_distance() -> pd.DataFrame:
         if "/old/" in f:
             continue
         m = json.load(open(f))
+        if is_set_aside(m.get("behavior_base", "")):
+            continue
         for c in m.get("coupling_by_distance", []):
             rows.append({"behavior_base": m["behavior_base"], "mouse": m["mouse"], "reference": m.get("reference", "soma"), **c})
     return pd.DataFrame(rows)
@@ -78,7 +90,9 @@ def collect_distance() -> pd.DataFrame:
 def fig_distance(dd: pd.DataFrame, out: Path):
     fig, ax = plt.subplots(figsize=(6.5, 4.4))
     mk = {"trunk": "o", "branch": "^"}
-    colors = {b: c for b, c in zip(sorted(dd.behavior_base.unique()), plt.cm.tab10.colors)}
+    _bases = sorted(dd.behavior_base.unique())
+    _cmap = plt.cm.tab20 if len(_bases) > 10 else plt.cm.tab10
+    colors = {b: _cmap(i / max(1, len(_bases) - 1)) for i, b in enumerate(_bases)}
     for b, g in dd.groupby("behavior_base"):
         g = g.sort_values("distance_um")
         ax.plot(g.distance_um, g.r_with_soma_corr, "-", color=colors[b], lw=1, alpha=0.6)
@@ -99,7 +113,11 @@ def fig_distance(dd: pd.DataFrame, out: Path):
 def tests(d: pd.DataFrame) -> str:
     from scipy import stats
     L = []
-    n = len(d); L.append(f"{n} run(s), {d.mouse.nunique()} mouse/mice: " + ", ".join(f"{m} ({k})" for m, k in d.mouse.value_counts().items()))
+    n = len(d); n_beh = int(d["has_behavior"].sum()) if "has_behavior" in d.columns else n
+    n_io = n - n_beh
+    L.append(f"{n} run(s), {d.mouse.nunique()} mouse/mice: " + ", ".join(f"{m} ({k})" for m, k in d.mouse.value_counts().items()))
+    if n_io:
+        L.append(f"  ({n_beh} with behavior, {n_io} imaging-only — imaging-only runs included in imaging analyses, excluded from behavior analyses)")
     ns = int((d.reference == "soma").sum()); nt = n - ns
     L.append(f"reference region: soma in {ns} run(s), most proximal trunk in {nt} (soma below the scanned tube)."
              + ("  'soma' below means 'reference region'; tests are reported for all runs and for soma-referenced runs alone." if nt else ""))
@@ -140,12 +158,20 @@ def tests(d: pd.DataFrame) -> str:
         L.append(f"  r(soma,branch) quiet {bs.r_soma_branch_quiet.mean():.2f} vs active {bs.r_soma_branch_active.mean():.2f} "
                  f"({int((bs.r_soma_branch_active > bs.r_soma_branch_quiet).sum())}/{len(bs)} runs more coupled when active)")
     L.append("")
+    mk = load_marks()
+    if mk:
+        L.append(f"Runs set aside by you (run_marks.csv), not in any statistic: {len(mk)}")
+        for k, r in sorted(mk.items()):
+            L.append(f"  {r['mark']:8s} {k}" + (f"  - {r.get('reason')}" if r.get("reason") else ""))
+        L.append("")
     L.append("Behavior (whole cell, cross-correlation within +-5 s, circular-shift null)")
     nb = 0
     for f in sorted(glob.glob(str(ROOT / "rbp4_*/**/*_behavior_coupling.json"), recursive=True)):
         if "/old/" in f:
             continue
         j = json.load(open(f)); wc = j.get("regions", {}).get("whole cell")
+        if is_set_aside(j.get("behavior_base", "")):
+            continue
         if not wc:
             continue
         nb += 1

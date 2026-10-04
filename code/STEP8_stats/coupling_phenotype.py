@@ -25,7 +25,7 @@ ACROSS CELLS (stats/phenotype/)
   python code/STEP8_stats/coupling_phenotype.py --run <behavior_base>
 """
 from __future__ import annotations
-import argparse, json, sys, glob
+import argparse, json, os, sys, glob
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -36,9 +36,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
-sys.path.insert(0, str(ROOT / "code")); sys.path.insert(0, str(ROOT / "code/STEP7_workflow")); sys.path.insert(0, str(HERE))
+_CODE_ROOT = HERE.parents[1]
+ROOT = Path(os.environ["FEMTO_ROOT"]).resolve() if os.environ.get("FEMTO_ROOT") else _CODE_ROOT
+sys.path.insert(0, str(_CODE_ROOT / "code")); sys.path.insert(0, str(_CODE_ROOT / "code/STEP7_workflow")); sys.path.insert(0, str(HERE))
 from run_metrics import dff, region_names, compartment_of, events       # noqa: E402
+from common.regions import apply_ignore, newest_input_mtime              # noqa: E402
+from common.run_marks import is_set_aside   # noqa: E402
 
 R_CUT = 0.75
 __version__ = "0.2.0"
@@ -51,9 +54,12 @@ def analyze_run(run: dict, root: Path, r_cut: float = R_CUT, window: int = 2):
         return None
     stack = tifffile.imread(stack_p); seg = tifffile.imread(seg_p); T = stack.shape[0]
     labels = sorted(int(v) for v in np.unique(seg) if v > 0)
+    names = region_names(seg_p.with_suffix(".json"), labels)       # from the FULL label set
+    seg, _ignored, _ign = apply_ignore(seg, names, seg_p)          # <stem>_ignore.json
+    labels = [l for l in labels if l not in _ign]
     if len(labels) < 3:
-        return {"behavior_base": run["behavior_base"], "note": "fewer than 3 regions"}
-    names = region_names(seg_p.with_suffix(".json"), labels); comp = {l: compartment_of(names[l]) for l in labels}
+        return {"behavior_base": run["behavior_base"], "note": "fewer than 3 regions", "ignored_regions": _ignored}
+    comp = {l: compartment_of(names[l]) for l in labels}
     flat = stack.reshape(T, -1)
     tr = np.array([dff(flat[:, np.flatnonzero((seg == l).ravel())].mean(1).astype(np.float64)) for l in labels])
     C = np.corrcoef(tr); n = len(labels)
@@ -68,7 +74,10 @@ def analyze_run(run: dict, root: Path, r_cut: float = R_CUT, window: int = 2):
     between = [C[i, j] for i in range(n) for j in range(i + 1, n) if groups[i] != groups[j]]
     sep = (np.mean(within) if within else 1.0) - (np.mean(between) if between else np.nan)
     soma_group = int(groups[soma_i]) if soma_i is not None else None
-    soma_with_branch = bool(soma_i is not None and any(groups[i] == groups[soma_i] and comp[labels[i]] == "branch" for i in range(n)))
+    has_branch = any(comp[l] == "branch" for l in labels)
+    # None = not applicable (no soma region in the scan, or no branch region)
+    soma_with_branch = (bool(any(groups[i] == groups[soma_i] and comp[labels[i]] == "branch" for i in range(n)))
+                        if soma_i is not None and has_branch else None)
     ev = [(i, int(p)) for i in range(n) for p in events(tr[i])]
     ev.sort(key=lambda e: e[1]); nets, cur, last = [], [], None
     for i, f in ev:
@@ -93,7 +102,7 @@ def analyze_run(run: dict, root: Path, r_cut: float = R_CUT, window: int = 2):
     stable_range = (min(stable), max(stable)) if stable else None
     out = {"behavior_base": run["behavior_base"], "mouse": run["mouse"], "date": run["date"], "version": __version__,
            "r_cut_sweep": sweep, "grouping_stable_from_to": stable_range,
-           "r_cut": r_cut, "n_regions": n, "n_groups": k,
+           "r_cut": r_cut, "n_regions": n, "ignored_regions": _ignored, "n_groups": k,
            "groups": {names[labels[i]]: int(groups[i]) for i in range(n)},
            "compartments": {names[labels[i]]: comp[labels[i]] for i in range(n)},
            "mean_within_r": float(np.mean(within)) if within else None,
@@ -139,10 +148,10 @@ def cohort(root: Path):
     out_dir = root / "stats" / "phenotype"; out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     for f in glob.glob(str(root / "rbp4_*/**/*_coupling.json"), recursive=True):
-        if "/old/" in f:
+        if "/old/" in f or f.endswith("_behavior_coupling.json"):   # different file kind, same suffix
             continue
         j = json.load(open(f))
-        if "note" in j:
+        if "note" in j or is_set_aside(j.get("behavior_base", "")):
             continue
         mf = Path(f).with_name(Path(f).name.replace("_coupling.json", "_metrics.json"))
         m = json.load(open(mf)) if mf.exists() else {}
@@ -168,8 +177,11 @@ def cohort(root: Path):
     for _, r in d.iterrows():
         msg.append(f"  {r.behavior_base}: grouping identical for cuts r={r.grouping_stable_from}..{r.grouping_stable_to}; "
                    f"groups by cut {r.n_groups_by_cut}")
+        sw = r.soma_shares_group_with_branch
+        sw_txt = ("soma + branch together" if sw is True else "soma apart from branches" if sw is False
+                  else "soma/branch grouping n/a (no soma or no branch region)")
         msg.append(f"  {r.behavior_base}: {r.n_groups} group(s), separation {r.separation:+.2f}, "
-                   f"soma{' + branch together' if r.soma_shares_group_with_branch else ' apart from branches'}, "
+                   f"{sw_txt}, "
                    f"{100 * r.frac_events_within_one_group:.0f}% local events, r(soma,branch) {r.r_soma_branch:.2f}")
     if len(d) >= 6 and bool(X.notna().all(axis=None)):
         from sklearn.metrics import silhouette_score
@@ -185,7 +197,7 @@ def cohort(root: Path):
     colors = {m: c for m, c in zip(sorted(d.mouse.unique()), plt.cm.tab10.colors)}
     for _, r in d.iterrows():
         ax.scatter(r.r_soma_branch, r.frac_events_within_one_group, s=40 + 30 * r.n_groups, color=colors[r.mouse],
-                   edgecolor="k" if r.soma_shares_group_with_branch else "none", linewidth=1.2)
+                   edgecolor="k" if r.soma_shares_group_with_branch is True else "none", linewidth=1.2)
         ax.annotate(r.behavior_base.replace("rbp4_", "").replace("_phpeb", ""), (r.r_soma_branch, r.frac_events_within_one_group),
                     fontsize=7, xytext=(4, 4), textcoords="offset points")
     ax.set_xlabel("r(soma, branch)"); ax.set_ylabel("fraction of multi-region events within one group")
@@ -204,13 +216,18 @@ def main(argv=None):
     args = ap.parse_args(argv)
     from femto_status import build_status
     runs = [r for r in build_status(ROOT) if r.get("run_dir") and r.get("stem")]
+    for r in [r for r in runs if r.get("mark")]:
+        bb = r.get("behavior_base") or f"{r['mouse']}_{r.get('munit', '?')}"
+        print(f"  {bb}: skipped ({r['mark']}{': ' + r['mark_reason'] if r.get('mark_reason') else ''})")
+    runs = [r for r in runs if not r.get("mark")]                 # run_marks.csv: excluded / revisit
     if args.run:
-        runs = [r for r in runs if r["behavior_base"] == args.run]
+        runs = [r for r in runs if r.get("behavior_base") == args.run
+                or (r.get("_imaging_only") and f"{r['mouse']}_{r.get('munit', '')}" == args.run)]
     for r in runs:
         seg_p = ROOT / r["run_dir"] / f"{r['stem']}_segments_final.tif"; out_p = ROOT / r["run_dir"] / f"{r['stem']}_coupling.json"
         if not seg_p.exists():
             continue
-        if out_p.exists() and out_p.stat().st_mtime >= seg_p.stat().st_mtime and not args.force:
+        if out_p.exists() and out_p.stat().st_mtime >= newest_input_mtime(seg_p) and not args.force:
             continue
         res = analyze_run(r, ROOT, args.r_cut)
         if res and "note" not in res:
