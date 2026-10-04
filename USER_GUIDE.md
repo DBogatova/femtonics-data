@@ -9,6 +9,18 @@ picking regions.
 
 Double-click **Femto Panel** on the Desktop, or type `femto` in a terminal.
 
+## Fully automatic (default)
+
+With **fully automatic** ticked, the program makes the mask and picks the regions itself: **Run next automatic step** (with **chain** ticked) goes from the stack to the finished figure. **Automate all runs** does this for every local, unmarked run that isn't complete, then rebuilds the statistics.
+
+- It never replaces a mask or regions that already exist; your curated cells stay as they are.
+- The **mask/regions by** column shows **program**, **you** or **both**.
+- To correct the program's choice, use **Edit mask** / **Edit regions** (they open the automatic result), then **Build figure + movies**.
+- **Mark run…** sets a whole run aside (excluded / revisit later); **Ignore regions…** leaves single regions out of the figure and statistics.
+- Runs without behavior (imaging only, e.g. the September sessions) show "needs behavior"; they get the imaging figure and are left out of behavior statistics.
+- Removed 4D stacks: `femto restore PATH|all`.
+- Every cell on one page with a 3D view: `python code/STEP8_stats/cell_atlas.py` (writes `stats/cell_atlas/index.html`).
+
 ## Processing one cell
 
 1. In the panel, select the highlighted run and click **Open GUI step**. Each time a step finishes, click **Refresh**, then **Open GUI step** again.

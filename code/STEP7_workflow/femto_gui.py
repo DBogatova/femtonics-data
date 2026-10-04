@@ -26,6 +26,7 @@ Run:  $PY code/STEP7_workflow/femto_gui.py
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -50,9 +51,12 @@ def build_runs():
     return fs.build_status(ROOT)
 
 
-def next_command(run: dict) -> tuple[str, list[str], bool]:
+def next_command(run: dict, auto: bool = False) -> tuple[str, list[str], bool]:
     """(description, argv, needs_gui) for this run's next step.
-    Mirrors femto_status's next_action strings; commands identical."""
+    Mirrors femto_status's next_action strings; commands identical.
+    auto=True: the mask and the regions are made by the program (STEP9_auto) instead of
+    opening the napari tools. It only ever runs where no mask / no regions exist yet, so
+    your curated files are never touched; edit the automatic ones with Edit mask/regions."""
     stage = run.get("stage", "?")
     if run.get("mark"):                                   # your decision in run_marks.csv
         return (run["next"]["label"], [], False)
@@ -66,6 +70,15 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
         return ("build reference volume",
                 [PYEXE, str(CODE_ROOT / "code/STEP3_auto/make_reference_volume.py"),
                  str(stack), "--register-blocks"], False)
+    rd = (ROOT / d) if d else None
+    if auto and stage in ("reference", "auto_segmented") and stack:
+        return ("automatic mask (program; edit later with 'Edit mask')",
+                [PYEXE, str(CODE_ROOT / "code/STEP9_auto/auto_mask.py"), str(stack), "--out-dir", str(rd)], False)
+    if auto and stage == "mask_reviewed" and stack:
+        m = rd / f"{stem}_autoseg_labelmap_reviewed.tif"; ex = rd / f"{stem}_exclude_labelmap.tif"
+        return ("automatic regions (program; edit later with 'Edit regions')",
+                [PYEXE, str(CODE_ROOT / "code/STEP9_auto/auto_regions.py"), str(stack), "--mask", str(m),
+                 "--out-dir", str(rd)] + (["--exclude", str(ex)] if ex.exists() else []), False)
     if stage == "reference":
         return ("auto-segment cells",
                 [PYEXE, str(CODE_ROOT / "code/STEP3_auto/auto_segment.py"), str(stack)], False)
@@ -82,6 +95,29 @@ def next_command(run: dict) -> tuple[str, list[str], bool]:
     return ("complete - use 'Edit mask' / 'Edit regions' to revise it, then 'Build figure + movies'", [], False)
 
 
+def provenance(run: dict) -> str:
+    """'' (nothing yet), 'auto', 'yours' or 'mixed' for the mask + regions of a run."""
+    d, stem = run.get("run_dir"), run.get("stem")
+    if not d or not stem:
+        return ""
+    rd = ROOT / d
+    def who(p, key):
+        if not p.exists():
+            return None
+        try:
+            j = json.loads(p.read_text())
+        except Exception:
+            return "yours"
+        if key == "mask":
+            revs = j.get("reviews") or [{}]
+            return "auto" if revs[-1].get("tool") == "auto_mask" else "yours"
+        return "auto" if "auto_regions" in j else "yours"
+    m = who(rd / f"{stem}_autoseg_reviewed.json", "mask")
+    g = who(rd / f"{stem}_segments_final.json", "regions")
+    vals = {v for v in (m, g) if v}
+    return "" if not vals else (vals.pop() if len(vals) == 1 else "mixed")
+
+
 # ---------------------------------------------------------------------------
 def selftest() -> int:
     runs = build_runs()
@@ -90,6 +126,7 @@ def selftest() -> int:
     n_cmd = 0
     for r in runs:
         desc, argv, gui = next_command(r)
+        next_command(r, auto=True)
         stages[r.get("stage")] = stages.get(r.get("stage"), 0) + 1
         if argv:
             assert Path(argv[1]).exists(), f"missing script: {argv[1]}"
@@ -122,9 +159,9 @@ def run_gui() -> int:
             lay = QtWidgets.QVBoxLayout(w)
 
             self.table = QtWidgets.QTableWidget()
-            self.table.setColumnCount(5)
+            self.table.setColumnCount(6)
             self.table.setHorizontalHeaderLabels(
-                ["rank", "run", "quality", "stage", "next step"])
+                ["rank", "run", "quality", "stage", "mask/regions by", "next step"])
             self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
             self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -151,9 +188,18 @@ def run_gui() -> int:
             self.b_ref = QtWidgets.QPushButton("Refresh")
             self.chain = QtWidgets.QCheckBox("chain automatic steps")
             self.chain.setChecked(True)
-            for b in (self.b_auto, self.b_gui, self.b_emask, self.b_ereg, self.b_ign, self.b_mark, self.b_fig, self.b_mov, self.b_stats, self.b_ref):
+            self.full_auto = QtWidgets.QCheckBox("fully automatic (program makes mask + regions)")
+            self.full_auto.setChecked(True)
+            self.full_auto.setToolTip("The program draws the mask and picks the regions instead of opening the tools. "
+                                      "It never replaces a mask or regions that already exist. Correct anything with "
+                                      "Edit mask / Edit regions afterwards.")
+            self.b_all = QtWidgets.QPushButton("Automate all runs")
+            self.b_all.setToolTip("Every local, unmarked run that is not complete: all automatic steps up to the "
+                                  "figure, then the statistics once. Existing masks/regions are kept.")
+            for b in (self.b_auto, self.b_all, self.b_gui, self.b_emask, self.b_ereg, self.b_ign, self.b_mark, self.b_fig, self.b_mov, self.b_stats, self.b_ref):
                 btns.addWidget(b)
             btns.addWidget(self.chain)
+            btns.addWidget(self.full_auto)
             btns.addStretch()
             lay.addLayout(btns)
 
@@ -203,6 +249,8 @@ def run_gui() -> int:
             lay.addWidget(self.log, stretch=2)
 
             self.b_ref.clicked.connect(self.refresh)
+            self.b_all.clicked.connect(self.automate_all)
+            self.full_auto.toggled.connect(lambda _=None: self.refresh())
             self.b_auto.clicked.connect(lambda: self.dispatch(gui_ok=False))
             self.b_gui.clicked.connect(lambda: self.dispatch(gui_ok=True))
             self.b_stats.clicked.connect(self.build_stats)
@@ -225,10 +273,11 @@ def run_gui() -> int:
             self.runs = build_runs()
             self.table.setRowCount(len(self.runs))
             for i, r in enumerate(self.runs):
-                desc, argv, gui = next_command(r)
+                desc, argv, gui = next_command(r, auto=self.full_auto.isChecked())
                 cells = [str(r.get("rank", "")), r.get("behavior_base", ""),
                          str(r.get("quality", r.get("priority", ""))),
-                         r.get("stage", "?"), ("[GUI] " if gui else "") + desc]
+                         r.get("stage", "?"), {"auto": "program", "yours": "you", "mixed": "both"}.get(provenance(r), ""),
+                         ("[GUI] " if gui else "") + desc]
                 for j, txt in enumerate(cells):
                     it = QtWidgets.QTableWidgetItem(txt)
                     if r.get("mark") == "excluded":
@@ -274,7 +323,7 @@ def run_gui() -> int:
             r = self.selected()
             if r is None or self.busy:
                 return
-            desc, argv, gui = next_command(r)
+            desc, argv, gui = next_command(r, auto=self.full_auto.isChecked())
             if not argv:
                 self.logline(f"[{r.get('behavior_base')}] {desc}")
                 return
@@ -434,18 +483,53 @@ def run_gui() -> int:
                 seq += self.stats_argv()                 # cohort statistics follow every new figure
             threading.Thread(target=self._run_argv_seq, args=(seq,), daemon=True).start()
 
+        def automate_all(self):
+            if self.busy:
+                return
+            todo = [r for r in self.runs if r.get("stack") and not r.get("mark") and r.get("stage") != "complete"]
+            if not todo:
+                self.logline("nothing to automate: every local, unmarked run is complete"); return
+            self.logline(f"automating {len(todo)} run(s); existing masks/regions are kept")
+            threading.Thread(target=self._run_all, args=(todo,), daemon=True).start()
+
+        def _run_all(self, todo):
+            self.busy = True
+            try:
+                for i, r in enumerate(todo, 1):
+                    self.logline(f"=== [{i}/{len(todo)}] {r.get('behavior_base')}")
+                    for _ in range(8):
+                        fresh = [x for x in build_runs() if x.get("behavior_base") == r.get("behavior_base")]
+                        if not fresh:
+                            break
+                        desc, argv, gui = next_command(fresh[0], auto=self.full_auto.isChecked())
+                        self.chain_signal.emit(i, len(todo), f"{r.get('behavior_base')}: {desc}")
+                        if not argv or gui:
+                            break
+                        if argv[1].endswith("coherence_with_behavior.py"):
+                            argv = argv + self.display_args()
+                        if not self._exec(argv, desc):
+                            break
+                self.logline("=== statistics (all cells)")
+                for a in self.stats_argv():
+                    self._exec(a)
+            finally:
+                self.busy = False
+                self.refresh_signal.emit()
+                QtCore.QTimer.singleShot(4000, lambda: self.chain_signal.emit(0, 0, ""))
+
         def _run_auto(self, r):
             """Run automatic steps, optionally chaining until GUI/complete."""
             self.busy = True
             try:
-                for step_i in range(6):
+                for step_i in range(8):
                     fresh = [x for x in build_runs()
                              if x.get("behavior_base") == r.get("behavior_base")]
                     if not fresh:
                         break
-                    desc, argv, gui = next_command(fresh[0])
+                    desc, argv, gui = next_command(fresh[0], auto=self.full_auto.isChecked())
                     # chain bar: stages left until the GUI step / completion
-                    stages = ["stack", "reference", "auto_segmented"]
+                    stages = (["stack", "reference", "mask_reviewed", "segments_located"] if self.full_auto.isChecked()
+                              else ["stack", "reference", "auto_segmented"])
                     st = fresh[0].get("stage", ""); k = stages.index(st) if st in stages else 0
                     self.chain_signal.emit(k, len(stages), desc)
                     if argv and argv[1].endswith("coherence_with_behavior.py"):
