@@ -21,7 +21,7 @@ With **fully automatic** ticked, the program makes the mask and picks the region
 - Removed 4D stacks: `femto restore PATH|all`.
 - Every cell on one page with a 3D view: `python code/STEP8_stats/cell_atlas.py` (writes `stats/cell_atlas/index.html`).
 
-## Processing one cell
+## Processing one cell by hand (untick "fully automatic")
 
 1. In the panel, select the highlighted run and click **Open GUI step**. Each time a step finishes, click **Refresh**, then **Open GUI step** again.
 2. **Mask tool** opens. Get the mask right (see below), press **Ctrl+S**, then close napari.
