@@ -149,14 +149,14 @@ def load_runs(root: Path) -> list[dict]:
     # the max ranked run, priority P5, and behavior fields left empty.
     io_csv = root / "imaging_only_runs.csv"
     if io_csv.exists():
-        io_rows = _read_csv(io_csv)
+        io_rows = _rank_imaging_only(root, _read_csv(io_csv))
         max_rank = max((r["rank"] for r in runs), default=0)
-        for i, row in enumerate(io_rows, start=1):
+        for i, (row, score, pri) in enumerate(io_rows, start=1):
             bstatus = (row.get("behavior_status") or "missing").strip()
             runs.append(
                 {
                     "rank": max_rank + i,
-                    "priority": "P5",
+                    "priority": pri,
                     "mouse": (row.get("mouse") or "").strip(),
                     "date": (row.get("date") or "").strip(),
                     "munit": (row.get("munit") or "").strip(),
@@ -165,7 +165,7 @@ def load_runs(root: Path) -> list[dict]:
                     "frame_rate_hz": (row.get("frame_rate_hz") or "").strip(),
                     "voxel_zyx_um": (row.get("voxel_zyx_um") or "").strip(),
                     "imaging_quality": (row.get("imaging_quality") or "").strip(),
-                    "quality_score": (row.get("quality_score") or "").strip(),
+                    "quality_score": f"{score:.1f}",
                     "behavior_frame_loss_pct": "",
                     "behavior_warnings": "",
                     "quality_notes": (row.get("quality_notes") or "").strip(),
@@ -497,6 +497,53 @@ def build_status(root: Path) -> list[dict]:
             run["next"] = {"label": f"{what}" + (f": {run['mark_reason']}" if run["mark_reason"] else ""),
                            "cmd": None, "gui": False, "runnable": False}
     return runs
+
+
+def _rank_imaging_only(root: Path, rows: list[dict]):
+    """Order imaging-only runs best first, ignoring behavior.
+
+    score = comment quality (good 2, okay/decent 1, mixed 0.5, unknown 0, bad -2)
+          + signal quality from the cell's metrics (curated, else the automatic mirror):
+            +1 if the reference region's split-half reliability >= 0.99, +0.5 if >= 0.95
+            +1 if >= 10 reference events, +0.5 if >= 5
+    Runs you (or the automatic QC) marked in run_marks.csv go last.
+    Priority: P1 >= 4, P2 >= 2.5, P3 >= 1, P4 below, P5 marked.
+    Returns [(row, score, priority)] sorted best first (stable on ties)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from common.run_marks import load_marks
+    marks = load_marks()
+    qmap = {"good": 2.0, "okay": 1.0, "ok": 1.0, "decent": 1.0, "mixed": 0.5, "bad": -2.0}
+    auto = root / "auto_pipeline" if (root / "auto_pipeline").exists() else root
+    out = []
+    for i, row in enumerate(rows):
+        q = (row.get("imaging_quality") or "").strip().lower()
+        s = qmap.get(q, 0.0)
+        if not q:
+            c = (row.get("imaging_comment") or "").lower()
+            s = 2.0 if "good" in c else 1.0 if ("decent" in c or "okay" in c) else -2.0 if ("bad" in c or "no cell" in c) else 0.0
+        rd, st = (row.get("run_dir") or "").strip(), (row.get("stem") or "").strip()
+        m = {}
+        for base in (root, auto):
+            f = base / rd / f"{st}_metrics.json"
+            if rd and st and f.exists():
+                try:
+                    m = json.loads(f.read_text()); break
+                except Exception:
+                    pass
+        regs = m.get("regions") or {}
+        ref = m.get("reference_region")
+        rel = [v.get("reliability") for v in regs.values()
+               if v.get("reliability") is not None and (not ref or v.get("name") == ref)]
+        if rel:
+            s += 1.0 if max(rel) >= 0.99 else 0.5 if max(rel) >= 0.95 else 0.0
+        ne = m.get("n_soma_events")
+        if isinstance(ne, (int, float)):
+            s += 1.0 if ne >= 10 else 0.5 if ne >= 5 else 0.0
+        marked = (row.get("behavior_base") or "").strip() in marks
+        pri = "P5" if marked else "P1" if s >= 4 else "P2" if s >= 2.5 else "P3" if s >= 1 else "P4"
+        out.append((marked, -s, i, row, s, pri))
+    out.sort(key=lambda t: (t[0], t[1], t[2]))
+    return [(row, s, pri) for _, _, _, row, s, pri in out]
 
 
 def _qscore(run: dict) -> float:
