@@ -510,6 +510,7 @@ def _rank_imaging_only(root: Path, rows: list[dict]):
     Priority: P1 >= 4, P2 >= 2.5, P3 >= 1, P4 below, P5 marked.
     Returns [(row, score, priority)] sorted best first (stable on ties)."""
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import json
     from common.run_marks import load_marks
     marks = load_marks()
     qmap = {"good": 2.0, "okay": 1.0, "ok": 1.0, "decent": 1.0, "mixed": 0.5, "bad": -2.0}
