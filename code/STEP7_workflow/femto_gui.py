@@ -309,12 +309,13 @@ def run_gui() -> int:
             mov_flow = _FlowLayout(spacing=6)
             mov_w.setLayout(mov_flow)
             self.mv = {}
-            for key, label in (("dual", "dual (structure + activity)"),
-                               ("time", "dynamic (activity in 3D)"),
-                               ("structure", "structural rotation")):
-                cb = QtWidgets.QCheckBox(label); cb.setChecked(True)
+            for key, label, tip in (("dual", "dual", "structure + activity, side by side"),
+                                    ("time", "dynamic", "activity in 3D over time"),
+                                    ("structure", "structural", "rotating structure")):
+                cb = QtWidgets.QCheckBox(label); cb.setChecked(True); cb.setToolTip(tip)
                 self.mv[key] = cb; mov_flow.addWidget(cb)
-            self.mv_force = QtWidgets.QCheckBox("rebuild even if up to date")
+            self.mv_force = QtWidgets.QCheckBox("force rebuild")
+            self.mv_force.setToolTip("rebuild the figure and movies even if they are up to date")
             mov_flow.addWidget(self.mv_force)
             self.hide_other = QtWidgets.QCheckBox("hide other cells")
             self.hide_other.setChecked(True)
