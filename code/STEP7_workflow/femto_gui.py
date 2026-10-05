@@ -5,16 +5,25 @@ One window: the ranked run table (live stage detection, same logic as
 femto_status.py - imported, not duplicated), and buttons that run the next
 step for the selected run:
 
-  [Run next automatic step]  registration / reference / autoseg / composite,
-                             executed as a subprocess with live log output;
+  [Run next step]            registration / reference / auto mask / coherence;
                              chains until the run needs a human or is complete
                              (checkbox controls chaining).
-  [Open review GUI]          launches trace_mask_napari.py detached (path-guided mask)
-  [Open wrap GUI]            launches wrap_segments_napari.py detached
-  [Build figure + movies]    coherence + behavior composite, then the ticked movies
-  [Build movies only]        just the ticked 3D movies (dual / dynamic / structural)
-  [Statistics (all cells)]   per-run metrics + cohort table / summary / figures in stats/
-  [Refresh]                  re-scan the disk, update stages
+  [Open tool]                launches the napari tool for this run's stage
+  [Edit mask]                opens trace_mask_napari.py (resumes saved session)
+  [Edit regions]             opens wrap_segments_napari.py
+  [Ignore regions…]          leave chosen regions out of figure + statistics
+  [Mark run…]                exclude / revisit / normal
+  [Build figure]             coherence + behavior composite
+  [Build movies]             3D movies
+  [Automate all runs]        every local unmarked run: reference + auto mask,
+                             then stop at the region step; runs with regions
+                             continue to figures
+  [Statistics (all cells)]   per-run metrics + cohort
+  [Refresh]                  re-scan disk, update stages
+
+Two checkboxes:
+  'automatic mask' (default ON)   — auto_mask.py instead of the mask napari tool
+  'automatic regions' (default OFF) — auto_regions.py instead of the region tool
 
 GUI steps are launched as separate processes so napari's own event loop never
 fights this panel's. The log pane shows every command verbatim, so anything the
@@ -26,11 +35,13 @@ Run:  $PY code/STEP7_workflow/femto_gui.py
 """
 from __future__ import annotations
 
+import concurrent.futures as cf
 import json
 import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -51,12 +62,25 @@ def build_runs():
     return fs.build_status(ROOT)
 
 
-def next_command(run: dict, auto: bool = False) -> tuple[str, list[str], bool]:
+def _default_workers() -> int:
+    """How many runs 'Automate all' handles at once by default.
+
+    The per-stage scripts are single-core, so this is the batch speedup factor.
+    Leave cores free for the GUI, napari and the rest of the machine; cap at 4
+    because each worker holds a 4D stack (~0.3-2 GB) in memory.
+    """
+    env = os.environ.get("FEMTO_WORKERS")
+    if env and env.strip().isdigit() and int(env) > 0:
+        return int(env)
+    return max(1, min(4, (os.cpu_count() or 4) // 3))
+
+
+def next_command(run: dict, auto_mask: bool = False, auto_regions: bool = False) -> tuple[str, list[str], bool]:
     """(description, argv, needs_gui) for this run's next step.
-    Mirrors femto_status's next_action strings; commands identical.
-    auto=True: the mask and the regions are made by the program (STEP9_auto) instead of
-    opening the napari tools. It only ever runs where no mask / no regions exist yet, so
-    your curated files are never touched; edit the automatic ones with Edit mask/regions."""
+
+    auto_mask=True: auto_mask.py makes the mask (if none exists).
+    auto_regions=True: auto_regions.py picks regions (if none exist).
+    auto_regions=False (default): the region tool opens instead (GUI step)."""
     stage = run.get("stage", "?")
     if run.get("mark"):                                   # your decision in run_marks.csv
         return (run["next"]["label"], [], False)
@@ -71,23 +95,24 @@ def next_command(run: dict, auto: bool = False) -> tuple[str, list[str], bool]:
                 [PYEXE, str(CODE_ROOT / "code/STEP3_auto/make_reference_volume.py"),
                  str(stack), "--register-blocks"], False)
     rd = (ROOT / d) if d else None
-    if auto and stage in ("reference", "auto_segmented") and stack:
+    if auto_mask and stage in ("reference", "auto_segmented") and stack:
         return ("automatic mask (program; edit later with 'Edit mask')",
                 [PYEXE, str(CODE_ROOT / "code/STEP9_auto/auto_mask.py"), str(stack), "--out-dir", str(rd)], False)
-    if auto and stage == "mask_reviewed" and stack:
-        m = rd / f"{stem}_autoseg_labelmap_reviewed.tif"; ex = rd / f"{stem}_exclude_labelmap.tif"
-        return ("automatic regions (program; edit later with 'Edit regions')",
-                [PYEXE, str(CODE_ROOT / "code/STEP9_auto/auto_regions.py"), str(stack), "--mask", str(m),
-                 "--out-dir", str(rd)] + (["--exclude", str(ex)] if ex.exists() else []), False)
+    if stage == "mask_reviewed" and stack:
+        if auto_regions:
+            m = rd / f"{stem}_autoseg_labelmap_reviewed.tif"; ex = rd / f"{stem}_exclude_labelmap.tif"
+            return ("automatic regions (program; edit later with 'Edit regions')",
+                    [PYEXE, str(CODE_ROOT / "code/STEP9_auto/auto_regions.py"), str(stack), "--mask", str(m),
+                     "--out-dir", str(rd)] + (["--exclude", str(ex)] if ex.exists() else []), False)
+        else:
+            return ("pick regions by hand (napari)",
+                    [PYEXE, str(CODE_ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], True)
     if stage == "reference":
         return ("auto-segment cells",
                 [PYEXE, str(CODE_ROOT / "code/STEP3_auto/auto_segment.py"), str(stack)], False)
     if stage == "auto_segmented":
         return ("trace + grow mask (napari)",
                 [PYEXE, str(CODE_ROOT / "code/STEP3_auto/trace_mask_napari.py"), str(stack)], True)
-    if stage == "mask_reviewed":
-        return ("one-click wrap soma/trunk/branches (napari)",
-                [PYEXE, str(CODE_ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], True)
     if stage in ("segments_located", "coherence_built", "behavior_added"):
         return ("build coherence + behavior composite",
                 [PYEXE, str(CODE_ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
@@ -125,8 +150,18 @@ def selftest() -> int:
     stages = {}
     n_cmd = 0
     for r in runs:
+        # Test both old-style (auto=True/False for backward compat) and new-style
         desc, argv, gui = next_command(r)
-        next_command(r, auto=True)
+        next_command(r, auto_mask=True, auto_regions=False)
+        next_command(r, auto_mask=True, auto_regions=True)
+        # With auto_mask only: mask_reviewed -> GUI step (region tool)
+        desc2, argv2, gui2 = next_command(r, auto_mask=True, auto_regions=False)
+        if r.get("stage") == "mask_reviewed" and not r.get("mark"):
+            assert gui2, f"mask_reviewed with auto_mask+no auto_regions should open the region tool (gui)"
+        # With auto_regions: mask_reviewed -> automatic (no GUI)
+        desc3, argv3, gui3 = next_command(r, auto_mask=True, auto_regions=True)
+        if r.get("stage") == "mask_reviewed" and not r.get("mark"):
+            assert not gui3, f"mask_reviewed with auto_regions should NOT need GUI"
         stages[r.get("stage")] = stages.get(r.get("stage"), 0) + 1
         if argv:
             assert Path(argv[1]).exists(), f"missing script: {argv[1]}"
@@ -154,10 +189,21 @@ def run_gui() -> int:
         def __init__(self):
             super().__init__()
             self.setWindowTitle("Femtonics dendrite pipeline")
-            self.resize(1120, 640)
+
+            # Size to ~90% of available screen, minimum 1280x760
+            screen = QtWidgets.QApplication.primaryScreen()
+            avail = screen.availableGeometry() if screen else QtCore.QRect(0, 0, 1440, 900)
+            w0 = max(1280, int(avail.width() * 0.90))
+            h0 = max(760, int(avail.height() * 0.90))
+            self.resize(min(w0, avail.width()), min(h0, avail.height()))
+            self.setMinimumSize(1024, 600)
+
             w = QtWidgets.QWidget(); self.setCentralWidget(w)
             lay = QtWidgets.QVBoxLayout(w)
+            lay.setSpacing(4)
+            lay.setContentsMargins(6, 6, 6, 6)
 
+            # ---- table (stretches) ----
             self.table = QtWidgets.QTableWidget()
             self.table.setColumnCount(6)
             self.table.setHorizontalHeaderLabels(
@@ -165,92 +211,168 @@ def run_gui() -> int:
             self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
             self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-            lay.addWidget(self.table, stretch=3)
+            hdr = self.table.horizontalHeader()
+            hdr.setStretchLastSection(True)
+            lay.addWidget(self.table, stretch=4)
 
-            btns = QtWidgets.QHBoxLayout()
-            self.b_auto = QtWidgets.QPushButton("Run next automatic step")
-            self.b_gui = QtWidgets.QPushButton("Open GUI step")
+            # ---- button rows: grouped into labeled sections in a grid ----
+            grid = QtWidgets.QGridLayout()
+            grid.setSpacing(4)
+            grid.setContentsMargins(0, 2, 0, 2)
+
+            row = 0
+            # Row 0: "This run:" label + action buttons
+            grid.addWidget(self._sectionLabel("This run:"), row, 0)
+            self.b_auto = QtWidgets.QPushButton("Run next step")
+            self.b_auto.setToolTip("Run the next automatic step for this run (or chain until it needs you)")
+            self.b_gui = QtWidgets.QPushButton("Open tool")
+            self.b_gui.setToolTip("Open the napari tool for this run's current step")
             self.b_emask = QtWidgets.QPushButton("Edit mask")
             self.b_emask.setToolTip("Open the mask tool on this run, whatever its stage (resumes your saved session)")
             self.b_ereg = QtWidgets.QPushButton("Edit regions")
             self.b_ereg.setToolTip("Open the region tool on this run, whatever its stage")
+            self.b_ign = QtWidgets.QPushButton("Ignore regions…")
+            self.b_ign.setToolTip("Leave chosen regions out of the figure and all statistics, "
+                                  "without changing the mask or regions. Untick to bring them back.")
             self.b_mark = QtWidgets.QPushButton("Mark run…")
             self.b_mark.setToolTip("Exclude this run from everything, or set it aside to re-analyze later. "
                                    "Files are kept; clear the mark to bring it back.")
-            self.b_ign = QtWidgets.QPushButton("Ignore regions…")
-            self.b_ign.setToolTip("Leave chosen regions (e.g. branch2) out of the figure and all statistics, "
-                                  "without changing the mask or regions. Untick to bring them back.")
-            self.b_fig = QtWidgets.QPushButton("Build figure + movies")
-            self.b_mov = QtWidgets.QPushButton("Build movies only")
-            self.b_stats = QtWidgets.QPushButton("Statistics (all cells)")
+            self.b_fig = QtWidgets.QPushButton("Build figure")
+            self.b_fig.setToolTip("Build the coherence + behavior figure for this run (also rebuilds statistics)")
+            self.b_mov = QtWidgets.QPushButton("Build movies")
+            self.b_mov.setToolTip("Build the ticked 3D movies for this run")
+            col = 1
+            for b in (self.b_auto, self.b_gui, self.b_emask, self.b_ereg,
+                      self.b_ign, self.b_mark, self.b_fig, self.b_mov):
+                grid.addWidget(b, row, col)
+                col += 1
+
+            row = 1
+            # Row 1: "All runs:" label + batch buttons
+            grid.addWidget(self._sectionLabel("All runs:"), row, 0)
+            self.b_all = QtWidgets.QPushButton("Automate all")
+            self.b_all.setToolTip("Every local, unmarked run: automatic steps up to the "
+                                  "region step (hand regions) or to completion (auto regions), "
+                                  "then statistics once. Existing masks/regions are kept.")
+            self.b_stats = QtWidgets.QPushButton("Statistics")
             self.b_stats.setToolTip("Recompute per-run metrics for every cell with regions and rebuild "
                                     "stats/cohort_* (table, summary, figures)")
             self.b_ref = QtWidgets.QPushButton("Refresh")
-            self.chain = QtWidgets.QCheckBox("chain automatic steps")
-            self.chain.setChecked(True)
-            self.full_auto = QtWidgets.QCheckBox("fully automatic (program makes mask + regions)")
-            self.full_auto.setChecked(True)
-            self.full_auto.setToolTip("The program draws the mask and picks the regions instead of opening the tools. "
-                                      "It never replaces a mask or regions that already exist. Correct anything with "
-                                      "Edit mask / Edit regions afterwards.")
-            self.b_all = QtWidgets.QPushButton("Automate all runs")
-            self.b_all.setToolTip("Every local, unmarked run that is not complete: all automatic steps up to the "
-                                  "figure, then the statistics once. Existing masks/regions are kept.")
-            for b in (self.b_auto, self.b_all, self.b_gui, self.b_emask, self.b_ereg, self.b_ign, self.b_mark, self.b_fig, self.b_mov, self.b_stats, self.b_ref):
-                btns.addWidget(b)
-            btns.addWidget(self.chain)
-            btns.addWidget(self.full_auto)
-            btns.addStretch()
-            lay.addLayout(btns)
+            self.b_ref.setToolTip("Re-scan the disk and update the table")
+            grid.addWidget(self.b_all, row, 1)
+            grid.addWidget(self.b_stats, row, 2)
+            grid.addWidget(self.b_ref, row, 3)
 
-            movs = QtWidgets.QHBoxLayout()
-            movs.addWidget(QtWidgets.QLabel("movies:"))
+            row = 2
+            # Row 2: options checkboxes (wrapping)
+            grid.addWidget(self._sectionLabel("Options:"), row, 0)
+            opts_w = QtWidgets.QWidget()
+            opts_flow = _FlowLayout(spacing=6)
+            opts_w.setLayout(opts_flow)
+            self.chain = QtWidgets.QCheckBox("chain steps")
+            self.chain.setChecked(True)
+            self.chain.setToolTip("Keep running automatic steps until the run needs you or is complete")
+            self.auto_mask = QtWidgets.QCheckBox("automatic mask")
+            self.auto_mask.setChecked(True)
+            self.auto_mask.setToolTip("The program draws the mask (auto_mask.py) instead of opening the mask tool. "
+                                      "It never replaces a mask that already exists. Correct with 'Edit mask'.")
+            self.auto_regions = QtWidgets.QCheckBox("automatic regions")
+            self.auto_regions.setChecked(False)
+            self.auto_regions.setToolTip("The program picks the regions (auto_regions.py) instead of opening "
+                                         "the region tool. Default off: Daria picks regions by hand.")
+            for cb in (self.chain, self.auto_mask, self.auto_regions):
+                opts_flow.addWidget(cb)
+            # how many runs 'Automate all' processes at the same time. The stages are
+            # separate single-core subprocesses writing only inside their own run
+            # folder, so N runs in parallel is ~N x faster on a multi-core machine.
+            par_w = QtWidgets.QWidget()
+            par_lay = QtWidgets.QHBoxLayout(par_w)
+            par_lay.setContentsMargins(0, 0, 0, 0); par_lay.setSpacing(2)
+            par_lay.addWidget(QtWidgets.QLabel("runs at once:"))
+            self.workers = QtWidgets.QSpinBox()
+            self.workers.setRange(1, max(1, (os.cpu_count() or 4)))
+            self.workers.setValue(_default_workers())
+            self.workers.setFixedWidth(50)
+            self.workers.setToolTip(
+                "'Automate all' processes this many runs in parallel (1 = one after "
+                "another, as before). Each run is a separate single-core subprocess "
+                f"writing only its own folder. This machine has {os.cpu_count()} cores; "
+                "the default leaves some free for the GUI and napari.")
+            par_lay.addWidget(self.workers)
+            opts_flow.addWidget(par_w)
+            grid.addWidget(opts_w, row, 1, 1, 8)
+
+            row = 3
+            # Row 3: movie options (wrapping)
+            grid.addWidget(self._sectionLabel("Movies:"), row, 0)
+            mov_w = QtWidgets.QWidget()
+            mov_flow = _FlowLayout(spacing=6)
+            mov_w.setLayout(mov_flow)
             self.mv = {}
             for key, label in (("dual", "dual (structure + activity)"),
                                ("time", "dynamic (activity in 3D)"),
                                ("structure", "structural rotation")):
                 cb = QtWidgets.QCheckBox(label); cb.setChecked(True)
-                self.mv[key] = cb; movs.addWidget(cb)
-            self.mv_force = QtWidgets.QCheckBox("rebuild figure + movies even if up to date")
-            movs.addWidget(self.mv_force)
-            self.hide_other = QtWidgets.QCheckBox("hide other cells (fill with background)")
+                self.mv[key] = cb; mov_flow.addWidget(cb)
+            self.mv_force = QtWidgets.QCheckBox("rebuild even if up to date")
+            mov_flow.addWidget(self.mv_force)
+            self.hide_other = QtWidgets.QCheckBox("hide other cells")
             self.hide_other.setChecked(True)
             self.hide_other.setToolTip("Cells you marked 'other cell' in the mask tool are replaced by nearby "
                                        "background flicker in movies and the figure picture. Traces never change.")
-            movs.addWidget(self.hide_other)
+            mov_flow.addWidget(self.hide_other)
             self.bg_black = QtWidgets.QCheckBox("black background")
-            self.bg_black.setChecked(False)          # default: the original, unmasked look
+            self.bg_black.setChecked(False)
             self.bg_black.setToolTip("Movies and the figure's cell picture show only your cell on black. "
                                      "Traces are never affected.")
-            movs.addWidget(self.bg_black)
-            movs.addWidget(QtWidgets.QLabel("edge (um):"))
+            mov_flow.addWidget(self.bg_black)
+            edge_w = QtWidgets.QWidget()
+            edge_lay = QtWidgets.QHBoxLayout(edge_w)
+            edge_lay.setContentsMargins(0, 0, 0, 0); edge_lay.setSpacing(2)
+            edge_lay.addWidget(QtWidgets.QLabel("edge (um):"))
             self.edge = QtWidgets.QDoubleSpinBox(); self.edge.setRange(0.0, 10.0); self.edge.setSingleStep(0.5)
             self.edge.setValue(2.0); self.edge.setToolTip("soft falloff outside the cell; 0 = hard cut")
-            movs.addWidget(self.edge); movs.addStretch()
-            lay.addLayout(movs)
+            self.edge.setFixedWidth(60)
+            edge_lay.addWidget(self.edge)
+            mov_flow.addWidget(edge_w)
+            grid.addWidget(mov_w, row, 1, 1, 8)
 
+            lay.addLayout(grid)
+
+            # ---- progress bars ----
             prog = QtWidgets.QGridLayout()
+            prog.setSpacing(2)
             self.chain_label = QtWidgets.QLabel("idle"); self.chain_bar = QtWidgets.QProgressBar()
             self.chain_bar.setRange(0, 1); self.chain_bar.setValue(0); self.chain_bar.setTextVisible(True); self.chain_bar.setFormat("")
             self.step_label = QtWidgets.QLabel(""); self.step_bar = QtWidgets.QProgressBar()
             self.step_bar.setRange(0, 1); self.step_bar.setValue(0); self.step_bar.setFormat("")
             for b in (self.chain_bar, self.step_bar):
-                b.setFixedHeight(16)
+                b.setFixedHeight(14)
             prog.addWidget(QtWidgets.QLabel("steps:"), 0, 0); prog.addWidget(self.chain_bar, 0, 1); prog.addWidget(self.chain_label, 0, 2)
             prog.addWidget(QtWidgets.QLabel("current:"), 1, 0); prog.addWidget(self.step_bar, 1, 1); prog.addWidget(self.step_label, 1, 2)
             prog.setColumnStretch(1, 3); prog.setColumnStretch(2, 2)
             lay.addLayout(prog)
 
+            # ---- log: collapsible, compact ----
+            self.log_toggle = QtWidgets.QPushButton("▼ Log")
+            self.log_toggle.setFlat(True)
+            self.log_toggle.setStyleSheet("text-align: left; font-size: 11px; padding: 1px 4px;")
+            self.log_toggle.setCheckable(True); self.log_toggle.setChecked(True)
+            self.log_toggle.clicked.connect(self._toggle_log)
+            lay.addWidget(self.log_toggle)
             self.log = QtWidgets.QPlainTextEdit()
             self.log.setReadOnly(True)
             self.log.setMaximumBlockCount(5000)
-            f = QtGui.QFont("Menlo"); f.setPointSize(11)
+            f = QtGui.QFont("Menlo"); f.setPointSize(10)
             self.log.setFont(f)
-            lay.addWidget(self.log, stretch=2)
+            self.log.setMaximumHeight(150)
+            lay.addWidget(self.log, stretch=1)
 
+            # ---- wiring ----
             self.b_ref.clicked.connect(self.refresh)
             self.b_all.clicked.connect(self.automate_all)
-            self.full_auto.toggled.connect(lambda _=None: self.refresh())
+            self.auto_mask.toggled.connect(lambda _=None: self.refresh())
+            self.auto_regions.toggled.connect(lambda _=None: self.refresh())
             self.b_auto.clicked.connect(lambda: self.dispatch(gui_ok=False))
             self.b_gui.clicked.connect(lambda: self.dispatch(gui_ok=True))
             self.b_stats.clicked.connect(self.build_stats)
@@ -258,7 +380,7 @@ def run_gui() -> int:
             self.b_ereg.clicked.connect(lambda: self.reopen("regions"))
             self.b_ign.clicked.connect(self.edit_ignore)
             self.b_mark.clicked.connect(self.edit_mark)
-            self.b_fig.clicked.connect(lambda: self.build_figure(with_movies=True))
+            self.b_fig.clicked.connect(lambda: self.build_figure(with_movies=False))
             self.b_mov.clicked.connect(lambda: self.build_figure(with_movies=True, figure=False))
             self.log_signal.connect(self.log.appendPlainText)
             self.progress_signal.connect(self._on_progress)
@@ -268,18 +390,37 @@ def run_gui() -> int:
             self.runs = []
             self.refresh()
 
+        @staticmethod
+        def _sectionLabel(text):
+            from qtpy import QtWidgets as _qw
+            lab = _qw.QLabel(text)
+            lab.setStyleSheet("font-weight: bold; padding: 0 4px;")
+            return lab
+
+        def _toggle_log(self):
+            vis = self.log_toggle.isChecked()
+            self.log.setVisible(vis)
+            self.log_toggle.setText("▼ Log" if vis else "► Log")
+
         # ---- table ------------------------------------------------------
         def refresh(self):
             self.runs = build_runs()
             self.table.setRowCount(len(self.runs))
             for i, r in enumerate(self.runs):
-                desc, argv, gui = next_command(r, auto=self.full_auto.isChecked())
+                desc, argv, gui = next_command(r,
+                                               auto_mask=self.auto_mask.isChecked(),
+                                               auto_regions=self.auto_regions.isChecked())
+                # Elide long 'next step' text
+                max_chars = 80
+                display_desc = desc if len(desc) <= max_chars else desc[:max_chars - 1] + "…"
                 cells = [str(r.get("rank", "")), r.get("behavior_base", ""),
                          str(r.get("quality", r.get("priority", ""))),
                          r.get("stage", "?"), {"auto": "program", "yours": "you", "mixed": "both"}.get(provenance(r), ""),
-                         ("[GUI] " if gui else "") + desc]
+                         ("[GUI] " if gui else "") + display_desc]
                 for j, txt in enumerate(cells):
                     it = QtWidgets.QTableWidgetItem(txt)
+                    if j == 5:   # next step column: full text as tooltip
+                        it.setToolTip(("[GUI] " if gui else "") + desc)
                     if r.get("mark") == "excluded":
                         it.setForeground(QtGui.QColor("#c62828"))
                     elif r.get("mark") == "revisit":
@@ -290,6 +431,9 @@ def run_gui() -> int:
                         it.setForeground(QtGui.QColor("#9e9e9e"))
                     self.table.setItem(i, j, it)
             self.table.resizeColumnsToContents()
+            # Limit the "next step" column so it does not push the window too wide
+            if self.table.columnCount() > 5:
+                self.table.setColumnWidth(5, min(self.table.columnWidth(5), 400))
             self.logline("table refreshed from disk")
 
         def selected(self):
@@ -301,7 +445,7 @@ def run_gui() -> int:
 
         def _on_progress(self, done, total, label):
             if total <= 0:
-                self.step_bar.setRange(0, 0); self.step_bar.setFormat("")          # busy (unknown length)
+                self.step_bar.setRange(0, 0); self.step_bar.setFormat("")
             else:
                 self.step_bar.setRange(0, total); self.step_bar.setValue(min(done, total))
                 self.step_bar.setFormat(f"{100 * min(done, total) // total}%")
@@ -323,13 +467,15 @@ def run_gui() -> int:
             r = self.selected()
             if r is None or self.busy:
                 return
-            desc, argv, gui = next_command(r, auto=self.full_auto.isChecked())
+            desc, argv, gui = next_command(r,
+                                           auto_mask=self.auto_mask.isChecked(),
+                                           auto_regions=self.auto_regions.isChecked())
             if not argv:
                 self.logline(f"[{r.get('behavior_base')}] {desc}")
                 return
             if gui and not gui_ok:
                 self.logline(f"[{r.get('behavior_base')}] next step is a GUI step "
-                             f"({desc}) -> use 'Open GUI step'")
+                             f"({desc}) -> use 'Open tool'")
                 return
             if gui:
                 self.launch_gui(argv, desc)
@@ -339,10 +485,6 @@ def run_gui() -> int:
         def launch_gui(self, argv, desc):
             if True:
                 self.logline("launch: " + " ".join(argv))
-                # start_new_session detaches the child into its own process
-                # group: closing napari can never take this panel down, and
-                # closing the panel leaves napari alive. A watcher thread
-                # reports the child's exit code so crashes are visible.
                 child = subprocess.Popen(argv, cwd=str(ROOT),
                                          start_new_session=True,
                                          stdout=subprocess.DEVNULL,
@@ -356,8 +498,7 @@ def run_gui() -> int:
                              "after you Ctrl+S there.")
 
         def reopen(self, which):
-            """Open the mask or region tool on ANY local run, whatever its stage (e.g. to
-            revise a completed cell). The tools resume the saved mask/session."""
+            """Open the mask or region tool on ANY local run, whatever its stage."""
             r = self.selected()
             if r is None:
                 return
@@ -436,7 +577,7 @@ def run_gui() -> int:
             if chosen:
                 rg.main([str(seg), *chosen] + (["--reason", reason.text().strip()] if reason.text().strip() else []))
             self.logline(f"[{r.get('behavior_base')}] ignored in figure + statistics: {', '.join(chosen) or '(none)'}"
-                         " - press 'Build figure + movies' and 'Statistics' to update")
+                         " - press 'Build figure' and 'Statistics' to update")
 
         def stack_path(self, r):
             rd, st = r.get("run_dir"), r.get("stem")
@@ -480,7 +621,7 @@ def run_gui() -> int:
             if not seq:
                 self.logline("nothing selected to build"); return
             if figure:
-                seq += self.stats_argv()                 # cohort statistics follow every new figure
+                seq += self.stats_argv()
             threading.Thread(target=self._run_argv_seq, args=(seq,), daemon=True).start()
 
         def automate_all(self):
@@ -489,26 +630,57 @@ def run_gui() -> int:
             todo = [r for r in self.runs if r.get("stack") and not r.get("mark") and r.get("stage") != "complete"]
             if not todo:
                 self.logline("nothing to automate: every local, unmarked run is complete"); return
-            self.logline(f"automating {len(todo)} run(s); existing masks/regions are kept")
-            threading.Thread(target=self._run_all, args=(todo,), daemon=True).start()
+            n_par = max(1, min(self.workers.value(), len(todo)))
+            self.logline(f"automating {len(todo)} run(s), {n_par} at a time; "
+                         f"existing masks/regions are kept")
+            threading.Thread(target=self._run_all, args=(todo, n_par), daemon=True).start()
 
-        def _run_all(self, todo):
+        def _chain_one_run(self, r, am, ar):
+            """Run the automatic stages of one run until it needs the GUI or is done."""
+            base = r.get("behavior_base")
+            t0 = time.monotonic()
+            for _ in range(8):
+                fresh = [x for x in build_runs() if x.get("behavior_base") == base]
+                if not fresh:
+                    break
+                desc, argv, gui = next_command(fresh[0], auto_mask=am, auto_regions=ar)
+                if not argv or gui:
+                    break
+                if argv[1].endswith("coherence_with_behavior.py"):
+                    argv = argv + self.display_args()
+                if not self._exec(argv, desc, prefix=base):
+                    break
+            return base, time.monotonic() - t0
+
+        def _run_all(self, todo, n_par=1):
             self.busy = True
             try:
-                for i, r in enumerate(todo, 1):
-                    self.logline(f"=== [{i}/{len(todo)}] {r.get('behavior_base')}")
-                    for _ in range(8):
-                        fresh = [x for x in build_runs() if x.get("behavior_base") == r.get("behavior_base")]
-                        if not fresh:
-                            break
-                        desc, argv, gui = next_command(fresh[0], auto=self.full_auto.isChecked())
-                        self.chain_signal.emit(i, len(todo), f"{r.get('behavior_base')}: {desc}")
-                        if not argv or gui:
-                            break
-                        if argv[1].endswith("coherence_with_behavior.py"):
-                            argv = argv + self.display_args()
-                        if not self._exec(argv, desc):
-                            break
+                am = self.auto_mask.isChecked()
+                ar = self.auto_regions.isChecked()
+                done = 0
+                t0 = time.monotonic()
+                if n_par <= 1:
+                    for i, r in enumerate(todo, 1):
+                        self.logline(f"=== [{i}/{len(todo)}] {r.get('behavior_base')}")
+                        self.chain_signal.emit(i, len(todo), f"{r.get('behavior_base')}")
+                        base, dt = self._chain_one_run(r, am, ar)
+                        self.logline(f"=== {base}: {dt / 60:.1f} min")
+                else:
+                    # runs are independent: every stage writes only inside that run's
+                    # own folder, so they can be processed concurrently
+                    with cf.ThreadPoolExecutor(max_workers=n_par) as pool:
+                        futs = {pool.submit(self._chain_one_run, r, am, ar): r for r in todo}
+                        for fut in cf.as_completed(futs):
+                            done += 1
+                            try:
+                                base, dt = fut.result()
+                                self.logline(f"=== [{done}/{len(todo)}] {base}: {dt / 60:.1f} min")
+                            except Exception as exc:          # one run must not kill the batch
+                                base = futs[fut].get("behavior_base")
+                                self.logline(f"!! {base} failed: {exc}")
+                            self.chain_signal.emit(done, len(todo), f"{done}/{len(todo)} runs")
+                self.logline(f"=== {len(todo)} run(s) in {(time.monotonic() - t0) / 60:.1f} min "
+                             f"({n_par} at a time)")
                 self.logline("=== statistics (all cells)")
                 for a in self.stats_argv():
                     self._exec(a)
@@ -521,19 +693,21 @@ def run_gui() -> int:
             """Run automatic steps, optionally chaining until GUI/complete."""
             self.busy = True
             try:
+                am = self.auto_mask.isChecked()
+                ar = self.auto_regions.isChecked()
                 for step_i in range(8):
                     fresh = [x for x in build_runs()
                              if x.get("behavior_base") == r.get("behavior_base")]
                     if not fresh:
                         break
-                    desc, argv, gui = next_command(fresh[0], auto=self.full_auto.isChecked())
-                    # chain bar: stages left until the GUI step / completion
-                    stages = (["stack", "reference", "mask_reviewed", "segments_located"] if self.full_auto.isChecked()
+                    desc, argv, gui = next_command(fresh[0], auto_mask=am, auto_regions=ar)
+                    stages = (["stack", "reference", "mask_reviewed", "segments_located"] if (am and ar)
+                              else ["stack", "reference", "mask_reviewed"] if am
                               else ["stack", "reference", "auto_segmented"])
                     st = fresh[0].get("stage", ""); k = stages.index(st) if st in stages else 0
                     self.chain_signal.emit(k, len(stages), desc)
                     if argv and argv[1].endswith("coherence_with_behavior.py"):
-                        argv = argv + self.display_args()          # same options as the buttons
+                        argv = argv + self.display_args()
                     if not argv or gui:
                         self.logline(f"[{r.get('behavior_base')}] stopping: {desc}")
                         break
@@ -542,7 +716,6 @@ def run_gui() -> int:
                     if not self.chain.isChecked():
                         break
                 # the chain reached the end (figure built): make the ticked movies too.
-                # make_movies skips anything already up to date, so this is cheap to repeat.
                 fresh = [x for x in build_runs() if x.get("behavior_base") == r.get("behavior_base")]
                 kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
                 if fresh and fresh[0].get("stage") == "complete" and kinds and self.chain.isChecked():
@@ -573,10 +746,12 @@ def run_gui() -> int:
                 self.refresh_signal.emit()
                 QtCore.QTimer.singleShot(4000, lambda: self.chain_signal.emit(0, 0, ""))
 
-        def _exec(self, argv, step=None) -> bool:
+        def _exec(self, argv, step=None, prefix=None) -> bool:
             name = step or Path(argv[1]).stem.replace("_", " ")
-            self.logline("$ " + " ".join(argv))
-            self.progress_signal.emit(0, 0, name)                       # busy until the step reports
+            tag = f"[{prefix}] " if prefix else ""
+            self.logline(tag + "$ " + " ".join(argv))
+            self.progress_signal.emit(0, 0, f"{tag}{name}")
+            t0 = time.monotonic()
             p = subprocess.Popen(argv, cwd=str(ROOT), stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, text=True, bufsize=1)
             for line in p.stdout:
@@ -585,15 +760,76 @@ def run_gui() -> int:
                     try:
                         frac, _, label = line[11:].partition(" ")
                         done, total = (int(x) for x in frac.split("/"))
-                        self.progress_signal.emit(done, total, label or name)
+                        self.progress_signal.emit(done, total, f"{tag}{label or name}")
                     except ValueError:
                         pass
-                    continue                                            # keep the log readable
-                self.logline(line)
+                    continue
+                self.logline(tag + line)
             p.wait()
-            self.progress_signal.emit(1, 1, f"{name}: done" if p.returncode == 0 else f"{name}: FAILED")
-            self.logline(f"[exit {p.returncode}]")
+            dt = time.monotonic() - t0
+            self.progress_signal.emit(1, 1, f"{tag}{name}: done" if p.returncode == 0
+                                      else f"{tag}{name}: FAILED")
+            # per-stage wall time, so the slow stage is visible in the log
+            self.logline(f"{tag}[exit {p.returncode}, {dt:.0f} s]")
             return p.returncode == 0
+
+    # ---- FlowLayout: wraps widgets into multiple rows as the window narrows ----
+    class _FlowLayout(QtWidgets.QLayout):
+        """A simple flow layout that wraps widgets to the next row."""
+        def __init__(self, parent=None, spacing=6):
+            super().__init__(parent)
+            self._items = []
+            self._spacing = spacing
+
+        def addItem(self, item):
+            self._items.append(item)
+
+        def count(self):
+            return len(self._items)
+
+        def itemAt(self, index):
+            return self._items[index] if 0 <= index < len(self._items) else None
+
+        def takeAt(self, index):
+            return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+        def expandingDirections(self):
+            return QtCore.Qt.Orientations()
+
+        def hasHeightForWidth(self):
+            return True
+
+        def heightForWidth(self, width):
+            return self._doLayout(QtCore.QRect(0, 0, width, 0), test=True)
+
+        def setGeometry(self, rect):
+            super().setGeometry(rect)
+            self._doLayout(rect, test=False)
+
+        def sizeHint(self):
+            return self.minimumSize()
+
+        def minimumSize(self):
+            s = QtCore.QSize()
+            for item in self._items:
+                s = s.expandedTo(item.minimumSize())
+            m = self.contentsMargins()
+            return s + QtCore.QSize(m.left() + m.right(), m.top() + m.bottom())
+
+        def _doLayout(self, rect, test):
+            x, y = rect.x(), rect.y()
+            lineHeight = 0
+            sp = self._spacing
+            for item in self._items:
+                wid = item.widget()
+                sz = item.sizeHint()
+                nextX = x + sz.width() + sp
+                if nextX - sp > rect.right() and lineHeight > 0:
+                    x = rect.x(); y = y + lineHeight + sp; nextX = x + sz.width() + sp; lineHeight = 0
+                if not test:
+                    item.setGeometry(QtCore.QRect(QtCore.QPoint(x, y), sz))
+                x = nextX; lineHeight = max(lineHeight, sz.height())
+            return y + lineHeight - rect.y()
 
     app = QtWidgets.QApplication(sys.argv)
     panel = Panel()

@@ -12,34 +12,56 @@ wrap_segments_napari.py so the two GUIs look and behave the same.
 Buttons call the SAME functions as the key bindings, so nothing can drift apart.
 Toggle buttons show their on/off state. The panel is width-capped and scrollable so
 it can never crush the canvas (the failure mode we hit with the first review panel).
+
+Layout is compact (small fonts, tight spacing) so it fits a MacBook 1440x900 / 1728x1117
+screen with room for the napari canvas.
 """
 from __future__ import annotations
 
 
 class ActionPanel:
-    def __init__(self, viewer, title="actions", min_width=300, max_width=360):
+    def __init__(self, viewer, title="actions", min_width=280, max_width=340):
         from qtpy.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame)
         from qtpy.QtCore import Qt
         self._Qt = Qt
         self.viewer = viewer
         self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)   # wrap, never scroll sideways
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setMinimumWidth(min_width); self.scroll.setMaximumWidth(max_width)
-        self.w = QWidget(); self.lay = QVBoxLayout(self.w); self.lay.setSpacing(4)
+        self.w = QWidget(); self.lay = QVBoxLayout(self.w)
+        self.lay.setSpacing(2)
+        self.lay.setContentsMargins(4, 4, 4, 4)
         self.scroll.setWidget(self.w)
 
         self._hint = QLabel(""); self._hint.setWordWrap(True)
-        self._hint.setStyleSheet("font-weight: bold; color: #ffd166; padding: 4px;")
+        self._hint.setStyleSheet("font-weight: bold; color: #ffd166; padding: 2px 4px; font-size: 11px;")
         self.lay.addWidget(self._hint)
 
         self._status = QLabel(""); self._status.setWordWrap(True)
-        self._status.setStyleSheet("color: #cfd8dc; padding: 2px 4px;")
+        self._status.setStyleSheet("color: #cfd8dc; padding: 1px 4px; font-size: 11px;")
         self.lay.addWidget(self._status)
         line = QFrame(); line.setFrameShape(QFrame.HLine); self.lay.addWidget(line)
 
         self._toggles = {}
         self._stretch_added = False
         viewer.window.add_dock_widget(self.scroll, name=title, area="right")
+
+        # Size the napari window to the available screen on open
+        try:
+            from qtpy.QtWidgets import QApplication
+            screen = QApplication.primaryScreen()
+            if screen:
+                avail = screen.availableGeometry()
+                qw = viewer.window._qt_window
+                w = min(avail.width(), max(1200, int(avail.width() * 0.92)))
+                h = min(avail.height(), max(750, int(avail.height() * 0.92)))
+                qw.resize(w, h)
+                # Center on screen
+                x = avail.x() + (avail.width() - w) // 2
+                y = avail.y() + (avail.height() - h) // 2
+                qw.move(x, y)
+        except Exception:
+            pass
 
     # ---- text areas
     def hint(self, text):
@@ -52,13 +74,13 @@ class ActionPanel:
     def section(self, title):
         from qtpy.QtWidgets import QLabel
         lab = QLabel(title)
-        lab.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: bold; margin-top: 12px; "
-                          "padding: 3px 4px; border-bottom: 1px solid #5f6b73;")
+        lab.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold; margin-top: 8px; "
+                          "padding: 2px 4px; border-bottom: 1px solid #5f6b73;")
         self.lay.addWidget(lab)
 
     def note(self, text):
         from qtpy.QtWidgets import QLabel
-        lab = QLabel(text); lab.setWordWrap(True); lab.setStyleSheet("color: #b0bec5; font-size: 11px;")
+        lab = QLabel(text); lab.setWordWrap(True); lab.setStyleSheet("color: #b0bec5; font-size: 10px;")
         self.lay.addWidget(lab)
 
     def button(self, label, key=None, cb=None, toggle=False, tooltip=None):
@@ -67,8 +89,8 @@ class ActionPanel:
         from qtpy.QtWidgets import QPushButton
         text = f"{label}   [{key}]" if key else label
         b = QPushButton(text)
-        b.setStyleSheet("text-align: left; padding: 4px 6px;")
-        b.setFocusPolicy(self._Qt.NoFocus)        # never steal keyboard/scroll focus from the canvas
+        b.setStyleSheet("text-align: left; padding: 2px 5px; font-size: 11px;")
+        b.setFocusPolicy(self._Qt.NoFocus)
         if tooltip:
             b.setToolTip(tooltip)
         if cb is not None:
@@ -85,9 +107,11 @@ class ActionPanel:
     def slider(self, label, lo, hi, value, scale, cb, fmt="{:.2f}"):
         """Labeled horizontal slider; cb(float_value) on change. Returns (slider, label)."""
         from qtpy.QtWidgets import QLabel, QSlider
-        lab = QLabel(f"{label}: {fmt.format(value)}"); self.lay.addWidget(lab)
+        lab = QLabel(f"{label}: {fmt.format(value)}"); lab.setStyleSheet("font-size: 11px;")
+        self.lay.addWidget(lab)
         s = QSlider(self._Qt.Horizontal); s.setRange(int(lo), int(hi)); s.setValue(int(round(value * scale)))
-        s.setFocusPolicy(self._Qt.ClickFocus)     # focus only while dragging; wheel over canvas still zooms
+        s.setFocusPolicy(self._Qt.ClickFocus)
+        s.setFixedHeight(18)
         s.sliderReleased.connect(self.refocus_canvas)
         def on(v_i):
             val = v_i / scale; lab.setText(f"{label}: {fmt.format(val)}"); cb(val)
@@ -101,7 +125,7 @@ class ActionPanel:
             b.setText(f"{'● ' if state else '○ '}{label}   [{key}]")
 
     def refocus_canvas(self):
-        """Give keyboard + wheel focus back to the napari canvas (so scroll = zoom, keys work)."""
+        """Give keyboard + wheel focus back to the napari canvas."""
         try:
             self.viewer.window._qt_viewer.canvas.native.setFocus()
         except Exception:

@@ -1,0 +1,197 @@
+{
+  "cells": [
+    {
+      "id": 1,
+      "labels": {
+        "soma": 1,
+        "trunk": 2,
+        "branches": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ]
+      },
+      "n_voxels": 70579,
+      "temporal_r_to_others": {
+        "2": 0.645,
+        "3": 0.483
+      },
+      "anatomy_provisional": false,
+      "provisional_reasons": [],
+      "n_skeleton_voxels": 2593,
+      "max_radius_um": 4.0,
+      "n_branches": 7
+    },
+    {
+      "id": 2,
+      "labels": {
+        "soma": 11,
+        "trunk": 12,
+        "branches": [
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ]
+      },
+      "n_voxels": 1231,
+      "temporal_r_to_others": {
+        "1": 0.645,
+        "3": 0.434
+      },
+      "anatomy_provisional": true,
+      "provisional_reasons": [
+        "max radius small (1.20 um)"
+      ],
+      "n_skeleton_voxels": 127,
+      "max_radius_um": 1.2,
+      "n_branches": 7
+    },
+    {
+      "id": 3,
+      "labels": {
+        "soma": 21,
+        "trunk": 22,
+        "branches": [
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29
+        ]
+      },
+      "n_voxels": 3215,
+      "temporal_r_to_others": {
+        "1": 0.483,
+        "2": 0.434
+      },
+      "anatomy_provisional": false,
+      "provisional_reasons": [],
+      "n_skeleton_voxels": 114,
+      "max_radius_um": 2.4,
+      "n_branches": 7
+    }
+  ],
+  "params": {
+    "version": "1.0.0",
+    "created": "2026-09-28T20:34:52.386741+00:00",
+    "input": "/Users/daria/Desktop/femtonics-data/rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean.tif",
+    "input_shape_TZYX": [
+      1202,
+      19,
+      25,
+      504
+    ],
+    "voxel_zyx_um": [
+      0.8,
+      0.6,
+      0.6
+    ],
+    "mask_source": "denoised",
+    "computed_from": "run05_clean_denoised.tif",
+    "analysis_note": "mask geometry only; traces/events use the raw registered stack",
+    "thr": 0.8,
+    "k": 6,
+    "merge_r": 0.8,
+    "min_voxels": 60,
+    "sigma": 0.8,
+    "max_branches": 7,
+    "close_iter": 1,
+    "nmf_max_iter": 300,
+    "seed": 0,
+    "skan_available": false
+  },
+  "stats": {
+    "mask_voxels": 75025,
+    "mask_fraction": 0.31339,
+    "score_thr": 0.8,
+    "n_cells": 3,
+    "nmf": {
+      "n_vox": 75025,
+      "k_requested": 6,
+      "k_effective": 6,
+      "n_components_active": 5,
+      "n_cells": 3,
+      "merge_r": 0.8,
+      "single_component": false
+    },
+    "runtime_s": 14.93,
+    "peak_mem_mb": 5311.6,
+    "any_provisional_anatomy": true
+  },
+  "reviews": [
+    {
+      "tool": "trace_mask_napari",
+      "version": "0.1.0",
+      "created": "2026-10-04T18:49:43.338448+00:00",
+      "output": "run05_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 9707,
+      "n_arcs": 29,
+      "islands_removed": [],
+      "min_island_voxels": 20,
+      "arc_lengths_vox": [
+        273,
+        7,
+        10,
+        24,
+        111,
+        16,
+        12,
+        29,
+        17,
+        37,
+        37,
+        141,
+        131,
+        29,
+        38,
+        31,
+        33,
+        117,
+        172,
+        2,
+        4,
+        33,
+        43,
+        46,
+        38,
+        3,
+        25,
+        14,
+        17
+      ],
+      "voxel_zyx_um": [
+        0.8,
+        0.6,
+        0.6
+      ],
+      "params": {
+        "alpha": 0.5,
+        "radius_x": 1.5,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "manually_erased_voxels": 1511,
+        "manually_added_voxels": 0,
+        "other_cells": {
+          "alpha": 0.5,
+          "radius_x": 1.5,
+          "pad": 0,
+          "erased": 0,
+          "added": 0
+        },
+        "n_other_cell_arcs": 0
+      },
+      "label_convention": "cell 1, class 2 (structure) -> label 2; anatomy assigned later by wrap_segments"
+    }
+  ]
+}

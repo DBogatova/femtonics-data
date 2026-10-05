@@ -1,0 +1,176 @@
+{
+  "version": "0.5.0",
+  "date": "2026-10-05T13:45:13.495354+00:00",
+  "sklearn_version": "1.7.2",
+  "model_type": "HistGradientBoostingClassifier",
+  "method": "hybrid: v0.4_grow_confirmed(ML>0.4) UNION ML_confident(>0.8, in generous_grow)",
+  "n_training_cells": 11,
+  "training_cells": [
+    "rbp4_132_phpeb/06-08-2026/preprocessed/run03/run03_clean",
+    "rbp4_132_phpeb/06-08-2026/preprocessed/run04/run04_clean",
+    "rbp4_140_phpeb/06-18-2026/preprocessed/run03/run03_clean",
+    "rbp4_140_phpeb/06-18-2026/preprocessed/run04/run04_clean",
+    "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean",
+    "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean",
+    "rbp4_141_phpeb/06-17-2026/preprocessed/run06/run06_clean",
+    "rbp4_141_phpeb/06-25-2026/preprocessed/run07/run07_clean",
+    "rbp4_phpebach/06-26-2026/run04/run04_clean",
+    "rbp4_phpebach/06-26-2026/run05/run05_clean",
+    "rbp4_phpebach/06-26-2026/run07/run07_clean"
+  ],
+  "features": [
+    "anatomy_mean",
+    "activity_p995",
+    "neighbour_corr",
+    "cofire_mean",
+    "anatomy_sm",
+    "activity_sm",
+    "ncorr_sm",
+    "cofire_sm",
+    "anatomy_sm2",
+    "activity_sm2",
+    "ncorr_sm2",
+    "cofire_sm2",
+    "dist_trunk_um",
+    "rel_to_trunk",
+    "rel_to_col_max",
+    "col_rank",
+    "col_width_generous",
+    "edt_bright_um",
+    "z_signed_um",
+    "y_signed_um",
+    "chunk_phase",
+    "entry_alpha",
+    "cache_near_int",
+    "cache_radius_ratio",
+    "cache_geo_dist"
+  ],
+  "n_features": 25,
+  "hyperparams": {
+    "max_iter": 500,
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "min_samples_leaf": 20,
+    "max_leaf_nodes": 63,
+    "l2_regularization": 1.0,
+    "class_weight": "balanced"
+  },
+  "hybrid_thresholds": {
+    "confirm": 0.4,
+    "add": 0.8,
+    "note": "v0.4 grow voxels confirmed at ML>0.4, new voxels added at ML>0.8 within generous grow"
+  },
+  "loo_full_pipeline": [
+    {
+      "cell": "rbp4_132_phpeb/06-08-2026/preprocessed/run03",
+      "dice_v05": 0.8183105238319189,
+      "dice_v04": 0.6045624354184401,
+      "delta": 0.2137480884134788,
+      "P": 0.7564124934565073,
+      "R": 0.8912417763156062
+    },
+    {
+      "cell": "rbp4_132_phpeb/06-08-2026/preprocessed/run04",
+      "dice_v05": 0.7364606796591189,
+      "dice_v04": 0.6034988011721336,
+      "delta": 0.13296187848698526,
+      "P": 0.586217648892955,
+      "R": 0.9902554648404028
+    },
+    {
+      "cell": "rbp4_140_phpeb/06-18-2026/preprocessed/run03",
+      "dice_v05": 0.6959828856666908,
+      "dice_v04": 0.7609001406469091,
+      "delta": -0.06491725498021839,
+      "P": 0.5485885585809956,
+      "R": 0.9516793066086777
+    },
+    {
+      "cell": "rbp4_140_phpeb/06-18-2026/preprocessed/run04",
+      "dice_v05": 0.6042575019234926,
+      "dice_v04": 0.5508867667120667,
+      "delta": 0.05337073521142588,
+      "P": 0.5590887517796489,
+      "R": 0.657366071428388
+    },
+    {
+      "cell": "rbp4_140_phpeb/06-23-2026/preprocessed/run05",
+      "dice_v05": 0.6777686564246637,
+      "dice_v04": 0.7812186858805754,
+      "delta": -0.10345002945591175,
+      "P": 0.5461131409852245,
+      "R": 0.8930668589676631
+    },
+    {
+      "cell": "rbp4_140_phpeb/06-23-2026/preprocessed/run06",
+      "dice_v05": 0.7303584858360309,
+      "dice_v04": 0.8369212061332516,
+      "delta": -0.10656272029722069,
+      "P": 0.9474471544714831,
+      "R": 0.5942076279828434
+    },
+    {
+      "cell": "rbp4_141_phpeb/06-17-2026/preprocessed/run06",
+      "dice_v05": 0.7486521181000643,
+      "dice_v04": 0.7206000535761478,
+      "delta": 0.02805206452391651,
+      "P": 0.7630844382413183,
+      "R": 0.7347555854189929
+    },
+    {
+      "cell": "rbp4_141_phpeb/06-25-2026/preprocessed/run07",
+      "dice_v05": 0.6368928941701382,
+      "dice_v04": 0.5445301972313766,
+      "delta": 0.09236269693876153,
+      "P": 0.6522378307741502,
+      "R": 0.622253389434218
+    },
+    {
+      "cell": "rbp4_phpebach/06-26-2026/run04",
+      "dice_v05": 0.7871114768626456,
+      "dice_v04": 0.7504838263753973,
+      "delta": 0.03662765048724825,
+      "P": 0.8244264686380023,
+      "R": 0.7530281007751025
+    },
+    {
+      "cell": "rbp4_phpebach/06-26-2026/run05",
+      "dice_v05": 0.7905807892776996,
+      "dice_v04": 0.8177109865851241,
+      "delta": -0.027130197307424497,
+      "P": 0.8894240837695403,
+      "R": 0.711509465572063
+    },
+    {
+      "cell": "rbp4_phpebach/06-26-2026/run07",
+      "dice_v05": 0.6246102883865635,
+      "dice_v04": 0.5844676533187851,
+      "delta": 0.040142635067778376,
+      "P": 0.45864930605233517,
+      "R": 0.978778625954049
+    }
+  ],
+  "loo_v05_median_dice": 0.7303584858360309,
+  "loo_v05_min_dice": 0.6042575019234926,
+  "loo_v04_median_dice": 0.721,
+  "loo_v04_min_dice": 0.545,
+  "improvement": {
+    "median_dice": "+0.009 (0.730 vs 0.721)",
+    "min_dice": "+0.059 (0.604 vs 0.545)",
+    "better_on": "7/11 cells",
+    "biggest_gains": "132 run03 +0.214, 132 run04 +0.133, 141 run07 +0.092",
+    "note": "The biggest improvement is lifting the worst cells. Cells where v0.4 was already good (140 run06 Dice=0.837) lose slightly."
+  },
+  "model_size_mb": 1.1754322052001953,
+  "inference_time_s": "1-2 per cell",
+  "postprocess": [
+    "connectivity_to_trunk",
+    "fill_small_holes_lt_100",
+    "close_1x3x3",
+    "remove_islands_lt_20",
+    "cell_end_detection",
+    "soma_detection",
+    "intruder_detection",
+    "v0.4_width_cap_SKIPPED_when_ML"
+  ]
+}

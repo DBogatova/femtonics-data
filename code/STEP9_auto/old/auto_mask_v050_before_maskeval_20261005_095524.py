@@ -53,7 +53,7 @@ from STEP3_auto.trace_mask_napari import (
     owner_caches, load_json_safe, load_session, STRUCT_LABEL,
 )
 
-__version__ = "0.5.1"
+__version__ = "0.5.0"
 
 LOG_PATH: Path | None = None
 
@@ -75,14 +75,6 @@ _ML_THRESHOLD = 0.5  # loaded from card if available
 SOMA_K = 2.0
 SOMA_MIN_VOX = 50
 SOMA_MAX_COLS = 60
-
-# Lower bound for the soma-branch alpha (v0.5.1; was an implicit 0.08 clip).
-# Measured with code/STEP9_auto/mask_eval.py on 10 hand-curated cells: the
-# width-matching binary search hit the 0.08 clip on EVERY soma cell (6/6), giving
-# a ~1.5x over-wide halo (median fp_halo 3188 vox vs 242 far FPs).  Floor sweep
-# 0.08/0.30/0.40/0.50 -> median Dice 0.604/0.666/0.719/0.689.  Set 0.08 (CLI
-# --soma-alpha-floor 0.08) to reproduce v0.5.0 exactly.
-SOMA_ALPHA_FLOOR = 0.40
 
 # Width cap: no column should be wider than this multiple of the median trunk width.
 # Prevents runaway fat masks where the alpha is too low for a particular cell.
@@ -687,8 +679,8 @@ def _calibrate_alpha_v4(cache, voxel, rx=2.0):
                         hi = mid
                 alpha = (lo + hi) / 2
                 alpha = float(np.clip(alpha, 0.08, 0.30))
-                return max(alpha, SOMA_ALPHA_FLOOR), width_ratio, True
-        return max(0.15, SOMA_ALPHA_FLOOR), width_ratio, True  # soma fallback
+                return alpha, width_ratio, True
+        return 0.15, width_ratio, True  # soma fallback
     else:
         # No soma: max-curvature with floor 0.35
         alphas = np.arange(0.10, 0.60, 0.01)
@@ -1575,11 +1567,7 @@ def main():
     ap.add_argument("--out-dir", required=True, help="output directory")
     add_voxel_arg(ap)
     ap.add_argument("--debug", action="store_true")
-    ap.add_argument("--soma-alpha-floor", type=float, default=SOMA_ALPHA_FLOOR,
-                    help=f"minimum alpha for cells with a soma (default {SOMA_ALPHA_FLOOR}; "
-                         "0.08 = v0.5.0 behaviour)")
     args = ap.parse_args()
-    globals()["SOMA_ALPHA_FLOOR"] = float(args.soma_alpha_floor)
 
     global LOG_PATH
     LOG_PATH = _ROOT / "auto_pipeline" / "logs" / "masker.jsonl"

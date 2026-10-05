@@ -66,7 +66,7 @@ sys.path.insert(0, str(_CODE_ROOT / "code")); sys.path.insert(0, str(_CODE_ROOT 
 from common.voxel import resolve_voxel                        # noqa: E402
 from common.regions import apply_ignore, newest_input_mtime   # noqa: E402
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 
 def dff(t, f0_pct=10.0):
@@ -196,14 +196,48 @@ def behavior_state(run_dir: Path, base: str, T: int, rate_hz: float):
     return active, {"pupil_col": pup, "whisk_col": whi, "frac_active": float(active.mean())}
 
 
-def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0.2) -> dict | None:
+def independence_null(src_ev, ref_ev, T, window, n_shift=1000, min_shift=None, seed=0):
+    """Chance level for 'fraction of src events with NO ref event within +-window':
+    circularly shift the ref event train (keeps both event rates and ref's own timing
+    structure, breaks only their alignment). Returns (null_mean, p_obs_le_null) where p
+    is the one-sided probability, under the null, of an independent fraction at least as
+    LOW as observed (i.e. of coupling at least as strong)."""
+    src_ev = np.asarray(src_ev, int); ref_ev = np.asarray(ref_ev, int)
+    if len(src_ev) == 0 or len(ref_ev) == 0 or T < 4:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    min_shift = int(min_shift if min_shift is not None else max(window * 5, 1))
+    if T - 2 * min_shift < 1:
+        return float("nan"), float("nan")
+    shifts = rng.integers(min_shift, T - min_shift, size=n_shift)
+    def frac_indep(ref, circular=True):
+        d = np.abs(src_ev[:, None] - ref[None, :])
+        if circular:
+            d = np.minimum(d, T - d)
+        return float(np.mean(d.min(1) > window))
+    obs = frac_indep(ref_ev, circular=False)       # same definition as the reported metric
+    null = np.array([frac_indep((ref_ev + s) % T) for s in shifts])
+    return float(null.mean()), float((1 + np.sum(null <= obs)) / (1 + n_shift))
+
+
+def metrics_for_run(run: dict, root: Path, window_s: float = 0.4, prom_frac: float = 0.2) -> dict | None:
     run_dir = root / run["run_dir"]; stem = run["stem"]
     stack_p = run_dir / f"{stem}.tif"; seg_p = run_dir / f"{stem}_segments_final.tif"
     if not (stack_p.exists() and seg_p.exists()):
         return None
     voxel = resolve_voxel(stack_p, None, quiet=True)
     stack = tifffile.imread(stack_p); seg = tifffile.imread(seg_p)
-    T = stack.shape[0]; rate = float(run.get("frame_rate_hz") or 0) or T / 240.0
+    T = stack.shape[0]
+    # The run's own volume rate (1000/TStepInMs from the .mesc, via ranked_runs.csv).
+    # Never fall back to a guessed duration: rate-dependent metrics become NaN instead.
+    try:
+        rate = float(run.get("frame_rate_hz") or "nan")
+    except ValueError:
+        rate = float("nan")
+    rate_ok = np.isfinite(rate) and rate > 0
+    # coincidence window is defined in SECONDS so runs at 5 Hz and 18 Hz use the same
+    # physical window (a fixed 2-frame window was 0.11 s at 18.5 Hz but 0.41 s at 4.9 Hz)
+    window = max(1, int(round(window_s * rate))) if rate_ok else 2
     labels = sorted(int(v) for v in np.unique(seg) if v > 0)
     names = region_names(seg_p.with_suffix(".json"), labels)
     seg, ignored, _ign_labels = apply_ignore(seg, names, seg_p)      # <stem>_ignore.json
@@ -220,10 +254,12 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
         core[l] = dff(trace(er)) if er.sum() >= 20 else tr[l]
     by = {c: [l for l in labels if comp[l] == c] for c in ("soma", "trunk", "branch")}
     out = {"behavior_base": run.get("behavior_base") or f"{run['mouse']}_{run.get('munit', '?')}", "mouse": run["mouse"], "date": run["date"],
-           "rank": int(run.get("rank", 0)), "frame_rate_hz": rate, "T": int(T),
+           "rank": int(run.get("rank", 0)), "frame_rate_hz": rate if rate_ok else None, "T": int(T),
+           "duration_s": float(T / rate) if rate_ok else None,
            "imaging_quality": run.get("quality"), "n_regions": len(labels),
            "regions": {str(l): {"name": names[l], "compartment": comp[l], "voxels": int((seg == l).sum())} for l in labels},
-           "params": {"window_frames": window, "prom_frac": prom_frac, "version": __version__},
+           "params": {"window_s": window_s, "window_frames": window, "prom_frac": prom_frac, "version": __version__,
+                      "rate_source": "ranked_runs volume_rate_hz (1000/TStepInMs)" if rate_ok else "MISSING - rate metrics NaN"},
            "ignored_regions": ignored}
     # cells without a branch region still get the reference, distances, coupling by
     # distance and reference-trunk coupling; only the branch metrics are skipped (note).
@@ -279,10 +315,13 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
         return out
     # events
     ev = {l: events(tr[l], prom_frac) for l in labels}
-    minutes = T / rate / 60.0
+    minutes = T / rate / 60.0 if rate_ok else float("nan")
     for c in ("soma", "trunk", "branch"):
         if by[c]:
             out[f"rate_{c}_per_min"] = float(np.mean([len(ev[l]) for l in by[c]]) / minutes)
+    # events closer than min_dist frames are merged by find_peaks; min_dist is in frames,
+    # so it is recorded to keep the event definition auditable across frame rates
+    out["params"]["event_min_dist_frames"] = 5
     soma_ev = ev[s]; br_ev = np.unique(np.concatenate([ev[l] for l in branches])) if branches else np.array([], int)
     def near(a, b):
         return np.array([np.any(np.abs(b - x) <= window) for x in a], bool) if len(a) and len(b) else np.zeros(len(a), bool)
@@ -291,6 +330,13 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
     out["frac_branch_independent"] = float(1 - b_near_s.mean()) if len(br_ev) else np.nan
     out["frac_soma_independent"] = float(1 - s_near_b.mean()) if len(soma_ev) else np.nan
     out["frac_global"] = float(s_near_b.mean()) if len(soma_ev) else np.nan
+    # chance level: how many branch events would have no soma event nearby if the two
+    # event trains were unrelated (circular shift >= 20 s, or 5 windows if rate unknown)
+    ms = int(20 * rate) if rate_ok else None
+    nb, pb = independence_null(br_ev, soma_ev, T, window, min_shift=ms)
+    ns_, ps_ = independence_null(soma_ev, br_ev, T, window, min_shift=ms, seed=1)
+    out["frac_branch_independent_null"] = nb; out["p_branch_coupled_vs_chance"] = pb
+    out["frac_soma_independent_null"] = ns_; out["p_soma_coupled_vs_chance"] = ps_
     # who leads, among paired events
     firsts = []
     for x in soma_ev:
@@ -304,8 +350,9 @@ def metrics_for_run(run: dict, root: Path, window: int = 2, prom_frac: float = 0
     a = soma - soma.mean(); b = br_mean - br_mean.mean(); L = max(1, min(30, T - 1))
     xc = [np.dot(a[l:], b[:T - l]) if l >= 0 else np.dot(a[:T + l], b[-l:]) for l in range(-L, L + 1)]
     out["lag_soma_branch_frames"] = int(np.arange(-L, L + 1)[int(np.argmax(xc))])
-    # behavior state
-    active, binfo = behavior_state(run_dir, run["behavior_base"], T, rate)
+    out["lag_soma_branch_s"] = float(out["lag_soma_branch_frames"] / rate) if rate_ok else None
+    # behavior state (needs the true rate to put behavior on the imaging frame axis)
+    active, binfo = behavior_state(run_dir, run["behavior_base"], T, rate) if rate_ok else (None, None)
     if active is not None and 0.1 < active.mean() < 0.9:
         out["r_soma_branch_active"] = r(soma[active], br_mean[active])
         out["r_soma_branch_quiet"] = r(soma[~active], br_mean[~active])
@@ -321,7 +368,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--run"); g.add_argument("--all", action="store_true")
-    ap.add_argument("--window", type=int, default=2, help="frames: soma and branch events this close count as the same event")
+    ap.add_argument("--window-s", type=float, default=0.4,
+                    help="seconds: soma and branch events this close count as the same event (converted with each "
+                         "run's own volume rate; the old fixed 2 frames was 0.11-0.41 s depending on the run)")
     ap.add_argument("--prom-frac", type=float, default=0.2)
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args(argv)
@@ -343,7 +392,7 @@ def main(argv=None):
         if out_p.exists() and out_p.stat().st_mtime >= newest_input_mtime(seg_p) and not args.force:
             bb = r.get("behavior_base") or f"{r['mouse']}_{r.get('munit', '?')}"
             print(f"  {bb}: metrics up to date"); n += 1; continue
-        m = metrics_for_run(r, ROOT, args.window, args.prom_frac)
+        m = metrics_for_run(r, ROOT, args.window_s, args.prom_frac)
         if m is None:
             continue
         out_p.write_text(json.dumps(m, indent=2, default=float))

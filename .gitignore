@@ -54,6 +54,9 @@ __pycache__/
 stats/
 !code/**/*.md
 !USER_GUIDE.md
+# trained mask model (< 5 MB; needed to run auto_mask without retraining)
+!code/STEP9_auto/models/*.joblib
+!code/STEP9_auto/models/*.json
 !run_marks.csv
 !RECOVERY_4D.csv
 

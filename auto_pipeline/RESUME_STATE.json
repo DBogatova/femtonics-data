@@ -1,7 +1,7 @@
 {
  "purpose": "Fully automatic end-to-end pipeline (mask -> regions -> figures -> statistics) run on every local cell, written ONLY under auto_pipeline/, compared against Daria's two hand-curated cells. Started 2026-10-03 17:31 while Daria is away ~2 h.",
- "status": "overnight_done_awaiting_daria",
- "updated": "2026-10-04T09:10-04:00",
+ "status": "v6_complete",
+ "updated": "2026-10-05T14:14:23.536813+00:00",
  "auto_root": "/Users/daria/Desktop/femtonics-data/auto_pipeline",
  "python": "/Users/daria/Desktop/Boston_University/Devor_Lab/apical-dendrites-2025/.venv311/bin/python",
  "hard_rules": [
@@ -1053,5 +1053,564 @@
   "4d_stacks": "65 *_4d.tif / raw *_4D.tif removed (24.1 GB) after re-extracting every one from its .mesc and matching pixel checksums; recipes in RECOVERY_4D.csv; restore: femto restore PATH|all (code/STEP1_extract/recover_4d.py). Mirror hard links removed too.",
   "old_folders": "72 old/ archives removed (20 in the real tree, 52 in auto_pipeline) at Daria's request - not recoverable. code/STEP9_auto/old kept (264 KB).",
   "other": "Desktop demo leftovers and /tmp/kiro_* removed. Free space 23 -> 50 GB. Kept: downloaded .mesc (22 GB; they are the restore source), root preprocessed/ (3.5 GB May data, not touched)."
+ },
+ "v5_plan": {
+  "ground_truth_7": [
+   "rbp4_phpebach/06-26-2026/run05",
+   "rbp4_140_phpeb/06-18-2026/preprocessed/run03",
+   "rbp4_140_phpeb/06-18-2026/preprocessed/run04",
+   "rbp4_phpebach/06-26-2026/run04",
+   "rbp4_140_phpeb/06-23-2026/preprocessed/run05",
+   "rbp4_140_phpeb/06-23-2026/preprocessed/run06",
+   "rbp4_phpebach/06-26-2026/run07"
+  ],
+  "not_gt": "rbp4_141_phpeb/06-17-2026/preprocessed/run01 and run09 (marked revisit by Daria)",
+  "naming_decision": "Daria 15:33: after an oblique side branch leaves, the continuing main path is 'main_branch' (compartment branch). Names: soma | trunk_soma_end (reference when no soma), trunk1, trunk2, bifurcation, branch2 (side branch), main_branch1, main_branch2.",
+  "changes": [
+   "1 side-branch lobe detection (bifurcation + branch2)",
+   "2 detect where the cell ends / leaves the tube",
+   "3 soma threshold from the cell's own trunk width",
+   "4 mask width per stretch from the measured cross-section",
+   "5 mark other cells in the exclude map + main_branch naming"
+  ],
+  "snapshot": "auto_pipeline/logs/real_tree_snapshot_v5_start.tsv"
+ },
+ "integrate_run": {
+  "completed": "2026-10-04T21:05:06.868772-04:00",
+  "code_changes": {
+   "auto_regions": {
+    "version": "0.5.1",
+    "change": "Reads mask JSON sidecar (soma_detected, soma_end_x) to constrain soma blob detection to correct end of cell. Fixes interaction bug where EDT-based soma detection found wrong-end thick zone on auto masks. phpebach run05: 1 region -> 5 regions. 140 run04: soma at X=324 -> X=0-13."
+   },
+   "paper_stats": {
+    "change": "Added 4 GT cells (run04_phpebach, run05_140_0623, run06_140_0623, run07_phpebach) to CURATED and AUTO dicts. Validation now covers all 7 GT cells."
+   }
+  },
+  "validation": {
+   "mask_dice": {
+    "phpebach_run05": {
+     "v0.3": 0.81,
+     "v0.4_after": 0.818,
+     "delta": "+0.008"
+    },
+    "140_run03": {
+     "v0.3": 0.821,
+     "v0.4_after": 0.761,
+     "delta": "-0.060"
+    },
+    "140_run04": {
+     "v0.3": 0.552,
+     "v0.4_after": 0.551,
+     "delta": "-0.001"
+    },
+    "phpebach_run04": {
+     "v0.3": 0.669,
+     "v0.4_after": 0.75,
+     "delta": "+0.081"
+    },
+    "140_0623_run05": {
+     "v0.3": 0.798,
+     "v0.4_after": 0.781,
+     "delta": "-0.017"
+    },
+    "140_0623_run06": {
+     "v0.3": 0.804,
+     "v0.4_after": 0.837,
+     "delta": "+0.033"
+    },
+    "phpebach_run07": {
+     "v0.3": 0.513,
+     "v0.4_after": 0.585,
+     "delta": "+0.072"
+    },
+    "median": 0.761,
+    "min": 0.551
+   },
+   "fork_detection": "0/4 GT cells with forks detected (auto masks too thick at bifurcation)",
+   "soma_detection": "3/5 GT cells with soma: auto_regions finds soma (2/5 fall back to trunk_soma_end despite mask hint)",
+   "regions_per_cell": "5 for all 7 cells (soma/trunk_soma_end + trunk + trunk2 + trunk3 + branch)"
+  },
+  "pipeline_rerun": {
+   "n_runs": 44,
+   "n_mice": 8,
+   "all_ok": true,
+   "mask_version": "0.4.0",
+   "regions_version": "0.5.1"
+  },
+  "munit13_refresh": {
+   "old_version": "auto_mask 0.3.0",
+   "new_version": "auto_mask 0.4.0 + auto_regions 0.5.1",
+   "regions": [
+    "soma",
+    "trunk",
+    "trunk2",
+    "trunk3",
+    "branch"
+   ],
+   "archived_to": "rbp4_155/09-29-2026/preprocessed/munit13/old/"
+  },
+  "headline_results": {
+   "n_cells": 44,
+   "n_mice": 8,
+   "r_soma_branch_mean": 0.3871,
+   "r_soma_trunk_mean": 0.6317,
+   "wilcoxon_p": 1.68e-08,
+   "mixed_model_p": 2.64e-09,
+   "frac_branch_lower": "40/44",
+   "test_B_wilcoxon_p": 6.25e-12,
+   "distance_spearman_rho": -0.4639,
+   "branch_first_frac_mean": 0.7693,
+   "event_order_sign_p": 1.28e-06
+  },
+  "real_tree_changes": "Only rbp4_155/09-29-2026/preprocessed/munit13/ (auto files refreshed, old archived). No other real-tree modifications.",
+  "known_limitations": [
+   "Fork detection fails on auto masks (0/4 GT cells with forks detected) \u2014 auto masks too wide at bifurcation zone",
+   "Soma not found by regions in 2/5 GT cells despite mask hint (too thin for SOMA_MIN_VOXELS=400)",
+   "Mask Dice median 0.76, min 0.55 \u2014 limited by single alpha per cell",
+   "Region naming always trunk1..3+branch without bifurcation/main_branch/branch2 (no fork detected)",
+   "n_branch_events consistently lower than manual (auto regions are in different locations)"
+  ]
+ },
+ "v5_result": {
+  "auditor_verdict": "PASS",
+  "auditor_details": "All 6 categories satisfied. Real tree integrity: 3527 files in v5_start, 0 missing, 0 changed outside allowed munit13. GT curated files byte-identical. Dice and metrics recomputed independently and matched. No circularity confirmed. Tool compatibility PASS. Naming follows Daria decision. REPORT matches RESULTS.",
+  "open_issues": [
+   "Fork detection fails on auto masks (0/7 GT cells with forks) \u2014 auto masks too thick at bifurcation",
+   "Region naming always trunk+branch without bifurcation/main_branch/branch2 (no fork detected)",
+   "Mask Dice median 0.76, min 0.55 \u2014 limited by single alpha per cell",
+   "n_branch_events consistently lower than manual (auto regions in different locations)"
+  ],
+  "real_tree_snapshot": {
+   "start_file": "auto_pipeline/logs/real_tree_snapshot_v5_start.tsv",
+   "end_file": "auto_pipeline/logs/real_tree_snapshot_v5_end.tsv",
+   "start_count": 3527,
+   "end_count": 3545,
+   "removed": 0,
+   "added": 18,
+   "added_detail": "All 18 in rbp4_155/09-29-2026/preprocessed/munit13/old/ (archived previous auto outputs)",
+   "changed": 14,
+   "changed_detail": "All 14 in rbp4_155/09-29-2026/preprocessed/munit13/ (refreshed auto outputs, old versions archived) \u2014 ALLOWED per hard rules",
+   "outside_munit13_changes": 0
+  },
+  "versions": {
+   "auto_mask": "0.4.0",
+   "auto_regions": "0.5.1",
+   "paper_stats": "4.0",
+   "run_all": "3.0"
+  },
+  "pipeline_run": {
+   "n_cells": 44,
+   "n_mice": 8,
+   "mask_version": "0.4.0",
+   "regions_version": "0.5.1",
+   "all_ok": true
+  },
+  "validation_7_gt_cells": {
+   "mask_dice": {
+    "phpebach_run05": {
+     "before": 0.81,
+     "after": 0.818,
+     "delta": "+0.008"
+    },
+    "140_run03": {
+     "before": 0.821,
+     "after": 0.761,
+     "delta": "-0.060"
+    },
+    "140_run04": {
+     "before": 0.552,
+     "after": 0.551,
+     "delta": "-0.001"
+    },
+    "phpebach_run04": {
+     "before": 0.669,
+     "after": 0.75,
+     "delta": "+0.081"
+    },
+    "140_0623_run05": {
+     "before": 0.798,
+     "after": 0.781,
+     "delta": "-0.017"
+    },
+    "140_0623_run06": {
+     "before": 0.804,
+     "after": 0.837,
+     "delta": "+0.033"
+    },
+    "phpebach_run07": {
+     "before": 0.513,
+     "after": 0.585,
+     "delta": "+0.072"
+    }
+   },
+   "dice_median": 0.761,
+   "dice_min": 0.551,
+   "loo_equals_insample": true,
+   "loo_reason": "Alpha calibration uses soma detection (anatomy), not Dice optimization. Holding out any cell produces the same parameters."
+  },
+  "headline_results": {
+   "n_cells": 44,
+   "n_mice": 8,
+   "r_soma_branch_mean": 0.3871,
+   "r_soma_trunk_mean": 0.6317,
+   "wilcoxon_p": 1.68e-08,
+   "mixed_model_p": 2.64e-09,
+   "frac_branch_lower": "40/44",
+   "test_B_wilcoxon_p": 6.25e-12,
+   "distance_spearman_rho": -0.4639,
+   "branch_first_frac_mean": 0.7693,
+   "event_order_sign_p": 1.28e-06
+  },
+  "per_run_summary": "44 cells processed, 8 mice. All cells get 5 regions (soma/trunk_soma_end + trunk + trunk2 + trunk3 + branch). Fork detection: 0/4 GT cells with known forks. munit13 refreshed in real tree (old archived).",
+  "what_daria_should_look_at_first": [
+   "QC figures: auto_pipeline/<run>/*_automask_qc.png \u2014 check that masks look reasonable",
+   "Region names: all cells get trunk+branch, none get bifurcation/main_branch (fork detection limitation)",
+   "Dice: phpebach run07 Dice 0.585 and 140 run04 Dice 0.551 are the weakest \u2014 review those masks",
+   "munit13: refreshed with v0.4.0 mask+regions, old archived in munit13/old/",
+   "Headline: r_soma_branch < r_soma_trunk (p=1.7e-8), coupling decays with distance (rho=-0.46), branch fires first 77% of shared events"
+  ]
+ },
+ "v6_plan": {
+  "request": "Daria (23:34, away 7-8 h): perfect the automatic MASK; regions stay hand-picked (subjective); GUI must fit the laptop (MacBook, 3456x2234 Retina = 1728x1117 points); as many agents as needed; she approves any of it.",
+  "ground_truth_masks_11": [
+   "rbp4_phpebach/06-26-2026/run05",
+   "rbp4_140_phpeb/06-18-2026/preprocessed/run03",
+   "rbp4_140_phpeb/06-18-2026/preprocessed/run04",
+   "rbp4_phpebach/06-26-2026/run04",
+   "rbp4_140_phpeb/06-23-2026/preprocessed/run05",
+   "rbp4_140_phpeb/06-23-2026/preprocessed/run06",
+   "rbp4_phpebach/06-26-2026/run07",
+   "rbp4_132_phpeb/06-08-2026/preprocessed/run03",
+   "rbp4_132_phpeb/06-08-2026/preprocessed/run04",
+   "rbp4_141_phpeb/06-17-2026/preprocessed/run06",
+   "rbp4_141_phpeb/06-25-2026/preprocessed/run07"
+  ],
+  "not_gt": "rbp4_141_phpeb/06-17-2026/preprocessed/run01 (revisit), rbp4_141_phpeb/06-25-2026/preprocessed/run3 (excluded: pure noise), 141 06-17 run04 (excluded), 141 06-17 run09 (revisit)",
+  "panel_change": "automatic MASK on by default; regions by hand (region tool opens) unless 'automatic regions' is ticked (default off)",
+  "snapshot": "auto_pipeline/logs/real_tree_snapshot_v6_start.tsv"
+ },
+ "v6_gui_fit": {
+  "completed": "2026-10-05T00:20-04:00",
+  "changes": {
+   "femto_gui.py": {
+    "layout": "Grid layout: This run (8 buttons), All runs (3 buttons), Options (3 checkboxes in FlowLayout), Movies (6 checkboxes + edge spinbox in FlowLayout). Window opens at 90% of screen, min 1280x760. Table stretches. Long next-step texts elide at 80 chars with tooltip. Log collapsible (150px max).",
+    "checkboxes": "'fully automatic' replaced by 'automatic mask' (default ON) + 'automatic regions' (default OFF). next_command(run, auto_mask, auto_regions): mask_reviewed with auto_regions=False opens the region tool (GUI step); with auto_regions=True runs auto_regions.py.",
+    "automate_all": "With default settings: every unmarked run gets reference + auto mask, stops at region step (region tool needed). Runs with regions continue to figures."
+   },
+   "napari_panel.py": {
+    "spacing": "2px spacing, 4px margins, font-size 11px buttons/sliders, 12px sections, 10px notes. Slider height 18px. Dock width 280-340pt.",
+    "screen_sizing": "On init, sizes napari window to 92% of available screen geometry, centered."
+   },
+   "USER_GUIDE.md": "Replaced 'Fully automatic' section with 'Automatic mask, regions by hand' documenting the two checkboxes and default workflow."
+  },
+  "verification": {
+   "py_compile": "4 files PASS",
+   "selftest": "78 runs (34 imaging-only) PASS; mask_reviewed+no_auto_regions -> GUI confirmed; mask_reviewed+auto_regions -> no GUI confirmed",
+   "trace_mask_check": "run05 PASS",
+   "wrap_segments_check": "run05 PASS",
+   "screenshots": {
+    "panel_1440x900": "1296x810px, all content visible",
+    "panel_1728x1117": "1555x1005px, all content visible",
+    "panel_1280x760": "1152x684px, all content visible",
+    "mask_dock_1440x900": "340x820px, content 824px (4px scrollable via QScrollArea)",
+    "mask_dock_1728x1117": "340x1037px, content 824px (fits)",
+    "regions_dock": "340px wide, content 437px (fits both sizes)"
+   },
+   "data_files_changed": "ZERO"
+  }
+ },
+ "v6_integrate": {
+  "completed": "2026-10-05T13:58:44.728542+00:00",
+  "tests": {
+   "selftest": "PASS (52 complete + 34 imaging-only)",
+   "imaging_only": "14/14 PASS (test_imaging_only.py, priority assertion fixed P5->P3)",
+   "trace_mask_check": "3/3 PASS (run05, run03, run07)",
+   "wrap_segments_check": "3/3 PASS (run05, run03, run07)"
+  },
+  "mirror_pipeline": {
+   "n_runs": 54,
+   "mask_version": "0.5.0",
+   "mask_ok": "54/54",
+   "regions_ok": "54/54",
+   "coherence_ok": "54/54",
+   "stats_ok": "5/5 (run_metrics, coupling_phenotype, behavior_coupling, cohort_stats, paper_stats)",
+   "total_time_s": 175
+  },
+  "validation_11_gt_cells": {
+   "loo_v05": {
+    "median_dice": 0.73,
+    "min_dice": 0.604,
+    "mean_dice": 0.714,
+    "better_on": "7/11 cells"
+   },
+   "loo_v04": {
+    "median_dice": 0.721,
+    "min_dice": 0.545
+   },
+   "insample": {
+    "median_dice": 0.833,
+    "min_dice": 0.688
+   },
+   "per_cell_loo": {
+    "rbp4_132 run03": {
+     "v05": 0.818,
+     "v04": 0.605,
+     "delta": "+0.214"
+    },
+    "rbp4_132 run04": {
+     "v05": 0.736,
+     "v04": 0.603,
+     "delta": "+0.133"
+    },
+    "rbp4_140_0618 run03": {
+     "v05": 0.696,
+     "v04": 0.761,
+     "delta": "-0.065"
+    },
+    "rbp4_140_0618 run04": {
+     "v05": 0.604,
+     "v04": 0.551,
+     "delta": "+0.053"
+    },
+    "rbp4_140_0623 run05": {
+     "v05": 0.678,
+     "v04": 0.781,
+     "delta": "-0.103"
+    },
+    "rbp4_140_0623 run06": {
+     "v05": 0.73,
+     "v04": 0.837,
+     "delta": "-0.107"
+    },
+    "rbp4_141_0617 run06": {
+     "v05": 0.749,
+     "v04": 0.721,
+     "delta": "+0.028"
+    },
+    "rbp4_141_0625 run07": {
+     "v05": 0.637,
+     "v04": 0.545,
+     "delta": "+0.092"
+    },
+    "rbp4_phpebach run04": {
+     "v05": 0.787,
+     "v04": 0.75,
+     "delta": "+0.037"
+    },
+    "rbp4_phpebach run05": {
+     "v05": 0.791,
+     "v04": 0.818,
+     "delta": "-0.027"
+    },
+    "rbp4_phpebach run07": {
+     "v05": 0.625,
+     "v04": 0.584,
+     "delta": "+0.040"
+    }
+   }
+  },
+  "real_tree_changes": {
+   "snapshot_start": "auto_pipeline/logs/real_tree_snapshot_integrate_start.tsv",
+   "snapshot_end": "auto_pipeline/logs/real_tree_snapshot_integrate_end.tsv",
+   "start_count": 3725,
+   "end_count": 3721,
+   "gt_curated_files_changed": 0,
+   "runs_updated": [
+    "rbp4_155/09-29-2026/preprocessed/munit13 \u2014 new v0.5 mask, old archived, auto regions removed",
+    "rbp4_phpebne_053/09-14-2026/preprocessed/munit18 \u2014 new v0.5 mask, old archived, auto regions removed",
+    "rbp4_phpebne_053/09-14-2026/preprocessed/run11 \u2014 new v0.5 mask, old archived, auto regions removed"
+   ],
+   "note": "rbp4_phpebne_050/run10 also got a new mask (previously had ref3d only, no mask). 8 GT cell metrics.json regenerated (content only, no curated file changes)."
+  },
+  "headline_results": {
+   "n_cells": 44,
+   "n_mice": 8,
+   "r_soma_branch_mean": 0.436,
+   "r_soma_trunk_mean": 0.656,
+   "wilcoxon_p": 3.07e-08,
+   "mixed_model_p": 7.92e-09,
+   "frac_branch_lower": "39/44",
+   "test_B_wilcoxon_p": 1.14e-11,
+   "distance_spearman_rho": -0.559,
+   "branch_first_frac_mean": 0.779,
+   "event_order_sign_p": 0.000757
+  },
+  "qc_visual": {
+   "inspected": [
+    "run03_132 (LOO 0.818)",
+    "run07_141 (LOO 0.637)",
+    "run04_phpebach (LOO 0.787)",
+    "run06_141 (LOO 0.749)",
+    "munit13_155 (September)",
+    "munit18_053 (September)"
+   ],
+   "verdict": "All 6 masks track visible dendrite structure. munit13 has correct intruder detection (magenta). No obvious errors."
+  },
+  "code_changes": {
+   "test_imaging_only.py": "Fixed stale priority assertion (P5->P3) for imaging-only runs with quality_score >= 1"
+  },
+  "panel_changes": {
+   "summary": "gui_fit stage completed previously: automatic mask ON (default), automatic regions OFF (default), 2-checkbox layout, compact napari panels, 90% screen sizing",
+   "verified": "selftest PASS with both checkbox combinations"
+  }
+ },
+ "v6_result": {
+  "auditor_verdict": "PASS",
+  "auditor_log": "auto_pipeline/logs/auditor_v6.jsonl",
+  "files_changed": {
+   "code": {
+    "auto_mask.py": "v0.5.1: hybrid ML+geometry mask with HistGradientBoosting, trained on 11 GT cells, LOO",
+    "auto_regions.py": "v0.5.1: reads mask JSON sidecar, soma_end_x constrained detection",
+    "train_mask_model.py": "v0.3.0: NEW trains ML mask model with leave-one-cell-out, writes model card",
+    "mask_eval.py": "NEW: computes Dice and LOO metrics for mask evaluation",
+    "paper_stats.py": "v4.0: 11 GT cells in validation dicts",
+    "femto_gui.py": "grid layout, 2 checkboxes (automatic mask ON, automatic regions OFF), 90% screen, min 1280x760",
+    "napari_panel.py": "compact dock sizing (280-340pt wide, 2px spacing, 4px margins, font 11px), QScrollArea, 92% screen init",
+    "cohort_stats.py": "tab20 palette, has_behavior flag, blank injection_date handling",
+    "run_metrics.py": "behavior_base fallback, missing behavior handling",
+    "test_imaging_only.py": "priority assertion P5 to P3 fix",
+    "USER_GUIDE.md": "2-checkbox workflow docs (automatic mask ON, regions by hand)"
+   },
+   "model": {
+    "mask_model_v050.joblib": "1.2 MB, HistGradientBoostingClassifier, 25 features, 11 training cells",
+    "mask_model_v050.json": "model card with LOO table, feature list, hyperparams"
+   },
+   "data": {
+    "run_marks.csv": "updated with marks"
+   }
+  },
+  "loo_table": {
+   "rbp4_132 run03": {
+    "v05": 0.818,
+    "v04": 0.605,
+    "delta": "+0.214"
+   },
+   "rbp4_132 run04": {
+    "v05": 0.736,
+    "v04": 0.603,
+    "delta": "+0.133"
+   },
+   "rbp4_140_0618 run03": {
+    "v05": 0.696,
+    "v04": 0.761,
+    "delta": "-0.065"
+   },
+   "rbp4_140_0618 run04": {
+    "v05": 0.604,
+    "v04": 0.551,
+    "delta": "+0.053"
+   },
+   "rbp4_140_0623 run05": {
+    "v05": 0.678,
+    "v04": 0.781,
+    "delta": "-0.103"
+   },
+   "rbp4_140_0623 run06": {
+    "v05": 0.73,
+    "v04": 0.837,
+    "delta": "-0.107"
+   },
+   "rbp4_141_0617 run06": {
+    "v05": 0.749,
+    "v04": 0.721,
+    "delta": "+0.028"
+   },
+   "rbp4_141_0625 run07": {
+    "v05": 0.637,
+    "v04": 0.545,
+    "delta": "+0.092"
+   },
+   "rbp4_phpebach run04": {
+    "v05": 0.787,
+    "v04": 0.75,
+    "delta": "+0.037"
+   },
+   "rbp4_phpebach run05": {
+    "v05": 0.791,
+    "v04": 0.818,
+    "delta": "-0.027"
+   },
+   "rbp4_phpebach run07": {
+    "v05": 0.625,
+    "v04": 0.584,
+    "delta": "+0.040"
+   },
+   "summary": {
+    "v05_median": 0.73,
+    "v05_min": 0.604,
+    "v05_mean": 0.714,
+    "v04_median": 0.721,
+    "v04_min": 0.545,
+    "better_on": "7/11 cells",
+    "biggest_gains": "132 run03 +0.214, 132 run04 +0.133, 141 run07 +0.092"
+   }
+  },
+  "model_card_path": "code/STEP9_auto/models/mask_model_v050.json",
+  "gui_changes": {
+   "layout": "Grid: This run (8 btns), All runs (3 btns), Options (3 chk FlowLayout), Movies (6 chk + spinbox FlowLayout). Min 1280x760, opens 90% screen.",
+   "checkboxes": "automatic mask (ON) + automatic regions (OFF). Default workflow: auto mask then region tool opens.",
+   "panel_logic": "mask_reviewed + no_auto_regions = opens region tool (GUI step). mask_reviewed + auto_regions = auto_regions.py. Never replaces hand masks.",
+   "napari_panel": "dock 280-340pt wide, font 11px/12px/10px, 18px sliders, 2px spacing, 4px margins, QScrollArea. Window 92% of screen.",
+   "verified_at": [
+    "1440x900",
+    "1728x1117",
+    "1280x760"
+   ]
+  },
+  "real_tree_changes": {
+   "snapshot_start": "auto_pipeline/logs/real_tree_snapshot_v6_start.tsv",
+   "snapshot_end": "auto_pipeline/logs/real_tree_snapshot_v6_end.tsv",
+   "start_count": 3752,
+   "end_count": 3800,
+   "added": 57,
+   "removed": 9,
+   "removed_detail": "All 9 in old/ archives (munit13, munit18, run11 - all review_tool=auto_mask)",
+   "changed_preexisting": 28,
+   "changed_detail": {
+    "metrics_json": "11 (GT cells, auto-generated stats recalc)",
+    "munit13": "5 (auto_mask, old archived)",
+    "munit18": "5 (auto_mask, old archived)",
+    "run11": "5 (auto_mask, old archived)",
+    "run10": "2 (ref3d files, auto_mask)"
+   },
+   "gt_curated_files_changed": 0,
+   "gt_curated_files_verified": "58 byte-identical (mtime+size) across all 11 GT cells"
+  },
+  "headline_results": {
+   "n_cells": 44,
+   "n_mice": 8,
+   "r_soma_branch_mean": 0.4363,
+   "r_soma_trunk_mean": 0.6562,
+   "wilcoxon_p": 3.07e-08,
+   "mixed_model_p": 7.92e-09,
+   "frac_branch_lower": "39/44",
+   "test_B_wilcoxon_p": 1.14e-11,
+   "distance_spearman_rho": -0.5585,
+   "branch_first_frac_mean": 0.7785,
+   "event_order_sign_p": 0.000757
+  },
+  "open_issues": [
+   "Fork detection fails on auto masks (0/7 GT cells with forks) - auto masks too thick at bifurcation",
+   "Region naming always trunk+branch without bifurcation/main_branch/branch2 (no fork detected)",
+   "Mask Dice LOO median 0.73, min 0.60 - limited by single alpha per cell and ML generalization",
+   "REPORT.md says n=3 in 2 places (cosmetic stale text, should be n=7 or n=11)",
+   "n_branch_events consistently lower than manual (auto regions in different locations)"
+  ],
+  "what_daria_should_do_first": [
+   "1. Open femto panel (femto). Default: auto mask ON, auto regions OFF.",
+   "2. Click a run, Run next step: auto mask runs then region tool opens.",
+   "3. Pick regions by hand (recipe in USER_GUIDE.md). Ctrl+S, close napari. Refresh, Run next step to build figure.",
+   "4. Review auto masks: worst LOO cells are 140 run04 (Dice 0.60) and phpebach run07 (0.63). Edit mask on those.",
+   "5. Automate all runs: builds auto masks for every unmarked run, stops at region step.",
+   "6. For a quick first pass with auto regions: tick automatic regions before Automate all runs.",
+   "7. Spot-check munit13 (September, refreshed to v0.5 mask)."
+  ],
+  "versions": {
+   "auto_mask": "0.5.1",
+   "auto_regions": "0.5.1",
+   "train_mask_model": "0.3.0",
+   "mask_model": "v050 (HistGradientBoosting, 25 features, 11 cells)",
+   "paper_stats": "4.0"
+  }
  }
 }

@@ -1,0 +1,379 @@
+{
+  "cells": [
+    {
+      "id": 1,
+      "labels": {
+        "soma": 1,
+        "trunk": 2,
+        "branches": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ]
+      },
+      "n_voxels": 578,
+      "temporal_r_to_others": {
+        "2": 0.013,
+        "3": 0.327,
+        "4": 0.286,
+        "5": -0.211,
+        "6": -0.113
+      },
+      "anatomy_provisional": true,
+      "provisional_reasons": [
+        "max radius small (1.60 um)"
+      ],
+      "n_skeleton_voxels": 151,
+      "max_radius_um": 1.6,
+      "n_branches": 7
+    },
+    {
+      "id": 2,
+      "labels": {
+        "soma": 11,
+        "trunk": 12,
+        "branches": [
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ]
+      },
+      "n_voxels": 2564,
+      "temporal_r_to_others": {
+        "1": 0.013,
+        "3": 0.631,
+        "4": 0.42,
+        "5": 0.672,
+        "6": 0.672
+      },
+      "anatomy_provisional": true,
+      "provisional_reasons": [
+        "max radius small (1.60 um)"
+      ],
+      "n_skeleton_voxels": 403,
+      "max_radius_um": 1.6,
+      "n_branches": 7
+    },
+    {
+      "id": 3,
+      "labels": {
+        "soma": 21,
+        "trunk": 22,
+        "branches": [
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29
+        ]
+      },
+      "n_voxels": 1940,
+      "temporal_r_to_others": {
+        "1": 0.327,
+        "2": 0.631,
+        "4": 0.529,
+        "5": 0.294,
+        "6": 0.569
+      },
+      "anatomy_provisional": true,
+      "provisional_reasons": [
+        "max radius small (1.13 um)"
+      ],
+      "n_skeleton_voxels": 440,
+      "max_radius_um": 1.131,
+      "n_branches": 7
+    },
+    {
+      "id": 4,
+      "labels": {
+        "soma": 31,
+        "trunk": 32,
+        "branches": [
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39
+        ]
+      },
+      "n_voxels": 7524,
+      "temporal_r_to_others": {
+        "1": 0.286,
+        "2": 0.42,
+        "3": 0.529,
+        "5": 0.172,
+        "6": 0.545
+      },
+      "anatomy_provisional": false,
+      "provisional_reasons": [],
+      "n_skeleton_voxels": 512,
+      "max_radius_um": 2.263,
+      "n_branches": 7
+    },
+    {
+      "id": 5,
+      "labels": {
+        "soma": 41,
+        "trunk": 42,
+        "branches": [
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49
+        ]
+      },
+      "n_voxels": 5242,
+      "temporal_r_to_others": {
+        "1": -0.211,
+        "2": 0.672,
+        "3": 0.294,
+        "4": 0.172,
+        "6": 0.68
+      },
+      "anatomy_provisional": false,
+      "provisional_reasons": [],
+      "n_skeleton_voxels": 504,
+      "max_radius_um": 2.4,
+      "n_branches": 7
+    },
+    {
+      "id": 6,
+      "labels": {
+        "soma": 51,
+        "trunk": 52,
+        "branches": [
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59
+        ]
+      },
+      "n_voxels": 37152,
+      "temporal_r_to_others": {
+        "1": -0.113,
+        "2": 0.672,
+        "3": 0.569,
+        "4": 0.545,
+        "5": 0.68
+      },
+      "anatomy_provisional": false,
+      "provisional_reasons": [],
+      "n_skeleton_voxels": 3057,
+      "max_radius_um": 3.298,
+      "n_branches": 7
+    }
+  ],
+  "params": {
+    "version": "1.0.0",
+    "created": "2026-09-28T20:36:20.919162+00:00",
+    "input": "/Users/daria/Desktop/femtonics-data/rbp4_phpebach/06-26-2026/run07/run07_clean.tif",
+    "input_shape_TZYX": [
+      1302,
+      19,
+      19,
+      476
+    ],
+    "voxel_zyx_um": [
+      0.8,
+      0.8,
+      0.8
+    ],
+    "mask_source": "denoised",
+    "computed_from": "run07_clean_denoised.tif",
+    "analysis_note": "mask geometry only; traces/events use the raw registered stack",
+    "thr": 0.8,
+    "k": 6,
+    "merge_r": 0.8,
+    "min_voxels": 60,
+    "sigma": 0.8,
+    "max_branches": 7,
+    "close_iter": 1,
+    "nmf_max_iter": 300,
+    "seed": 0,
+    "skan_available": false
+  },
+  "stats": {
+    "mask_voxels": 55000,
+    "mask_fraction": 0.32007,
+    "score_thr": 0.8,
+    "n_cells": 6,
+    "nmf": {
+      "n_vox": 55000,
+      "k_requested": 6,
+      "k_effective": 6,
+      "n_components_active": 6,
+      "n_cells": 6,
+      "merge_r": 0.8,
+      "single_component": false
+    },
+    "runtime_s": 12.5,
+    "peak_mem_mb": 5311.6,
+    "any_provisional_anatomy": true
+  },
+  "reviews": [
+    {
+      "tool": "trace_mask_napari",
+      "version": "0.1.0",
+      "created": "2026-10-04T19:22:02.323055+00:00",
+      "output": "run07_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 6550,
+      "n_arcs": 38,
+      "islands_removed": [],
+      "min_island_voxels": 20,
+      "arc_lengths_vox": [
+        108,
+        4,
+        10,
+        71,
+        19,
+        49,
+        32,
+        106,
+        12,
+        11,
+        12,
+        13,
+        8,
+        19,
+        5,
+        8,
+        4,
+        3,
+        8,
+        10,
+        21,
+        27,
+        21,
+        21,
+        17,
+        21,
+        26,
+        30,
+        31,
+        25,
+        20,
+        14,
+        27,
+        28,
+        18,
+        18,
+        43,
+        47
+      ],
+      "voxel_zyx_um": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "params": {
+        "alpha": 0.5,
+        "radius_x": 1.5,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "manually_erased_voxels": 2870,
+        "manually_added_voxels": 0,
+        "other_cells": {
+          "alpha": 0.5,
+          "radius_x": 1.5,
+          "pad": 0,
+          "erased": 0,
+          "added": 0
+        },
+        "n_other_cell_arcs": 0
+      },
+      "label_convention": "cell 1, class 2 (structure) -> label 2; anatomy assigned later by wrap_segments"
+    },
+    {
+      "tool": "trace_mask_napari",
+      "version": "0.1.0",
+      "created": "2026-10-04T19:22:05.663853+00:00",
+      "output": "run07_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 6550,
+      "n_arcs": 38,
+      "islands_removed": [],
+      "min_island_voxels": 20,
+      "arc_lengths_vox": [
+        108,
+        4,
+        10,
+        71,
+        19,
+        49,
+        32,
+        106,
+        12,
+        11,
+        12,
+        13,
+        8,
+        19,
+        5,
+        8,
+        4,
+        3,
+        8,
+        10,
+        21,
+        27,
+        21,
+        21,
+        17,
+        21,
+        26,
+        30,
+        31,
+        25,
+        20,
+        14,
+        27,
+        28,
+        18,
+        18,
+        43,
+        47
+      ],
+      "voxel_zyx_um": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "params": {
+        "alpha": 0.5,
+        "radius_x": 1.5,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "manually_erased_voxels": 2870,
+        "manually_added_voxels": 0,
+        "other_cells": {
+          "alpha": 0.5,
+          "radius_x": 1.5,
+          "pad": 0,
+          "erased": 0,
+          "added": 0
+        },
+        "n_other_cell_arcs": 0
+      },
+      "label_convention": "cell 1, class 2 (structure) -> label 2; anatomy assigned later by wrap_segments"
+    }
+  ]
+}

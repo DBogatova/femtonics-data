@@ -53,36 +53,22 @@ from STEP3_auto.trace_mask_napari import (
     owner_caches, load_json_safe, load_session, STRUCT_LABEL,
 )
 
-__version__ = "0.5.1"
+__version__ = "0.4.0"
 
 LOG_PATH: Path | None = None
 
 # ─── Alpha calibration ───────────────────────────────────────────────────────
-# v0.4 alpha calibration is the fallback when no ML model is available.
+# Single alpha validated on 7 GT cells (LOO). Maximizes median Dice and minimum
+# Dice simultaneously. The optimal alpha per cell varies from 0.07 to 0.51 —
+# no auto-measurable feature predicts this well enough (r < 0.85 under LOO) —
+# so a fixed alpha is the most honest approach: same parameters for every cell.
 DEFAULT_ALPHA = 0.36
 DEFAULT_RX = 2.0
-
-# ─── ML model ────────────────────────────────────────────────────────────────
-# v0.5 uses a learned voxel classifier trained on 11 hand-curated cells.
-# The model is loaded once and predicts which voxels within the generous grow
-# belong to the dendrite.  LOO Dice: median ~0.85, no cell < 0.75 (target).
-_MODEL_DIR = Path(__file__).resolve().parent / "models"
-_MODEL_PATH = _MODEL_DIR / "mask_model_v050.joblib"
-_MODEL_CARD = _MODEL_DIR / "mask_model_v050.json"
-_ML_THRESHOLD = 0.5  # loaded from card if available
 
 # Soma detection: k * median_trunk_cross_section is the soma threshold
 SOMA_K = 2.0
 SOMA_MIN_VOX = 50
 SOMA_MAX_COLS = 60
-
-# Lower bound for the soma-branch alpha (v0.5.1; was an implicit 0.08 clip).
-# Measured with code/STEP9_auto/mask_eval.py on 10 hand-curated cells: the
-# width-matching binary search hit the 0.08 clip on EVERY soma cell (6/6), giving
-# a ~1.5x over-wide halo (median fp_halo 3188 vox vs 242 far FPs).  Floor sweep
-# 0.08/0.30/0.40/0.50 -> median Dice 0.604/0.666/0.719/0.689.  Set 0.08 (CLI
-# --soma-alpha-floor 0.08) to reproduce v0.5.0 exactly.
-SOMA_ALPHA_FLOOR = 0.40
 
 # Width cap: no column should be wider than this multiple of the median trunk width.
 # Prevents runaway fat masks where the alpha is too low for a particular cell.
@@ -113,245 +99,6 @@ def _log(stage: str, what: str, result: str):
 def _project_root() -> Path:
     fr = os.environ.get("FEMTO_ROOT")
     return Path(fr).resolve() if fr else _ROOT
-
-
-# ─── ML model loading + feature extraction ───────────────────────────────────
-
-_CANONICAL_CHANNELS = ["anatomy_mean", "activity_p99.5", "neighbour_corr", "cofire_mean"]
-
-# Feature names must match train_mask_model.py FEATURE_NAMES exactly.
-_ML_FEATURE_NAMES = [
-    "anatomy_mean", "activity_p995", "neighbour_corr", "cofire_mean",
-    "anatomy_sm", "activity_sm", "ncorr_sm", "cofire_sm",
-    "anatomy_sm2", "activity_sm2", "ncorr_sm2", "cofire_sm2",
-    "dist_trunk_um", "rel_to_trunk", "rel_to_col_max", "col_rank",
-    "col_width_generous", "edt_bright_um",
-    "z_signed_um", "y_signed_um", "chunk_phase",
-    "entry_alpha", "cache_near_int", "cache_radius_ratio", "cache_geo_dist",
-]
-_NUM_ML_FEATURES = len(_ML_FEATURE_NAMES)
-
-
-def _load_ml_model():
-    """Load the ML mask model. Returns (clf, threshold, card) or None."""
-    if not _MODEL_PATH.exists():
-        return None
-    try:
-        import joblib
-        clf = joblib.load(str(_MODEL_PATH))
-        card = {}
-        if _MODEL_CARD.exists():
-            card = json.load(open(_MODEL_CARD))
-        thr = card.get("threshold", card.get("deploy_threshold", 0.5))
-        return clf, thr, card
-    except Exception as e:
-        print(f"[auto_mask] WARNING: could not load ML model: {e}")
-        return None
-
-
-def _normalize_per_chunk_ml(vol: np.ndarray, period: int) -> np.ndarray:
-    """Normalize a 3D volume per drift chunk along X."""
-    Z, Y, X = vol.shape
-    out = np.zeros_like(vol, dtype=np.float64)
-    for c_start in range(0, X, period):
-        c_end = min(c_start + period, X)
-        chunk = vol[:, :, c_start:c_end].astype(np.float64)
-        p2, p98 = np.percentile(chunk, [2, 98])
-        scale = max(p98 - p2, 1e-6)
-        out[:, :, c_start:c_end] = (vol[:, :, c_start:c_end].astype(np.float64) - p2) / scale
-    return np.clip(out, 0, None)
-
-
-def _extract_ml_features(ref_all: np.ndarray, ch_names: list, ref: np.ndarray,
-                         trunk_path: np.ndarray, arcs: list,
-                         cache, m_generous: np.ndarray,
-                         period: int, voxel: tuple) -> tuple[np.ndarray, np.ndarray]:
-    """Extract per-voxel features within the generous grow region.
-    Returns (features array [N_candidate, N_features], candidate_indices [N_candidate])."""
-    Z = ref_all.shape[0]
-    C = ref_all.shape[1]
-    Y = ref_all.shape[2]
-    X = ref_all.shape[3]
-
-    # Normalize channels per chunk
-    ch_norm = {}
-    for i, name in enumerate(ch_names):
-        vol = ref_all[:, i]
-        if name == "neighbour_corr":
-            ch_norm[name] = ndi.gaussian_filter(vol.astype(np.float64), sigma=(0.3, 0.5, 0.5))
-        else:
-            ch_norm[name] = _normalize_per_chunk_ml(vol, period)
-    for cn in _CANONICAL_CHANNELS:
-        if cn not in ch_norm:
-            ch_norm[cn] = np.zeros((Z, Y, X), dtype=np.float64)
-
-    # Entry alpha map from cache
-    entry_alpha_map = np.ones((Z, Y, X), dtype=np.float32)
-    if cache is not None:
-        ni = cache["near_int"]
-        sm = cache["smooth"]
-        with np.errstate(divide='ignore', invalid='ignore'):
-            entry = np.where(ni > 0, sm / ni, 1.0)
-        entry_alpha_map = np.clip(entry, 0, 1).astype(np.float32)
-
-    # Smooth reference for cross-section features
-    smooth = ndi.gaussian_filter(ref.astype(np.float64), sigma=(0.5, 0.8, 0.8))
-
-    # Trunk distance
-    trunk_vol = np.zeros((Z, Y, X), dtype=bool)
-    for pt in trunk_path:
-        z, y, x = int(pt[0]), int(pt[1]), int(pt[2])
-        if 0 <= z < Z and 0 <= y < Y and 0 <= x < X:
-            trunk_vol[z, y, x] = True
-    trunk_dilated = ndi.binary_dilation(trunk_vol, iterations=1)
-    edt_trunk = ndi.distance_transform_edt(~trunk_dilated, sampling=voxel)
-
-    # Build feature volume
-    features = np.zeros((Z, Y, X, _NUM_ML_FEATURES), dtype=np.float32)
-
-    # Raw channels (0-3)
-    for i, cn in enumerate(_CANONICAL_CHANNELS):
-        features[:, :, :, i] = ch_norm[cn]
-    # Smoothed sigma=(1,1.5,1.5) (4-7)
-    for i, cn in enumerate(_CANONICAL_CHANNELS):
-        features[:, :, :, 4 + i] = ndi.gaussian_filter(ch_norm[cn], sigma=(1, 1.5, 1.5))
-    # Large-scale smoothed sigma=(2,3,3) (8-11)
-    for i, cn in enumerate(_CANONICAL_CHANNELS):
-        features[:, :, :, 8 + i] = ndi.gaussian_filter(ch_norm[cn], sigma=(2, 3, 3))
-
-    # dist_trunk_um (12)
-    features[:, :, :, 12] = np.clip(edt_trunk, 0, 30.0)
-
-    # rel_to_trunk (13)
-    for x in range(X):
-        tz, ty = int(trunk_path[x, 0]), int(trunk_path[x, 1])
-        z_lo, z_hi = max(0, tz - 1), min(Z, tz + 2)
-        y_lo, y_hi = max(0, ty - 1), min(Y, ty + 2)
-        tp = smooth[z_lo:z_hi, y_lo:y_hi, x].max()
-        if tp > 1e-6:
-            features[:, :, x, 13] = smooth[:, :, x] / tp
-
-    # rel_to_col_max (14)
-    for x in range(X):
-        cm = smooth[:, :, x].max()
-        if cm > 1e-6:
-            features[:, :, x, 14] = smooth[:, :, x] / cm
-
-    # col_rank (15)
-    for x in range(X):
-        col = smooth[:, :, x].ravel()
-        ranks = np.argsort(np.argsort(col)).astype(np.float32)
-        ranks /= max(len(col) - 1, 1)
-        features[:, :, x, 15] = ranks.reshape(Z, Y)
-
-    # col_width_generous (16)
-    col_w = m_generous.sum(axis=(0, 1)).astype(np.float32)
-    features[:, :, :, 16] = col_w[np.newaxis, np.newaxis, :]
-
-    # edt_bright_um (17)
-    bright_thresh = np.percentile(smooth, 60)
-    edt_bright = ndi.distance_transform_edt(smooth > bright_thresh, sampling=voxel)
-    features[:, :, :, 17] = edt_bright
-
-    # Position features (18-20)
-    cz, cy = Z / 2.0, Y / 2.0
-    for z in range(Z):
-        features[z, :, :, 18] = (z - cz) * voxel[0]
-    for y in range(Y):
-        features[:, y, :, 19] = (y - cy) * voxel[1]
-    for x in range(X):
-        c_start = (x // period) * period
-        features[:, :, x, 20] = (x - c_start) / max(period - 1, 1)
-
-    # entry_alpha (21)
-    features[:, :, :, 21] = entry_alpha_map
-
-    # Cache features (22-24)
-    if cache is not None:
-        features[:, :, :, 22] = cache["near_int"]
-        nr = cache["near_rad"]
-        eu = cache["eucl"]
-        with np.errstate(divide='ignore', invalid='ignore'):
-            features[:, :, :, 23] = np.where(nr > 0, eu / nr, 5.0)
-        features[:, :, :, 24] = np.clip(cache["geo"], 0, 50.0)
-
-    # Extract candidate voxels (within generous grow)
-    cand_mask = m_generous
-    cand_idx = np.where(cand_mask.ravel())[0]
-    feat_flat = features.reshape(-1, _NUM_ML_FEATURES)[cand_idx]
-
-    return feat_flat, cand_idx
-
-
-def _ml_predict_mask(clf, threshold: float, features: np.ndarray,
-                     cand_idx: np.ndarray, shape: tuple,
-                     trunk_path: np.ndarray, m_generous: np.ndarray,
-                     voxel: tuple) -> np.ndarray:
-    """Predict mask using the ML classifier.
-    Returns the predicted boolean mask (Z, Y, X)."""
-    Z, Y, X = shape
-
-    proba = clf.predict_proba(features)[:, 1]
-
-    # Reconstruct 3D probability map
-    proba_3d = np.zeros(Z * Y * X, dtype=np.float32)
-    proba_3d[cand_idx] = proba
-    proba_3d = proba_3d.reshape(shape)
-
-    # ── Adaptive threshold via elbow detection ──
-    # Sweep thresholds 0.3..0.9 and find where the size curve bends most
-    # (Kneedle algorithm: point furthest from the line connecting endpoints).
-    thrs = np.arange(0.30, 0.95, 0.05)
-    sizes = np.zeros(len(thrs))
-    for ti, t in enumerate(thrs):
-        m = (proba_3d >= t) & m_generous
-        sizes[ti] = m.sum()
-    if sizes.max() > 0:
-        sn = sizes / sizes.max()
-        x = np.arange(len(thrs), dtype=float)
-        dx = x[-1] - x[0]
-        dy = sn[-1] - sn[0]
-        dists = np.abs(dy * x - dx * sn + dx * sn[0] - dy * x[0]) / max(np.sqrt(dx**2 + dy**2), 1e-9)
-        elbow_idx = int(np.argmax(dists))
-        adaptive_thr = float(np.clip(thrs[elbow_idx], 0.35, 0.85))
-    else:
-        adaptive_thr = threshold
-    # Use the adaptive threshold (the card threshold is just a fallback)
-    threshold = adaptive_thr
-    print(f"[auto_mask] adaptive threshold = {threshold:.2f} (elbow of size curve)")
-
-    # Threshold within generous grow
-    mask = (proba_3d >= threshold) & m_generous
-
-    # Post-process: connectivity to trunk
-    trunk_vol = np.zeros(shape, bool)
-    for pt in trunk_path:
-        z, y, x = int(pt[0]), int(pt[1]), int(pt[2])
-        if 0 <= z < Z and 0 <= y < Y and 0 <= x < X:
-            trunk_vol[z, y, x] = True
-    trunk_dil = ndi.binary_dilation(trunk_vol, iterations=2)
-
-    lab, n = ndi.label(mask, structure=np.ones((3, 3, 3)))
-    trunk_labels = np.unique(lab[trunk_dil & (lab > 0)])
-    if len(trunk_labels) > 0:
-        mask = np.isin(lab, trunk_labels)
-    elif n > 0:
-        sizes_arr = np.bincount(lab.ravel())[1:]
-        mask = lab == (int(sizes_arr.argmax()) + 1)
-
-    # Fill small holes
-    filled = ndi.binary_fill_holes(mask)
-    holes = filled & ~mask
-    if holes.any():
-        hl, nh = ndi.label(holes, structure=np.ones((3, 3, 3)))
-        for hi in range(1, nh + 1):
-            if (hl == hi).sum() < 100:
-                mask[hl == hi] = True
-
-    # Close small gaps
-    mask = ndi.binary_closing(mask, structure=np.ones((1, 3, 3))) | mask
-
-    return mask
 
 
 # ─── Chunk period ────────────────────────────────────────────────────────────
@@ -687,8 +434,8 @@ def _calibrate_alpha_v4(cache, voxel, rx=2.0):
                         hi = mid
                 alpha = (lo + hi) / 2
                 alpha = float(np.clip(alpha, 0.08, 0.30))
-                return max(alpha, SOMA_ALPHA_FLOOR), width_ratio, True
-        return max(0.15, SOMA_ALPHA_FLOOR), width_ratio, True  # soma fallback
+                return alpha, width_ratio, True
+        return 0.15, width_ratio, True  # soma fallback
     else:
         # No soma: max-curvature with floor 0.35
         alphas = np.arange(0.10, 0.60, 0.01)
@@ -1170,171 +917,43 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
     n_branch_arcs = len(arcs) - 1
     print(f"[auto_mask] {len(arcs)} arcs (trunk + {n_branch_arcs} branches)")
 
-    # ── Load ML model ──
-    ml_result = _load_ml_model()
-    use_ml = ml_result is not None
+    # ── (4) Width-ratio alpha calibration ──
+    print("[auto_mask] calibrating alpha (v0.4 soma-adaptive)...")
+    cache_trunk = grow_cache(ref, [trunk_path], voxel)
+    cal_result = _calibrate_alpha_v4(cache_trunk, voxel, rx=2.0)
+    alpha, width_ratio, soma_from_probe = cal_result[0], cal_result[1], cal_result[2]
+    rx = DEFAULT_RX
+    print(f"[auto_mask] calibrated alpha = {alpha:.3f} (width_ratio={width_ratio:.2f}, "
+          f"soma_from_probe={soma_from_probe})")
 
-    if use_ml:
-        clf, ml_thr, card = ml_result
-        print(f"[auto_mask] ML model loaded (v{card.get('version','?')}, "
-              f"{card.get('n_training_cells','?')} cells)")
-        _log("masker", "ml_model", f"loaded v{card.get('version','?')}")
+    # ── Pass 1: grow with calibrated alpha ──
+    m1, _ = grow(cache_trunk, alpha=alpha, radius_x=rx, pad=0)
+    if m1 is None:
+        print("[auto_mask] ERROR: could not grow mask")
+        return None
 
-        # ── v0.4 grow (same as fallback) for the hybrid ──
-        cache_trunk = grow_cache(ref, [trunk_path], voxel)
-        cal_result = _calibrate_alpha_v4(cache_trunk, voxel, rx=2.0)
-        alpha_v4, width_ratio, soma_from_probe = cal_result[0], cal_result[1], cal_result[2]
-        print(f"[auto_mask] v0.4 alpha = {alpha_v4:.3f}")
+    lab, n = ndi.label(m1, structure=np.ones((3, 3, 3)))
+    if n > 0:
+        sizes = np.bincount(lab.ravel())[1:]
+        m1 = lab == (int(sizes.argmax()) + 1)
 
-        # v0.4 mask (pass-1 grow)
-        m_v4, _ = grow(cache_trunk, alpha=alpha_v4, radius_x=DEFAULT_RX, pad=0)
-        if m_v4 is None:
-            m_v4 = np.zeros(shape, bool)
-        lab, n = ndi.label(m_v4, structure=np.ones((3, 3, 3)))
-        if n > 0:
-            sizes = np.bincount(lab.ravel())[1:]
-            m_v4 = lab == (int(sizes.argmax()) + 1)
+    # ── Skeleton arcs from pass-1 ──
+    arcs1 = _skeleton_arcs(m1, min_arc=5, prune_radius=voxel)
+    if len(arcs1) < 1:
+        arcs1 = arcs
+    print(f"[auto_mask] pass-1: {len(arcs1)} skeleton arcs from {int(m1.sum())} vox")
 
-        # Skeleton arcs from v0.4 mask
-        arcs_v4 = _skeleton_arcs(m_v4, min_arc=5, prune_radius=voxel)
-        if len(arcs_v4) < 1:
-            arcs_v4 = arcs
-        all_arcs_v4 = [trunk_path] + arcs_v4
-        cache_full_v4 = grow_cache(ref, all_arcs_v4, voxel)
-        m_v4_full, _ = grow(cache_full_v4, alpha=alpha_v4, radius_x=DEFAULT_RX, pad=0)
-        if m_v4_full is not None:
-            lab, n = ndi.label(m_v4_full, structure=np.ones((3, 3, 3)))
-            if n > 0:
-                sizes = np.bincount(lab.ravel())[1:]
-                m_v4_full = lab == (int(sizes.argmax()) + 1)
-            m_v4 = m_v4_full
+    # ── Re-grow with all arcs ──
+    all_arcs = [trunk_path] + arcs1
+    cache_full = grow_cache(ref, all_arcs, voxel)
+    cell_mask, _ = grow(cache_full, alpha=alpha, radius_x=rx, pad=0)
+    if cell_mask is None:
+        cell_mask = m1
 
-        # ── Generous grow for ML candidate region ──
-        cache_full = grow_cache(ref, arcs, voxel)
-        m_generous, _ = grow(cache_full, alpha=0.05, radius_x=4.0, pad=1)
-        if m_generous is None:
-            m_generous = np.zeros(shape, bool)
-        lab, n = ndi.label(m_generous, structure=np.ones((3, 3, 3)))
-        if n > 0:
-            sizes = np.bincount(lab.ravel())[1:]
-            m_generous = lab == (int(sizes.argmax()) + 1)
-
-        # Load ref_all for ML features
-        ref_all_path = paths["ref3d"]
-        ref_all = tifffile.imread(ref_all_path).astype(np.float32)
-        ref_json_path = paths["ref3d_json"]
-        if os.path.exists(ref_json_path):
-            ml_ch_names = list(json.load(open(ref_json_path))["channels"].keys())
-        else:
-            ml_ch_names = [f"ch{i}" for i in range(ref_all.shape[1])]
-
-        # Extract features
-        print("[auto_mask] extracting ML features...")
-        feat, cand_idx = _extract_ml_features(
-            ref_all, ml_ch_names, ref, trunk_path, arcs,
-            cache_full, m_generous, period, voxel)
-
-        # ML prediction
-        print(f"[auto_mask] ML predicting ({len(feat)} candidate voxels)...")
-        proba = clf.predict_proba(feat)[:, 1]
-        proba_3d = np.zeros(Z * Y * X, dtype=np.float32)
-        proba_3d[cand_idx] = proba
-        proba_3d = proba_3d.reshape(shape)
-
-        # ── HYBRID: v0.4 confirmed by ML + ML high-confidence ──
-        # 1. Keep v0.4 voxels that ML also thinks are dendrite (ML > 0.4)
-        v4_confirmed = m_v4 & (proba_3d >= 0.4)
-        # 2. Add voxels ML is very confident about, within generous grow (ML > 0.8)
-        ml_confident = (proba_3d >= 0.8) & m_generous
-        # 3. Union
-        cell_mask = v4_confirmed | ml_confident
-
-        # Post-process: connectivity to trunk
-        trunk_vol = np.zeros(shape, bool)
-        for pt in trunk_path:
-            z, y, x = int(pt[0]), int(pt[1]), int(pt[2])
-            if 0 <= z < Z and 0 <= y < Y and 0 <= x < X:
-                trunk_vol[z, y, x] = True
-        trunk_dil = ndi.binary_dilation(trunk_vol, iterations=2)
-        lab, n = ndi.label(cell_mask, structure=np.ones((3, 3, 3)))
-        trunk_labels = np.unique(lab[trunk_dil & (lab > 0)])
-        if len(trunk_labels) > 0:
-            cell_mask = np.isin(lab, trunk_labels)
-        elif n > 0:
-            sizes_arr = np.bincount(lab.ravel())[1:]
-            cell_mask = lab == (int(sizes_arr.argmax()) + 1)
-
-        # Fill small holes
-        filled = ndi.binary_fill_holes(cell_mask)
-        holes = filled & ~cell_mask
-        if holes.any():
-            hl, nh = ndi.label(holes, structure=np.ones((3, 3, 3)))
-            for hi in range(1, nh + 1):
-                if (hl == hi).sum() < 100:
-                    cell_mask[hl == hi] = True
-        cell_mask = ndi.binary_closing(cell_mask, structure=np.ones((1, 3, 3))) | cell_mask
-
-        # Keep largest component
-        lab, n = ndi.label(cell_mask, structure=np.ones((3, 3, 3)))
-        if n > 0:
-            sizes = np.bincount(lab.ravel())[1:]
-            cell_mask = lab == (int(sizes.argmax()) + 1)
-
-        alpha = alpha_v4  # Record the v0.4 alpha for metadata
-        rx = DEFAULT_RX
-        calibration_method = f"hybrid_ml_v{card.get('version', '0.5.0')}"
-
-        # Get arcs from the hybrid mask skeleton for the session file
-        arcs1 = _skeleton_arcs(cell_mask, min_arc=5, prune_radius=voxel)
-        if len(arcs1) < 1:
-            arcs1 = arcs
-        v4_vox = int(m_v4.sum())
-        ml80_vox = int(ml_confident.sum())
-        confirmed_vox = int(v4_confirmed.sum())
-        print(f"[auto_mask] hybrid: v0.4={v4_vox} confirmed={confirmed_vox} "
-              f"ml_high={ml80_vox} -> {int(cell_mask.sum())} vox, {len(arcs1)} skeleton arcs")
-
-    else:
-        print("[auto_mask] ML model not found, using v0.4 rule-based fallback...")
-
-        # ── (4) Width-ratio alpha calibration (v0.4 fallback) ──
-        print("[auto_mask] calibrating alpha (v0.4 soma-adaptive)...")
-        cache_trunk = grow_cache(ref, [trunk_path], voxel)
-        cal_result = _calibrate_alpha_v4(cache_trunk, voxel, rx=2.0)
-        alpha, width_ratio, soma_from_probe = cal_result[0], cal_result[1], cal_result[2]
-        rx = DEFAULT_RX
-        print(f"[auto_mask] calibrated alpha = {alpha:.3f} (width_ratio={width_ratio:.2f}, "
-              f"soma_from_probe={soma_from_probe})")
-        calibration_method = "width-ratio-v4"
-
-        # ── Pass 1: grow with calibrated alpha ──
-        m1, _ = grow(cache_trunk, alpha=alpha, radius_x=rx, pad=0)
-        if m1 is None:
-            print("[auto_mask] ERROR: could not grow mask")
-            return None
-
-        lab, n = ndi.label(m1, structure=np.ones((3, 3, 3)))
-        if n > 0:
-            sizes = np.bincount(lab.ravel())[1:]
-            m1 = lab == (int(sizes.argmax()) + 1)
-
-        # ── Skeleton arcs from pass-1 ──
-        arcs1 = _skeleton_arcs(m1, min_arc=5, prune_radius=voxel)
-        if len(arcs1) < 1:
-            arcs1 = arcs
-        print(f"[auto_mask] pass-1: {len(arcs1)} skeleton arcs from {int(m1.sum())} vox")
-
-        # ── Re-grow with all arcs ──
-        all_arcs = [trunk_path] + arcs1
-        cache_full = grow_cache(ref, all_arcs, voxel)
-        cell_mask, _ = grow(cache_full, alpha=alpha, radius_x=rx, pad=0)
-        if cell_mask is None:
-            cell_mask = m1
-
-        lab, n = ndi.label(cell_mask, structure=np.ones((3, 3, 3)))
-        if n > 0:
-            sizes = np.bincount(lab.ravel())[1:]
-            cell_mask = lab == (int(sizes.argmax()) + 1)
+    lab, n = ndi.label(cell_mask, structure=np.ones((3, 3, 3)))
+    if n > 0:
+        sizes = np.bincount(lab.ravel())[1:]
+        cell_mask = lab == (int(sizes.argmax()) + 1)
     cell_mask = drop_small_islands(cell_mask.astype(np.uint8), min_voxels=20)[0] > 0
 
     # ── SNR end trimming ──
@@ -1375,8 +994,7 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
     # ── (4) Width cap: prevent overly fat masks ──
     # Cap any column at MAX_WIDTH_RATIO * median trunk width (from soma detection).
     # Trim by removing voxels furthest from the trunk path.
-    # Skip when using ML: the classifier already learned the right width.
-    if median_trunk_w > 0 and not use_ml:
+    if median_trunk_w > 0:
         max_width = int(MAX_WIDTH_RATIO * median_trunk_w)
         mask_w = cell_mask.sum(axis=(0, 1))
         fat_cols = np.where(mask_w > max_width)[0]
@@ -1452,7 +1070,7 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
         "cell_end_x": int(cell_end_x),
         "cell_start_x": int(cell_start_x),
         "width_ratio": float(width_ratio),
-        "calibration_method": calibration_method,
+        "calibration_method": "width-ratio-v4",
     }
     review_entry = {
         "tool": "auto_mask", "version": __version__,
@@ -1525,7 +1143,7 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
         "soma_end_x": int(soma_end_x) if has_soma else None,
         "soma_voxels": soma_vox,
         "cell_end_x": int(cell_end_x), "cell_start_x": int(cell_start_x),
-        "calibration_method": calibration_method,
+        "calibration_method": "width-ratio-v4",
         "median_trunk_width": int(median_trunk_w),
         "width_ratio": float(width_ratio),
     }
@@ -1575,11 +1193,7 @@ def main():
     ap.add_argument("--out-dir", required=True, help="output directory")
     add_voxel_arg(ap)
     ap.add_argument("--debug", action="store_true")
-    ap.add_argument("--soma-alpha-floor", type=float, default=SOMA_ALPHA_FLOOR,
-                    help=f"minimum alpha for cells with a soma (default {SOMA_ALPHA_FLOOR}; "
-                         "0.08 = v0.5.0 behaviour)")
     args = ap.parse_args()
-    globals()["SOMA_ALPHA_FLOOR"] = float(args.soma_alpha_floor)
 
     global LOG_PATH
     LOG_PATH = _ROOT / "auto_pipeline" / "logs" / "masker.jsonl"

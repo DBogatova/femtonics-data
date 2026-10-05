@@ -6,23 +6,30 @@ Given a cleaned 4D stack and a binary or labeled cell mask, this script:
   2. Identifies the soma as the thick blob (if present).
   3. Orients the dendrite: column 0 (deep end) is the soma/proximal side.
   4. Computes geodesic distance from the proximal tip through the mask.
-  5. Detects bifurcations via skeleton topology.
-  6. Places 3-6 regions as FULL CROSS-SECTION slices of the mask, spaced
-     along the dendrite path:
-       - reference (soma blob or proximal ~10 um) at the proximal end
-       - 1-2 trunk regions spread evenly along the main path before the
-         bifurcation (or along the full path if no bifurcation)
-       - bifurcation region (~5 um) centered on the first real fork
-       - 1-2 branch regions beyond the bifurcation, with the last touching
-         the distal tip of the scanned path
-       - side-branch region (branch2) if a side path is detected
+  5. Detects the SIDE BRANCH as a zone of multi-lobe cross-sections in the
+     mask: columns where the YZ slice has 2+ connected components indicate
+     the main path and a diverging branch. The bifurcation is placed at the
+     start of this zone, and branch2 is the smaller lobe.
+  6. Detects the CELL END as the farthest mask extent along the path (the
+     mask itself may end before the scan tube does).
+  7. Places regions as FULL CROSS-SECTION slices of the mask along the path:
+       - reference (soma blob or proximal trunk_soma_end) at the proximal end
+       - trunk1, trunk2: intermediate trunk regions before the fork
+       - bifurcation: small region at the fork junction
+       - branch2: the side lobe leaving the main path
+       - main_branch1 [, main_branch2]: continuation of the main path after
+         the fork, with the last region at the cell end
      Each region spans the full mask cross-section over its distance window.
      Within each placement zone the exact window is tuned by split-half
      reliability (never by correlation with the reference — no circularity).
-  7. Names: soma, trunk1, trunk2, bifurcation, branch1, branch1far, branch2 ...
-     compatible with compartment_of in run_metrics.py.  A region is "branch"
-     only if it lies beyond a detected bifurcation; otherwise it is named
-     "trunk" and the flag "no_bifurcation_detected" is set.
+  8. Naming convention (Daria's decision):
+       soma | trunk_soma_end (reference when no soma)
+       trunk1, trunk2 (before the fork)
+       bifurcation (at the fork)
+       branch2 (the side branch lobe)
+       main_branch1, main_branch2 (continuing main path — compartment branch)
+     compatible with compartment_of in run_metrics.py. If no fork is found,
+     regions are trunk1..N only, with the last being "branch" (distal end).
 
 Usage:
   python code/STEP9_auto/auto_regions.py <run_dir>/runNN_clean.tif \\
@@ -42,6 +49,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -72,9 +80,10 @@ sys.path.insert(0, str(CODE / "STEP8_stats"))
 from common.voxel import add_voxel_arg, resolve_voxel
 from common.cleanup import drop_small_islands, describe
 
-__version__ = "0.4.0"
+__version__ = "0.5.1"
 
 CC26 = np.ones((3, 3, 3), np.uint8)
+CC8_2D = np.ones((3, 3), np.uint8)
 
 # ---- Parameters (same for every cell — no per-run tuning) ----
 MIN_ARC_VOX = 3              # drop skeleton arcs shorter than this
@@ -82,25 +91,25 @@ SOMA_FACTOR = 2.0            # radius factor for soma blob detection
 MIN_ISLAND_VOX = 20          # drop small islands at save
 SPUR_THRESHOLD_UM = 5.0      # skeleton branches shorter than this (um) are spurs
 BRANCH_MIN_TERRITORY = 30    # territory voxels: branches smaller than this are spurs
-SOMA_MIN_MAX_EDT_UM = 3.2    # soma blob must have max EDT >= this
+SOMA_MIN_MAX_EDT_UM = 3.0    # soma blob must have max EDT >= this (um)
 SOMA_MIN_VOXELS = 400        # soma blob must have at least this many voxels
 
-# Region placement — matched to Daria's pattern
-REGION_LENGTH_UM = 25.0       # preferred path span per region (um)
-REGION_MIN_LENGTH_UM = 8.0    # smallest acceptable region span
-BIF_REGION_LENGTH_UM = 6.0    # path span for the bifurcation region
-WIDTH_BIN_UM = 25.0           # path bin for the width profile (>= one scan chunk)
-WIDTH_SKIP_FRAC = 0.15        # ignore the proximal 15 % (soma taper, dim deep end)
-WIDTH_DROP_RATIO = 0.70       # sustained width after/before <= this -> trunk->branch
-MIN_REGION_VOXELS = 30        # minimum total voxels for a region
-SIDE_BRANCH_MIN_TERRITORY = 40  # side-branch territory must be >= this
-PROXIMAL_REF_LENGTH_UM = 12.0   # path span for proximal reference (no soma)
+# Region placement — matched to Daria's pattern (from 7 GT cells)
+REGION_LENGTH_UM = 20.0       # preferred path span per region (um)
+REGION_MIN_LENGTH_UM = 5.0    # smallest acceptable region span
+BIF_REGION_LENGTH_UM = 8.0    # path span for the bifurcation region
+MIN_REGION_VOXELS = 25        # minimum total voxels for a region
+PROXIMAL_REF_LENGTH_UM = 12.0 # path span for proximal reference (no soma)
 
-# How many trunk/branch regions:  determined by the available path length.
-# Roughly one trunk region per 80-100 um of pre-bifurcation path,
-# and one branch region per 80-100 um of post-bifurcation path.
-TRUNK_REGION_SPACING_UM = 100.0
-BRANCH_REGION_SPACING_UM = 100.0
+# Side-branch detection by multi-lobe cross-section analysis
+MULTI_LOBE_MIN_SIZE = 2       # minimum voxels per lobe to count as a real lobe
+MULTI_LOBE_RUN_MIN = 5        # need >= this many consecutive multi-lobe columns
+SIDE_LOBE_MIN_COLS = 3        # the side lobe must span >= this many columns
+SIDE_LOBE_MIN_VOXELS = 20     # the side lobe territory must be >= this
+BIF_ZONE_PAD_COLS = 3         # how many columns before the multi-lobe start = bif center
+
+# Cell-end detection
+CELL_END_TAPER_THRESHOLD = 0.3  # column count / peak count below this = tapered off
 
 
 # ==============================================================================
@@ -172,172 +181,218 @@ def soma_blob_from_thickness(mask, edt, median_arc_radius, voxel, factor=SOMA_FA
 
 
 # ==============================================================================
-# Tree analysis
+# Side-branch detection via multi-lobe cross-sections
 # ==============================================================================
-def build_skeleton_graph(mask, voxel, exclude=None, min_arc_vox=MIN_ARC_VOX):
-    """Build skeleton, arcs, partition, adjacency, and the soma blob."""
-    mask = mask.astype(bool)
-    if exclude is not None:
-        mask = mask & ~exclude.astype(bool)
-    if not mask.any():
-        raise ValueError("mask is empty after excluding intruders")
+def detect_side_branch(mask, voxel, deep_end_first=True):
+    """Detect a side branch by finding columns where the YZ cross-section
+    has multiple connected components (lobes).
 
-    skel = skeletonize(mask)
-    if not skel.any():
-        raise ValueError("skeleton is empty")
+    Returns dict with:
+      found: bool
+      bif_x_range: (x_lo, x_hi) of the bifurcation zone
+      branch2_mask: bool volume of the side-lobe voxels
+      main_lobe_mask: bool volume of the main-lobe voxels in the multi-lobe zone
+      multi_lobe_cols: list of (x, n_components, lobe_sizes)
+      branch2_x_range: (x_lo, x_hi)
+    or None if not found.
+    """
+    nZ, nY, nX = mask.shape
+    col_counts = np.array([mask[:, :, x].sum() for x in range(nX)])
 
-    arc_labels, n_arcs = partition_skeleton_into_arcs(skel, min_arc_vox)
-    partition, geo_cost = geodesic_arc_partition(mask, arc_labels, voxel)
-    edt = distance_transform_edt(mask, sampling=tuple(voxel))
-    radii = arc_radii(edt, arc_labels)
-    median_arc_radius = float(np.median(list(radii.values()))) if radii else 0.0
-    soma_blob = soma_blob_from_thickness(mask, edt, median_arc_radius, voxel)
+    # Find nonzero columns
+    nonzero = np.where(col_counts > 0)[0]
+    if len(nonzero) < 10:
+        return None
 
-    bp_mask = skeleton_branch_points(skel)
-    bp_lbl, n_bp = cc_label(bp_mask, structure=CC26)
+    x_start, x_end = int(nonzero[0]), int(nonzero[-1])
 
-    junctions = {}
-    for b in range(1, n_bp + 1):
-        bpc = bp_lbl == b
-        dilated = binary_dilation(bpc, structure=CC26)
-        touching = set(int(v) for v in np.unique(arc_labels[dilated]) if v > 0)
-        junctions[b] = touching
-
-    arc_adj = {a: set() for a in range(1, n_arcs + 1)}
-    for j_id, arcs in junctions.items():
-        for a in arcs:
-            for other in arcs:
-                if other != a:
-                    arc_adj[a].add(other)
-
-    arc_lengths = {}
-    for a in range(1, n_arcs + 1):
-        pts = np.argwhere(arc_labels == a)
-        if len(pts) < 2:
-            arc_lengths[a] = 0.0
+    # Analyze each column for multi-lobe cross-sections
+    multi_lobe_info = {}  # x -> (n_components, lobe_sizes, lobe_labels_2d)
+    for x in range(x_start, x_end + 1):
+        cs = mask[:, :, x]
+        if cs.sum() < 4:
             continue
-        order = np.argsort(pts[:, 2])
-        ordered = pts[order] * np.array(voxel)
-        arc_lengths[a] = float(np.sum(np.linalg.norm(np.diff(ordered, axis=0), axis=1)))
+        lab2d, n = cc_label(cs, structure=CC8_2D)
+        if n < 2:
+            continue
+        sizes = []
+        for i in range(1, n + 1):
+            s = int((lab2d == i).sum())
+            if s >= MULTI_LOBE_MIN_SIZE:
+                sizes.append((s, i))
+        if len(sizes) >= 2:
+            sizes.sort(reverse=True)
+            multi_lobe_info[x] = (len(sizes), sizes, lab2d)
+
+    if not multi_lobe_info:
+        return None
+
+    # Find runs of consecutive multi-lobe columns
+    ml_cols = sorted(multi_lobe_info.keys())
+    runs = []
+    current_run = [ml_cols[0]]
+    for i in range(1, len(ml_cols)):
+        if ml_cols[i] - ml_cols[i - 1] <= 2:  # allow 1-column gap
+            current_run.append(ml_cols[i])
+        else:
+            if len(current_run) >= MULTI_LOBE_RUN_MIN:
+                runs.append(current_run)
+            current_run = [ml_cols[i]]
+    if len(current_run) >= MULTI_LOBE_RUN_MIN:
+        runs.append(current_run)
+
+    if not runs:
+        return None
+
+    # Pick the best run: the one with the clearest secondary lobe
+    # (most columns and largest secondary lobe relative to primary)
+    # Filter: median secondary lobe must be >= 5 voxels to exclude noise specks
+    # (real bifurcations have median secondary >= 7, false positives ~3)
+    MEDIAN_SECONDARY_MIN = 5
+    best_run = None
+    best_score = 0
+    for run in runs:
+        # Score: number of columns * median size of secondary lobe
+        secondary_sizes = []
+        for x in run:
+            if x in multi_lobe_info:
+                sizes = multi_lobe_info[x][1]
+                if len(sizes) >= 2:
+                    secondary_sizes.append(sizes[1][0])
+        if not secondary_sizes:
+            continue
+        med_secondary = float(np.median(secondary_sizes))
+        if med_secondary < MEDIAN_SECONDARY_MIN:
+            continue  # secondary lobes too small — noise, not a real branch
+        score = len(run) * med_secondary
+        if score > best_score:
+            best_score = score
+            best_run = run
+
+    if best_run is None:
+        return None
+
+    ml_start = best_run[0]
+    ml_end = best_run[-1]
+
+    # Build the side-lobe mask: for each multi-lobe column, identify the
+    # secondary (smaller) lobe as the side branch, and the primary as main path
+    branch2_mask = np.zeros(mask.shape, bool)
+    main_lobe_mask = np.zeros(mask.shape, bool)
+
+    # Determine which lobe is the "side" one by tracking continuity:
+    # The main lobe is the one that connects to columns before the multi-lobe zone.
+    # Use the centroid of each lobe to decide.
+
+    # Get the main path centroid from columns just before the multi-lobe zone
+    pre_cols = range(max(x_start, ml_start - 10), ml_start)
+    pre_centroids_yz = []
+    for x in pre_cols:
+        cs = mask[:, :, x]
+        if cs.sum() > 0:
+            pts = np.argwhere(cs)
+            pre_centroids_yz.append(pts.mean(0))
+    if pre_centroids_yz:
+        main_centroid = np.mean(pre_centroids_yz, axis=0)  # (Z, Y) of main path
+    else:
+        # Fallback: use the largest lobe at the first multi-lobe column
+        main_centroid = None
+
+    for x in best_run:
+        if x not in multi_lobe_info:
+            # Gap column — assign all mask voxels to main lobe
+            main_lobe_mask[:, :, x] = mask[:, :, x]
+            continue
+        n, sizes, lab2d = multi_lobe_info[x]
+        cs = mask[:, :, x]
+
+        if main_centroid is not None:
+            # Assign lobes: the one whose centroid is closest to the main path
+            # is the main lobe; others are side branch
+            lobe_centroids = {}
+            for size, lbl in sizes:
+                pts = np.argwhere(lab2d == lbl)
+                lobe_centroids[lbl] = pts.mean(0)
+
+            # Find the lobe closest to main_centroid
+            main_lbl = min(lobe_centroids, key=lambda lbl:
+                           np.linalg.norm(lobe_centroids[lbl] - main_centroid))
+
+            for size, lbl in sizes:
+                lobe_voxels = (lab2d == lbl)
+                if lbl == main_lbl:
+                    main_lobe_mask[:, :, x] |= lobe_voxels
+                else:
+                    branch2_mask[:, :, x] |= lobe_voxels
+        else:
+            # No pre-columns: largest lobe is main
+            main_lbl = sizes[0][1]
+            for size, lbl in sizes:
+                lobe_voxels = (lab2d == lbl)
+                if lbl == main_lbl:
+                    main_lobe_mask[:, :, x] |= lobe_voxels
+                else:
+                    branch2_mask[:, :, x] |= lobe_voxels
+
+    # Check that the side lobe is substantial enough
+    branch2_vox = int(branch2_mask.sum())
+    branch2_cols = np.where(branch2_mask.any(axis=(0, 1)))[0]
+
+    if branch2_vox < SIDE_LOBE_MIN_VOXELS or len(branch2_cols) < SIDE_LOBE_MIN_COLS:
+        return None
+
+    branch2_x_range = (int(branch2_cols.min()), int(branch2_cols.max()))
+
+    # The bifurcation zone: placed where the cross-section first widens
+    # (start of the multi-lobe zone). Look for the column where the mask
+    # cross-section count first jumps up relative to the pre-zone baseline.
+    col_counts = np.array([mask[:, :, x].sum() for x in range(nX)])
+    pre_zone = range(max(x_start, ml_start - 15), ml_start)
+    pre_median = float(np.median([col_counts[x] for x in pre_zone if col_counts[x] > 0])) if len(pre_zone) > 0 else 1.0
+    # Find first column where count is >=1.3x the pre-zone median
+    bif_center = ml_start
+    for x in range(max(x_start, ml_start - 5), min(nX, ml_start + 10)):
+        if col_counts[x] > 1.3 * pre_median:
+            bif_center = x
+            break
+    bif_half = BIF_ZONE_PAD_COLS
+    bif_x_lo = max(x_start, bif_center - bif_half)
+    bif_x_hi = min(x_end, bif_center + bif_half)
 
     return {
-        "mask": mask,
-        "skel": skel,
-        "arc_labels": arc_labels,
-        "n_arcs": n_arcs,
-        "partition": partition,
-        "geo_cost": geo_cost,
-        "edt": edt,
-        "radii": radii,
-        "arc_lengths": arc_lengths,
-        "median_arc_radius": median_arc_radius,
-        "soma_blob": soma_blob,
-        "junctions": junctions,
-        "arc_adj": arc_adj,
-        "bp_labels": bp_lbl,
+        "found": True,
+        "bif_x_range": (bif_x_lo, bif_x_hi),
+        "branch2_mask": branch2_mask,
+        "main_lobe_mask": main_lobe_mask,
+        "multi_lobe_cols": [(x, multi_lobe_info[x][0],
+                             [s for s, _ in multi_lobe_info[x][1]])
+                            for x in best_run if x in multi_lobe_info],
+        "branch2_x_range": branch2_x_range,
+        "multi_lobe_start": ml_start,
+        "multi_lobe_end": ml_end,
+        "branch2_voxels": branch2_vox,
     }
 
 
-def find_root_arc(graph, deep_end_first=True):
-    """Find the root arc (soma side). Returns (arc_id, has_soma)."""
-    soma_blob = graph["soma_blob"]
-    edt = graph["edt"]
-    n_arcs = graph["n_arcs"]
+# ==============================================================================
+# Cell-end detection
+# ==============================================================================
+def find_cell_end_x(mask, deep_end_first=True):
+    """Find the X coordinate where the cell ends, which may be before the
+    scan tube ends. Uses the mask's own extent.
 
-    real_soma = False
-    if soma_blob.any():
-        max_edt = float(edt[soma_blob].max())
-        n_blob = int(soma_blob.sum())
-        if max_edt >= SOMA_MIN_MAX_EDT_UM and n_blob >= SOMA_MIN_VOXELS:
-            real_soma = True
-
-    if real_soma:
-        overlap = {}
-        for a in range(1, n_arcs + 1):
-            territory = graph["partition"] == a
-            ov = (territory & soma_blob).sum()
-            if ov > 0:
-                overlap[a] = ov
-        if overlap:
-            return max(overlap, key=overlap.get), True
-
-    mean_x = {}
-    for a in range(1, n_arcs + 1):
-        pts = np.argwhere(graph["partition"] == a)
-        if len(pts) > 0:
-            mean_x[a] = pts[:, 2].mean()
-
-    if deep_end_first:
-        return min(mean_x, key=mean_x.get), False
-    else:
-        return max(mean_x, key=mean_x.get), False
+    Returns (cell_start_x, cell_end_x).
+    """
+    col_counts = np.array([mask[:, :, x].sum() for x in range(mask.shape[2])])
+    nonzero = np.where(col_counts > 0)[0]
+    if len(nonzero) == 0:
+        return 0, mask.shape[2] - 1
+    return int(nonzero[0]), int(nonzero[-1])
 
 
-def walk_main_path(graph, root_arc, voxel):
-    """Walk from root along the thickest/longest continuation, recording side branches."""
-    visited = {root_arc}
-    main_path = [root_arc]
-    side_branches = []
-    bifurcation_junctions = []
-
-    current = root_arc
-    while True:
-        neighbors = graph["arc_adj"][current] - visited
-        if not neighbors:
-            break
-
-        significant = []
-        for n in neighbors:
-            length = graph["arc_lengths"].get(n, 0)
-            territory = int((graph["partition"] == n).sum())
-            further = graph["arc_adj"][n] - visited - {n}
-            if length < SPUR_THRESHOLD_UM and territory < BRANCH_MIN_TERRITORY and not further:
-                visited.add(n)
-                continue
-            significant.append(n)
-
-        if not significant:
-            break
-
-        if len(significant) == 1:
-            current = significant[0]
-            visited.add(current)
-            main_path.append(current)
-        else:
-            for j_id, j_arcs in graph["junctions"].items():
-                if current in j_arcs and any(n in j_arcs for n in significant):
-                    bifurcation_junctions.append(j_id)
-                    break
-
-            def score(a):
-                r = graph["radii"].get(a, 0)
-                t = int((graph["partition"] == a).sum())
-                l = graph["arc_lengths"].get(a, 0)
-                return r * t + l
-            scores = {a: score(a) for a in significant}
-            continuation = max(scores, key=scores.get)
-            for n in significant:
-                if n != continuation:
-                    side_branches.append(n)
-                visited.add(n)
-            current = continuation
-            main_path.append(current)
-
-    expanded_branches = []
-    for sb in side_branches:
-        branch_arcs = [sb]
-        frontier = [sb]
-        while frontier:
-            a = frontier.pop()
-            for n in graph["arc_adj"][a] - visited:
-                visited.add(n)
-                branch_arcs.append(n)
-                frontier.append(n)
-        expanded_branches.append(branch_arcs)
-
-    return main_path, expanded_branches, bifurcation_junctions
-
-
+# ==============================================================================
+# Geodesic distance
+# ==============================================================================
 def geodesic_distance_from_seeds(mask, seed_voxels, voxel):
     """Geodesic distance from seed_voxels through the mask."""
     costs = np.where(mask, 1.0, np.inf).astype(float)
@@ -372,9 +427,73 @@ def split_half_reliability(flat, idx, seed=0):
 # ==============================================================================
 # Region placement helpers
 # ==============================================================================
+def slice_by_x(mask, x_lo, x_hi):
+    """Boolean mask of all voxels in mask with X in [x_lo, x_hi]."""
+    out = np.zeros(mask.shape, bool)
+    x_lo = max(0, int(x_lo))
+    x_hi = min(mask.shape[2] - 1, int(x_hi))
+    out[:, :, x_lo:x_hi + 1] = mask[:, :, x_lo:x_hi + 1]
+    return out
+
+
 def slice_by_distance(mask, dist_from_root, d_lo, d_hi):
     """Boolean mask of all mask voxels with geodesic distance in [d_lo, d_hi)."""
     return mask & np.isfinite(dist_from_root) & (dist_from_root >= d_lo) & (dist_from_root < d_hi)
+
+
+def best_window_in_zone_x(flat, mask, x_lo, x_hi, voxel,
+                           target_cols=None,
+                           min_voxels=MIN_REGION_VOXELS,
+                           step_cols=2):
+    """Within an X-column zone [x_lo, x_hi], find the best sub-window by
+    split-half reliability.
+
+    Returns (x_lo_best, x_hi_best, reliability, n_voxels) or None.
+    """
+    nX = mask.shape[2]
+    x_lo = max(0, int(x_lo))
+    x_hi = min(nX - 1, int(x_hi))
+    zone_cols = x_hi - x_lo + 1
+    if zone_cols < 3:
+        return None
+
+    if target_cols is None:
+        vx = voxel[2]
+        target_cols = max(5, int(round(REGION_LENGTH_UM / vx)))
+
+    # If zone is close to target, use the whole zone
+    if zone_cols <= int(target_cols * 1.3):
+        w = slice_by_x(mask, x_lo, x_hi)
+        n = int(w.sum())
+        if n < min_voxels:
+            return None
+        idx = np.flatnonzero(w.ravel())
+        rel = split_half_reliability(flat, idx)
+        return (x_lo, x_hi, rel, n)
+
+    # Search for best sub-window
+    best = None
+    best_rel = -1.0
+
+    for length in sorted(set([target_cols,
+                              max(5, int(target_cols * 0.7)),
+                              int(target_cols * 1.3),
+                              min(zone_cols, int(target_cols * 1.5))])):
+        if length > zone_cols or length < 3:
+            continue
+        for start in range(x_lo, x_hi - length + 2, step_cols):
+            end = start + length - 1
+            w = slice_by_x(mask, start, end)
+            n = int(w.sum())
+            if n < min_voxels:
+                continue
+            idx = np.flatnonzero(w.ravel())
+            rel = split_half_reliability(flat, idx)
+            if rel == rel and rel > best_rel:
+                best_rel = rel
+                best = (start, end, rel, n)
+
+    return best
 
 
 def best_window_in_zone(flat, mask, dist_from_root, zone_lo, zone_hi, voxel,
@@ -391,7 +510,6 @@ def best_window_in_zone(flat, mask, dist_from_root, zone_lo, zone_hi, voxel,
     if zone_length < min_length_um:
         return None
 
-    # If zone is already close to target, use the whole zone
     if zone_length <= target_length_um * 1.3:
         w = slice_by_distance(mask, dist_from_root, zone_lo, zone_hi)
         n = int(w.sum())
@@ -401,11 +519,9 @@ def best_window_in_zone(flat, mask, dist_from_root, zone_lo, zone_hi, voxel,
         rel = split_half_reliability(flat, idx)
         return (zone_lo, zone_hi, rel, n)
 
-    # Search for best sub-window
     best = None
     best_rel = -1.0
 
-    # Try the target length first, then variations
     lengths = sorted(set([
         target_length_um,
         target_length_um * 0.8,
@@ -435,8 +551,16 @@ def best_window_in_zone(flat, mask, dist_from_root, zone_lo, zone_hi, voxel,
 # ==============================================================================
 # Main region-picking logic
 # ==============================================================================
-def pick_regions(stack_path, mask, voxel, exclude=None, deep_end_first=True):
-    """Automatic region picking. Returns (segments_vol, metadata_dict)."""
+def pick_regions(stack_path, mask, voxel, exclude=None, deep_end_first=True,
+                 mask_meta=None):
+    """Automatic region picking. Returns (segments_vol, metadata_dict).
+
+    mask_meta: dict from the auto_mask JSON sidecar (reviews[0].params).
+       When present, trusts soma_detected / soma_end_x / cell_start_x /
+       cell_end_x from the mask stage rather than re-detecting from the EDT
+       (avoids interaction bugs where the EDT-based detection finds a thick zone
+       at the wrong end of the cell).
+    """
     log_lines = []
 
     def log(msg):
@@ -450,441 +574,499 @@ def pick_regions(stack_path, mask, voxel, exclude=None, deep_end_first=True):
     flat = stack.reshape(T, -1)
     log(f"  shape: {stack.shape}, T={T}")
 
-    # Build skeleton graph
-    log("Building skeleton graph...")
-    graph = build_skeleton_graph(mask, voxel, exclude=exclude, min_arc_vox=MIN_ARC_VOX)
-    log(f"  skeleton: {graph['skel'].sum()} vox, {graph['n_arcs']} arcs, "
-        f"median_radius={graph['median_arc_radius']:.2f} um")
-    log(f"  soma blob: {graph['soma_blob'].sum()} vox")
+    mask = mask.astype(bool)
+    if exclude is not None:
+        excl_bool = exclude.astype(bool)
+    else:
+        excl_bool = None
 
-    for a in range(1, graph['n_arcs'] + 1):
-        terr = (graph['partition'] == a).sum()
-        if terr > 0:
-            log(f"    arc {a}: skel={(graph['arc_labels']==a).sum()} "
-                f"terr={terr} radius={graph['radii'].get(a,0):.2f} "
-                f"length={graph['arc_lengths'].get(a,0):.1f}um "
-                f"mean_x={np.argwhere(graph['partition']==a)[:,2].mean():.0f}")
+    # ================================================================
+    # 1. CELL END: the mask's own extent along X
+    # ================================================================
+    cell_start_x, cell_end_x = find_cell_end_x(mask, deep_end_first)
+    nX = mask.shape[2]
+    log(f"  cell X extent: [{cell_start_x}, {cell_end_x}] of {nX}")
 
-    root_arc, has_soma = find_root_arc(graph, deep_end_first)
-    main_path, branches, bif_junctions = walk_main_path(graph, root_arc, voxel)
-    log(f"  root: arc {root_arc}, has_soma={has_soma}")
-    log(f"  main path: {main_path}")
-    log(f"  side branches: {branches}")
+    # ================================================================
+    # 2. SOMA detection via EDT thickness
+    # ================================================================
+    edt = distance_transform_edt(mask, sampling=tuple(voxel))
+    skel = skeletonize(mask)
+    arc_labels, n_arcs = partition_skeleton_into_arcs(skel, MIN_ARC_VOX)
+    radii = arc_radii(edt, arc_labels)
+    median_arc_radius = float(np.median(list(radii.values()))) if radii else 0.0
 
-    # Check soma validity
-    edt = graph["edt"]
-    soma_blob = graph["soma_blob"]
-    real_soma = False
-    if has_soma and soma_blob.any():
-        max_edt = float(edt[soma_blob].max())
+    # --- Use mask_meta to guide soma detection (avoids re-detection at wrong end) ---
+    mask_soma_hint = None
+    if mask_meta is not None:
+        _soma_det = mask_meta.get("soma_detected", None)
+        _soma_end_x = mask_meta.get("soma_end_x", None)
+        if _soma_det is True and _soma_end_x is not None:
+            mask_soma_hint = int(_soma_end_x)
+            log(f"  mask_meta: soma_detected=True, soma_end_x={mask_soma_hint}")
+        elif _soma_det is False:
+            mask_soma_hint = "no_soma"
+            log(f"  mask_meta: soma_detected=False")
+
+    soma_blob = soma_blob_from_thickness(mask, edt, median_arc_radius, voxel)
+
+    has_soma = False
+    if mask_soma_hint == "no_soma":
+        # Trust the mask: no soma
+        log(f"  no soma (mask_meta override)")
+        soma_blob = np.zeros(mask.shape, bool)
+    elif soma_blob.any():
+        # If we have a soma hint, constrain the blob to the correct end
+        if mask_soma_hint is not None and isinstance(mask_soma_hint, int):
+            blob_x = np.argwhere(soma_blob)[:, 2]
+            blob_x_center = float(blob_x.mean())
+            # soma_end_x is in columns from the deep end. Check if the blob is
+            # at the correct end (near soma_end_x, which is proximal / low X
+            # when deep_end_first).
+            soma_zone_x = mask_soma_hint  # the X column where the soma ends
+            if deep_end_first:
+                # soma should be at low X (near column 0 to soma_end_x)
+                if blob_x_center > soma_zone_x + 30:
+                    # Blob is at the WRONG end — rebuild soma from the correct end
+                    log(f"  soma blob at X={blob_x_center:.0f} is beyond soma_end_x={soma_zone_x}; rebuilding at proximal end")
+                    # Use only the proximal columns
+                    prox_zone = mask.copy()
+                    prox_zone[:, :, soma_zone_x + 20:] = False
+                    soma_blob = soma_blob_from_thickness(prox_zone, edt * prox_zone, median_arc_radius, voxel)
+                    if not soma_blob.any():
+                        # Fallback: all mask voxels up to soma_end_x
+                        soma_blob = mask & (np.arange(mask.shape[2])[None, None, :] <= soma_zone_x + 5)
+                        log(f"  soma rebuilt from X≤{soma_zone_x + 5}: {soma_blob.sum()} vox")
+            else:
+                if blob_x_center < nX - soma_zone_x - 30:
+                    log(f"  soma blob at wrong end (deep_end_first=False); rebuilding")
+                    prox_zone = mask.copy()
+                    prox_zone[:, :, :nX - soma_zone_x - 20] = False
+                    soma_blob = soma_blob_from_thickness(prox_zone, edt * prox_zone, median_arc_radius, voxel)
+
+        max_edt = float(edt[soma_blob].max()) if soma_blob.any() else 0
         n_blob = int(soma_blob.sum())
-        if max_edt >= SOMA_MIN_MAX_EDT_UM and n_blob >= SOMA_MIN_VOXELS:
-            real_soma = True
+        n_mask = int(mask.sum())
+        frac = n_blob / max(n_mask, 1)
+        if soma_blob.any() and max_edt >= SOMA_MIN_MAX_EDT_UM and n_blob >= SOMA_MIN_VOXELS and frac < 0.30:
+            has_soma = True
+            log(f"  soma blob: {n_blob} vox ({frac:.1%} of mask), max_edt={max_edt:.2f} um")
+        elif soma_blob.any() and mask_soma_hint is not None and isinstance(mask_soma_hint, int):
+            # Mask said there's a soma — relax criteria if the blob has enough voxels
+            if n_blob >= 50 and max_edt >= 1.5:
+                has_soma = True
+                log(f"  soma blob (mask_meta relaxed): {n_blob} vox ({frac:.1%}), max_edt={max_edt:.2f} um")
+            else:
+                reason = f"too small even with hint: vox={n_blob}, max_edt={max_edt:.2f}"
+                log(f"  soma blob rejected: {reason}")
+                soma_blob = np.zeros(mask.shape, bool)
         else:
-            log(f"  soma blob rejected: max_edt={max_edt:.2f}, voxels={n_blob}")
-            has_soma = False
+            reason = ""
+            if max_edt < SOMA_MIN_MAX_EDT_UM:
+                reason += f"max_edt={max_edt:.2f} < {SOMA_MIN_MAX_EDT_UM}; "
+            if n_blob < SOMA_MIN_VOXELS:
+                reason += f"voxels={n_blob} < {SOMA_MIN_VOXELS}; "
+            if frac >= 0.30:
+                reason += f"frac={frac:.1%} >= 30% (thick tube, not a soma); "
+            log(f"  soma blob rejected: {n_blob} vox, {reason.rstrip('; ')}")
+            soma_blob = np.zeros(mask.shape, bool)
+    else:
+        log(f"  no soma blob found")
 
-    # Geodesic distance from proximal tip
-    if has_soma and soma_blob.any():
+    # ================================================================
+    # 3. SIDE-BRANCH detection via cross-section lobe analysis
+    # ================================================================
+    sb = detect_side_branch(mask, voxel, deep_end_first)
+    if sb is not None:
+        log(f"  side branch FOUND: multi-lobe X=[{sb['multi_lobe_start']},{sb['multi_lobe_end']}], "
+            f"branch2 X={sb['branch2_x_range']}, {sb['branch2_voxels']} vox")
+        log(f"  bifurcation X range: {sb['bif_x_range']}")
+    else:
+        log(f"  no side branch detected")
+
+    # ================================================================
+    # 4. GEODESIC DISTANCE from the proximal tip
+    # ================================================================
+    if has_soma:
         root_voxels = np.argwhere(soma_blob)
     else:
-        root_skel_pts = np.argwhere(graph["arc_labels"] == root_arc)
-        if len(root_skel_pts) == 0:
-            root_skel_pts = np.argwhere(graph["partition"] == root_arc)
+        # Proximal tip: the mask voxels at the deepest X columns
         if deep_end_first:
-            tip_idx = root_skel_pts[:, 2].argmin()
+            tip_x = cell_start_x
         else:
-            tip_idx = root_skel_pts[:, 2].argmax()
-        tip = root_skel_pts[tip_idx]
-        dists_to_tip = np.linalg.norm((root_skel_pts - tip) * np.array(voxel), axis=1)
-        root_voxels = root_skel_pts[dists_to_tip < 3.0]
-        if len(root_voxels) == 0:
-            root_voxels = tip.reshape(1, 3)
+            tip_x = cell_end_x
+        tip_vox = np.argwhere(mask[:, :, tip_x])
+        if len(tip_vox) == 0:
+            # Find the nearest nonempty column
+            for dx in range(1, nX):
+                for xx in [tip_x + dx, tip_x - dx]:
+                    if 0 <= xx < nX:
+                        v = np.argwhere(mask[:, :, xx])
+                        if len(v) > 0:
+                            tip_vox = v
+                            tip_x = xx
+                            break
+                if len(tip_vox) > 0:
+                    break
+        root_voxels = np.column_stack([tip_vox, np.full(len(tip_vox), tip_x)])
 
     dist_from_root = geodesic_distance_from_seeds(mask, root_voxels, voxel)
 
-    # Build main-path territory and side-branch territories
-    main_territory = np.zeros(mask.shape, bool)
-    for a in main_path:
-        main_territory |= (graph["partition"] == a)
-    if exclude is not None:
-        main_territory &= ~exclude.astype(bool)
+    # Path stats
+    main_dists = dist_from_root[mask & np.isfinite(dist_from_root)]
+    if has_soma:
+        main_dists = main_dists[main_dists > 0]
+    total_path_um = float(main_dists.max()) if len(main_dists) > 0 else 0.0
+    log(f"  total path length: {total_path_um:.1f} um")
 
-    side_branch_territories = []
-    for br_arcs in branches:
-        br_terr = np.zeros(mask.shape, bool)
-        for a in br_arcs:
-            br_terr |= (graph["partition"] == a)
-        if has_soma and soma_blob.any():
-            br_terr &= ~soma_blob
-        if exclude is not None:
-            br_terr &= ~exclude.astype(bool)
+    # ================================================================
+    # 5. BUILD REGIONS
+    # ================================================================
+    regions = []  # list of (name, mask_bool, role, reliability)
 
-        # Find the branch skeleton tip (farthest from root)
-        br_skel_pts = []
-        for a in br_arcs:
-            br_skel_pts.extend(np.argwhere(graph["arc_labels"] == a).tolist())
-        if not br_skel_pts:
-            if br_terr.sum() >= SIDE_BRANCH_MIN_TERRITORY:
-                side_branch_territories.append(br_terr)
-            continue
-        br_skel_pts = np.array(br_skel_pts)
-        # The tip is the skeleton point farthest from the root
-        tip_dists = np.array([dist_from_root[tuple(p)] for p in br_skel_pts])
-        tip_dists[~np.isfinite(tip_dists)] = -1
-        tip = br_skel_pts[tip_dists.argmax()]
+    vx = voxel[2]  # X pixel size in um
 
-        # Grow from the tip through the branch territory only
-        # This gives us the "distinctly branch" voxels, excluding junction voxels
-        # that are close to both the main path and the branch
-        costs_br = np.where(br_terr, 1.0, np.inf).astype(float)
-        from skimage.graph import MCP_Geometric
-        mcp = MCP_Geometric(costs_br, sampling=tuple(voxel))
-        dist_from_tip, _ = mcp.find_costs([tuple(tip)])
-        # Also compute distance from the main path through the branch territory
-        mp_boundary = binary_dilation(main_territory, structure=CC26) & br_terr & ~main_territory
-        if mp_boundary.any():
-            mp_boundary_pts = np.argwhere(mp_boundary)
-            mcp2 = MCP_Geometric(costs_br, sampling=tuple(voxel))
-            dist_from_mp, _ = mcp2.find_costs([tuple(p) for p in mp_boundary_pts])
-            # Keep voxels closer to the branch tip than to the main path boundary
-            refined = br_terr & np.isfinite(dist_from_tip) & (dist_from_tip < dist_from_mp * 1.2)
-        else:
-            refined = br_terr
-
-        if refined.sum() >= SIDE_BRANCH_MIN_TERRITORY:
-            side_branch_territories.append(refined)
-            log(f"  side branch: {br_terr.sum()} -> {refined.sum()} vox (tip-based restriction)")
-        elif br_terr.sum() >= SIDE_BRANCH_MIN_TERRITORY:
-            side_branch_territories.append(br_terr)
-            log(f"  side branch: {br_terr.sum()} vox (tip restriction dropped too many)")
-        else:
-            log(f"  dropping tiny side branch: {br_terr.sum()} vox")
-
-    # Main-path distance range (excluding soma)
-    main_usable = main_territory.copy()
-    if has_soma and soma_blob.any():
-        main_usable &= ~soma_blob
-
-    main_dists = dist_from_root[main_usable]
-    main_dists = main_dists[np.isfinite(main_dists)]
-    if len(main_dists) == 0:
-        raise ValueError("no usable main path voxels")
-
-    mp_min = float(main_dists.min())
-    mp_max = float(main_dists.max())
-    mp_length = mp_max - mp_min
-    log(f"  main path (excl soma): dist {mp_min:.1f} - {mp_max:.1f} um, length={mp_length:.1f} um")
-
-    # Bifurcation distance
-    bifurcation_dist = None
-    real_bifurcation = False
-    if bif_junctions:
-        bif_dists = []
-        for j_id in bif_junctions:
-            bp_pts = np.argwhere(graph["bp_labels"] == j_id)
-            for p in bp_pts:
-                d = dist_from_root[tuple(p)]
-                if np.isfinite(d):
-                    bif_dists.append(d)
-        if bif_dists:
-            bifurcation_dist = float(np.min(bif_dists))
-
-    # Only count as a real bifurcation if it has a substantial side branch
-    if bifurcation_dist is not None and side_branch_territories:
-        real_bifurcation = True
-        log(f"  bifurcation at distance {bifurcation_dist:.1f} um from root")
-    elif bifurcation_dist is not None:
-        log(f"  bifurcation at {bifurcation_dist:.1f} um but no substantial side branches — treating as single path")
-        bifurcation_dist = None
-
-    # Second, weaker evidence for the trunk -> branch transition when the skeleton has
-    # no fork inside the tube (the other daughter may leave the scanned volume): a
-    # SUSTAINED step down in dendrite width along the path. Width = mask voxels per
-    # WIDTH_BIN_UM of path (>= one scan chunk, so chunk-edge artifacts average out).
-    # Never decided from activity. Daria's run03: ~14 -> ~8.5 vox/column after her
-    # bifurcation; run05 shows no step, so it stays trunk (her 'branch2' there comes
-    # from anatomy outside the tube; she can rename it in the region tool).
-    width_drop_dist = None
-    width_profile = []
-    if not real_bifurcation:
-        d_all = dist_from_root[main_usable]
-        ok = np.isfinite(d_all)
-        d_all = d_all[ok]
-        edges = np.append(np.arange(mp_min, mp_max, WIDTH_BIN_UM), mp_max)
-        span = np.diff(edges)
-        counts = np.histogram(d_all, bins=edges)[0].astype(float) / np.maximum(span, 1e-9) * WIDTH_BIN_UM
-        if len(counts) > 1 and span[-1] < 0.5 * WIDTH_BIN_UM:   # too short to judge width
-            counts, edges = counts[:-1], edges[:-1]
-        width_profile = [round(float(c), 1) for c in counts]
-        n_b = len(counts)
-        lo_i = int(np.ceil(WIDTH_SKIP_FRAC * n_b))           # skip soma taper / deep end
-        best = None
-        for i in range(max(lo_i, 2), n_b - 2):              # >= 2 bins on each side
-            before, after = counts[lo_i:i], counts[i:]
-            if len(before) < 2 or len(after) < 2 or np.median(before) <= 0:
-                continue
-            ratio = float(np.median(after) / np.median(before))
-            step = float(np.median(counts[max(i - 2, 0):i]))
-            local = float(np.median(counts[i:i + 2])) / step if step > 0 else 1.0
-            if ratio <= WIDTH_DROP_RATIO and local <= WIDTH_DROP_RATIO + 0.1:
-                if best is None or ratio < best[1]:
-                    best = (i, ratio)
-        if best is not None:
-            width_drop_dist = float(edges[best[0]])
-            log(f"  width drop to {best[1]:.2f}x at {width_drop_dist:.1f} um from root "
-                f"(per-{WIDTH_BIN_UM:.0f}-um widths {width_profile})")
-        else:
-            log(f"  no sustained width drop (per-{WIDTH_BIN_UM:.0f}-um widths {width_profile})")
-
-    # ====================================================================
-    # REGION PLACEMENT
-    #
-    # Daria's pattern (from ground truth):
-    #   - reference (soma or proximal trunk) at the very start
-    #   - 1-2 intermediate trunk regions at roughly 25% and 55% of the path
-    #   - the last region at the far distal tip (~93% of path)
-    #   - if a bifurcation exists, a small bif region there and "branch"
-    #     names for everything beyond it
-    #   - the distal end is always "branch" (even without a skeleton fork):
-    #     in L5 apicals the far end is branches by anatomy
-    #   - regions do NOT tile the path — there are unlabeled gaps between
-    #
-    # Implementation: place region centers at fixed fractions of the total
-    # main-path distance, then optimize the exact sub-window by split-half
-    # reliability.
-    # ====================================================================
-    regions = []  # (name, mask, role, reliability)
-
-    # ---- 1. SOMA ----
-    if has_soma and soma_blob.any():
+    # ---- Reference region ----
+    if has_soma:
         n_soma = int(soma_blob.sum())
         if n_soma >= MIN_REGION_VOXELS:
             idx = np.flatnonzero(soma_blob.ravel())
             rel = split_half_reliability(flat, idx)
             regions.append(("soma", soma_blob.copy(), "soma", rel))
             log(f"  REGION soma: {n_soma} vox, rel={rel:.4f}")
-
-    # ---- 2. PROXIMAL REFERENCE (if no soma) ----
-    if not has_soma:
-        ref_end = min(mp_min + PROXIMAL_REF_LENGTH_UM, mp_min + mp_length * 0.06)
-        ref_end = max(ref_end, mp_min + REGION_MIN_LENGTH_UM)
-        w = best_window_in_zone(flat, main_territory, dist_from_root,
-                                mp_min, ref_end, voxel,
-                                target_length_um=PROXIMAL_REF_LENGTH_UM,
-                                min_length_um=REGION_MIN_LENGTH_UM)
-        if w is not None:
-            d_lo, d_hi, rel, n = w
-            rmask = slice_by_distance(main_territory, dist_from_root, d_lo, d_hi)
-            regions.append(("trunk1", rmask, "trunk", rel))
-            log(f"  REGION trunk1 (reference): {n} vox, dist=[{d_lo:.1f},{d_hi:.1f}], rel={rel:.4f}")
+            # The reference extends to the end of the soma in X
+            soma_x_max = int(np.argwhere(soma_blob)[:, 2].max())
+    else:
+        # trunk_soma_end: proximal reference
+        ref_cols = max(5, int(round(PROXIMAL_REF_LENGTH_UM / vx)))
+        if deep_end_first:
+            ref_x_lo = cell_start_x
+            ref_x_hi = min(cell_end_x, cell_start_x + ref_cols - 1)
         else:
-            rmask = slice_by_distance(main_territory, dist_from_root,
-                                       mp_min, mp_min + PROXIMAL_REF_LENGTH_UM)
+            ref_x_hi = cell_end_x
+            ref_x_lo = max(cell_start_x, cell_end_x - ref_cols + 1)
+        w = best_window_in_zone_x(flat, mask, ref_x_lo, ref_x_hi, voxel,
+                                  target_cols=ref_cols)
+        if w is not None:
+            rmask = slice_by_x(mask, w[0], w[1])
+            regions.append(("trunk_soma_end", rmask, "trunk", w[2]))
+            log(f"  REGION trunk_soma_end: {w[3]} vox, X=[{w[0]},{w[1]}], rel={w[2]:.4f}")
+        else:
+            rmask = slice_by_x(mask, ref_x_lo, ref_x_hi)
             n = int(rmask.sum())
             if n >= MIN_REGION_VOXELS:
                 idx = np.flatnonzero(rmask.ravel())
                 rel = split_half_reliability(flat, idx)
-                regions.append(("trunk1", rmask, "trunk", rel))
-                log(f"  REGION trunk1 (reference, fallback): {n} vox, rel={rel:.4f}")
+                regions.append(("trunk_soma_end", rmask, "trunk", rel))
+                log(f"  REGION trunk_soma_end (fallback): {n} vox, rel={rel:.4f}")
 
-    # ---- 3. BIFURCATION region ----
-    bif_region_placed = False
-    if real_bifurcation:
-        bif_half = BIF_REGION_LENGTH_UM / 2
-        bif_lo = max(mp_min, bifurcation_dist - bif_half)
-        bif_hi = min(mp_max, bifurcation_dist + bif_half)
-        bif_mask = slice_by_distance(main_territory, dist_from_root, bif_lo, bif_hi)
+    # ---- Determine the main-path zones ----
+    # Proximal end: end of soma or start of cell
+    if has_soma:
+        prox_x = soma_x_max + 1
+    elif regions:
+        # End of the trunk_soma_end region
+        ref_pts = np.argwhere(regions[-1][1])
+        if deep_end_first:
+            prox_x = int(ref_pts[:, 2].max()) + 1
+        else:
+            prox_x = int(ref_pts[:, 2].min()) - 1
+    else:
+        prox_x = cell_start_x if deep_end_first else cell_end_x
+
+    # Distal end: cell end
+    distal_x = cell_end_x if deep_end_first else cell_start_x
+
+    # If side branch found, determine the bifurcation location
+    bif_x = None
+    branch2_region_mask = None
+    if sb is not None:
+        bif_x_lo, bif_x_hi = sb["bif_x_range"]
+        bif_x = (bif_x_lo + bif_x_hi) // 2
+        branch2_region_mask = sb["branch2_mask"]
+
+    # Main path length (in columns, then um)
+    if deep_end_first:
+        main_cols = distal_x - prox_x + 1
+    else:
+        main_cols = prox_x - distal_x + 1
+
+    main_path_um = main_cols * vx
+    log(f"  main path after reference: {main_cols} cols, {main_path_um:.1f} um")
+
+    # ---- Trunk regions (before the fork, or along the full path if no fork) ----
+    if sb is not None and bif_x is not None:
+        # Trunk extends from prox_x to just before the bifurcation
+        if deep_end_first:
+            trunk_x_lo = prox_x
+            trunk_x_hi = bif_x_lo - 1
+        else:
+            trunk_x_hi = prox_x
+            trunk_x_lo = bif_x_hi + 1
+    else:
+        # No fork: trunk is the full main path
+        if deep_end_first:
+            trunk_x_lo = prox_x
+            trunk_x_hi = distal_x
+        else:
+            trunk_x_lo = distal_x
+            trunk_x_hi = prox_x
+
+    trunk_cols = trunk_x_hi - trunk_x_lo + 1
+    trunk_um = trunk_cols * vx
+
+    # How many trunk regions? ~ one per 80-100 um, minimum 1, maximum 3
+    target_cols_per_region = max(10, int(round(REGION_LENGTH_UM / vx)))
+    if trunk_um < 50:
+        n_trunk = 1
+    elif trunk_um < 180:
+        n_trunk = 2
+    else:
+        n_trunk = min(3, max(2, int(round(trunk_um / 100.0))))
+
+    log(f"  trunk zone: X=[{trunk_x_lo},{trunk_x_hi}], {trunk_um:.0f} um -> {n_trunk} trunk regions")
+
+    # Place trunk regions spread along the trunk zone
+    # Pattern from GT: roughly at 25-30% and 55-60% of the trunk zone
+    trunk_name_start = 1
+    if has_soma:
+        trunk_name_start = 1  # trunk, trunk2
+    else:
+        trunk_name_start = 1  # trunk_soma_end already placed, but we already named it
+        # Next trunk regions named trunk, trunk2
+
+    # For naming: if reference is trunk_soma_end, trunks are "trunk", "trunk2"
+    # If reference is soma, trunks are "trunk", "trunk2"
+    trunk_fracs = np.linspace(0.15, 0.85, n_trunk + 2)[1:-1]  # skip endpoints
+
+    trunk_count = 0
+    for fi, frac in enumerate(trunk_fracs):
+        center_x = int(trunk_x_lo + frac * trunk_cols)
+        half = target_cols_per_region // 2
+
+        x_lo = max(trunk_x_lo, center_x - half)
+        x_hi = min(trunk_x_hi, center_x + half)
+
+        w = best_window_in_zone_x(flat, mask, x_lo, x_hi, voxel,
+                                  target_cols=target_cols_per_region)
+        if w is not None:
+            rmask = slice_by_x(mask, w[0], w[1])
+            if has_soma:
+                rmask &= ~soma_blob
+            n = int(rmask.sum())
+            if n >= MIN_REGION_VOXELS:
+                trunk_count += 1
+                if trunk_count == 1:
+                    name = "trunk" if has_soma else "trunk"
+                else:
+                    name = f"trunk{trunk_count}"
+                regions.append((name, rmask, "trunk", w[2]))
+                log(f"  REGION {name}: {n} vox, X=[{w[0]},{w[1]}], rel={w[2]:.4f}")
+                continue
+
+        # Fallback
+        rmask = slice_by_x(mask, x_lo, x_hi)
+        if has_soma:
+            rmask &= ~soma_blob
+        n = int(rmask.sum())
+        if n >= MIN_REGION_VOXELS:
+            trunk_count += 1
+            if trunk_count == 1:
+                name = "trunk" if has_soma else "trunk"
+            else:
+                name = f"trunk{trunk_count}"
+            idx = np.flatnonzero(rmask.ravel())
+            rel = split_half_reliability(flat, idx)
+            regions.append((name, rmask, "trunk", rel))
+            log(f"  REGION {name} (fallback): {n} vox, X=[{x_lo},{x_hi}], rel={rel:.4f}")
+
+    # ---- Rename trunk regions to be consistent ----
+    # Daria's pattern: trunk1, trunk2 (or trunk, trunk2 when soma present)
+    # With trunk_soma_end as reference, the trunks should be "trunk", "trunk2"
+    # With soma as reference, the trunks should be "trunk", "trunk2"
+    # Let's just fix the naming sequentially
+    trunk_regions = [(i, r) for i, r in enumerate(regions) if r[2] == "trunk" and r[0] not in ("trunk_soma_end", "soma")]
+    for seq, (idx, r) in enumerate(trunk_regions):
+        if seq == 0:
+            new_name = "trunk"
+        else:
+            new_name = f"trunk{seq + 1}"
+        regions[idx] = (new_name, r[1], r[2], r[3])
+
+    # ---- Bifurcation region ----
+    if sb is not None:
+        bif_x_lo, bif_x_hi = sb["bif_x_range"]
+        bif_mask = slice_by_x(mask, bif_x_lo, bif_x_hi)
+        if has_soma:
+            bif_mask &= ~soma_blob
         n_bif = int(bif_mask.sum())
         if n_bif >= MIN_REGION_VOXELS:
             idx = np.flatnonzero(bif_mask.ravel())
             rel = split_half_reliability(flat, idx)
             regions.append(("bifurcation", bif_mask, "branch", rel))
-            bif_region_placed = True
-            log(f"  REGION bifurcation: {n_bif} vox, dist=[{bif_lo:.1f},{bif_hi:.1f}], rel={rel:.4f}")
+            log(f"  REGION bifurcation: {n_bif} vox, X=[{bif_x_lo},{bif_x_hi}], rel={rel:.4f}")
 
-    # ---- 4. MAIN-PATH intermediate and distal regions ----
-    # Determine the trunk/branch boundary
-    if real_bifurcation:
-        trunk_boundary = bifurcation_dist
-    elif width_drop_dist is not None:
-        trunk_boundary = width_drop_dist                  # weaker evidence; flagged below
-    else:
-        # No evidence of a transition inside the scan: everything on the main path is
-        # trunk (v0.3 called the distal 30 % 'branch' by position, which mislabeled
-        # trunk as branch in cells without a fork).
-        trunk_boundary = np.inf
+    # ---- Branch2 region (the side lobe) ----
+    if sb is not None and branch2_region_mask is not None:
+        b2_vox = int(branch2_region_mask.sum())
+        if b2_vox >= MIN_REGION_VOXELS:
+            idx = np.flatnonzero(branch2_region_mask.ravel())
+            rel = split_half_reliability(flat, idx)
+            regions.append(("branch2", branch2_region_mask.copy(), "branch", rel))
+            b2_x = sb["branch2_x_range"]
+            log(f"  REGION branch2 (side lobe): {b2_vox} vox, X=[{b2_x[0]},{b2_x[1]}], rel={rel:.4f}")
 
-    # How many intermediate regions to place?
-    # Pattern: at ~25% and ~55% of path for trunk, ~65% and ~93% for branch
-    # (with the last region anchored at the distal tip).
-    # Decide count from path length.
-    n_intermediate = max(2, min(4, round(mp_length / 100.0)))
-    # Typical: 2 for short dendrites (<200 um), 3 for medium (200-350), 4 for long (>350)
-
-    # Generate region center fractions, evenly spaced between ~20% and ~95%
-    # (leaving room at proximal end for the reference)
-    frac_start = 0.22
-    frac_end = 0.93
-    fracs = np.linspace(frac_start, frac_end, n_intermediate)
-
-    trunk_name_start = 1 if has_soma else 2  # trunk1 is the no-soma reference
-    trunk_count = 0
-    branch_main_count = 0  # branch regions on the main path
-
-    for fi, frac in enumerate(fracs):
-        center_dist = mp_min + frac * mp_length
-        half = REGION_LENGTH_UM / 2
-
-        # Is this region before or after the trunk/branch boundary?
-        is_branch = center_dist > trunk_boundary
-
-        # Widen window for the last region (distal tip)
-        if fi == len(fracs) - 1:
-            # Anchor the last region at the distal tip
-            z_hi = min(mp_max + 0.5, mp_max)
-            z_lo = max(z_hi - REGION_LENGTH_UM * 1.8, mp_min)
-            # Make it big (Daria's distal regions are large)
-            target_len = REGION_LENGTH_UM * 1.8
+    # ---- Main-branch regions (after the fork) ----
+    if sb is not None:
+        # Main branch starts after the multi-lobe zone ends
+        # The main path continues; the side branch has been separated
+        if deep_end_first:
+            mb_x_lo = sb["multi_lobe_end"] + 1
+            mb_x_hi = distal_x
         else:
-            z_lo = max(mp_min, center_dist - half)
-            z_hi = min(mp_max, center_dist + half)
-            target_len = REGION_LENGTH_UM
+            mb_x_hi = sb["multi_lobe_start"] - 1
+            mb_x_lo = distal_x
 
-        # Skip if we'd overlap with the bifurcation region
-        if bif_region_placed and not is_branch:
-            bif_d = bifurcation_dist
-            if z_lo < bif_d + BIF_REGION_LENGTH_UM and z_hi > bif_d - BIF_REGION_LENGTH_UM:
-                # This window is near the bifurcation — shift it or skip
-                if center_dist < bif_d:
-                    z_hi = min(z_hi, bif_d - BIF_REGION_LENGTH_UM)
-                else:
-                    z_lo = max(z_lo, bif_d + BIF_REGION_LENGTH_UM)
+        mb_cols = mb_x_hi - mb_x_lo + 1
+        mb_um = mb_cols * vx
 
-        # Assign name
-        if is_branch:
-            if branch_main_count == 0:
-                name = "branch1"
-            elif branch_main_count == 1:
-                name = "branch1far"
+        if mb_cols > 3:
+            # How many main_branch regions?
+            if mb_um < 60:
+                n_mb = 1
+            elif mb_um < 180:
+                n_mb = 2
             else:
-                name = f"branch1far{branch_main_count}"
-            role = "branch"
-        else:
-            idx_num = trunk_name_start + trunk_count
-            name = f"trunk{idx_num}" if idx_num > 1 else "trunk"
-            role = "trunk"
+                n_mb = min(3, max(2, int(round(mb_um / 100.0))))
 
-        # For the last region, use a wider search zone
-        if fi == len(fracs) - 1:
-            w = best_window_in_zone(flat, main_territory, dist_from_root,
-                                     z_lo, z_hi, voxel,
-                                     target_length_um=target_len,
-                                     min_length_um=REGION_MIN_LENGTH_UM)
+            log(f"  main_branch zone: X=[{mb_x_lo},{mb_x_hi}], {mb_um:.0f} um -> {n_mb} regions")
+
+            mb_fracs = np.linspace(0.1, 0.9, n_mb + 2)[1:-1]
+
+            mb_count = 0
+            for fi, frac in enumerate(mb_fracs):
+                center_x = int(mb_x_lo + frac * mb_cols)
+                half = target_cols_per_region // 2
+
+                # Last region should be anchored near the distal end
+                if fi == len(mb_fracs) - 1:
+                    if deep_end_first:
+                        x_hi = mb_x_hi
+                        x_lo = max(mb_x_lo, x_hi - int(target_cols_per_region * 1.5))
+                    else:
+                        x_lo = mb_x_lo
+                        x_hi = min(mb_x_hi, x_lo + int(target_cols_per_region * 1.5))
+                else:
+                    x_lo = max(mb_x_lo, center_x - half)
+                    x_hi = min(mb_x_hi, center_x + half)
+
+                # Exclude branch2 voxels from main_branch regions
+                w = best_window_in_zone_x(flat, mask & ~branch2_region_mask, x_lo, x_hi, voxel,
+                                          target_cols=target_cols_per_region)
+                if w is not None:
+                    rmask = slice_by_x(mask & ~branch2_region_mask, w[0], w[1])
+                    if has_soma:
+                        rmask &= ~soma_blob
+                    n = int(rmask.sum())
+                    if n >= MIN_REGION_VOXELS:
+                        mb_count += 1
+                        if mb_count == 1:
+                            name = "main_branch"
+                        elif mb_count == 2:
+                            name = "main_branch2"
+                        else:
+                            name = f"main_branch{mb_count}"
+                        regions.append((name, rmask, "branch", w[2]))
+                        log(f"  REGION {name}: {n} vox, X=[{w[0]},{w[1]}], rel={w[2]:.4f}")
+                        continue
+
+                # Fallback
+                rmask = slice_by_x(mask & ~branch2_region_mask, x_lo, x_hi)
+                if has_soma:
+                    rmask &= ~soma_blob
+                n = int(rmask.sum())
+                if n >= MIN_REGION_VOXELS:
+                    mb_count += 1
+                    if mb_count == 1:
+                        name = "main_branch"
+                    elif mb_count == 2:
+                        name = "main_branch2"
+                    else:
+                        name = f"main_branch{mb_count}"
+                    idx = np.flatnonzero(rmask.ravel())
+                    rel = split_half_reliability(flat, idx)
+                    regions.append((name, rmask, "branch", rel))
+                    log(f"  REGION {name} (fallback): {n} vox, X=[{x_lo},{x_hi}], rel={rel:.4f}")
+    else:
+        # No fork: the distal end is "branch" (Daria's run07 pattern: distal = branch)
+        # Place a distal region
+        if deep_end_first:
+            dist_x_hi = distal_x
+            dist_x_lo = max(trunk_x_lo, distal_x - int(target_cols_per_region * 1.5))
         else:
-            w = best_window_in_zone(flat, main_territory, dist_from_root,
-                                     z_lo, z_hi, voxel,
-                                     target_length_um=target_len,
-                                     min_length_um=REGION_MIN_LENGTH_UM)
+            dist_x_lo = distal_x
+            dist_x_hi = min(trunk_x_hi, distal_x + int(target_cols_per_region * 1.5))
+
+        w = best_window_in_zone_x(flat, mask, dist_x_lo, dist_x_hi, voxel,
+                                  target_cols=target_cols_per_region)
         if w is not None:
-            d_lo, d_hi, rel, n = w
-            rmask = slice_by_distance(main_territory, dist_from_root, d_lo, d_hi)
-            if has_soma and soma_blob.any():
+            rmask = slice_by_x(mask, w[0], w[1])
+            if has_soma:
                 rmask &= ~soma_blob
             n = int(rmask.sum())
             if n >= MIN_REGION_VOXELS:
-                regions.append((name, rmask, role, rel))
-                log(f"  REGION {name}: {n} vox, dist=[{d_lo:.1f},{d_hi:.1f}], rel={rel:.4f}")
-                if is_branch:
-                    branch_main_count += 1
-                else:
-                    trunk_count += 1
-                continue
-
-        # Fallback
-        rmask = slice_by_distance(main_territory, dist_from_root, z_lo, z_hi)
-        if has_soma and soma_blob.any():
-            rmask &= ~soma_blob
-        n = int(rmask.sum())
-        if n >= MIN_REGION_VOXELS:
-            idx = np.flatnonzero(rmask.ravel())
-            rel = split_half_reliability(flat, idx)
-            regions.append((name, rmask, role, rel))
-            log(f"  REGION {name}: {n} vox, dist=[{z_lo:.1f},{z_hi:.1f}], rel={rel:.4f} (fallback)")
-            if is_branch:
-                branch_main_count += 1
-            else:
-                trunk_count += 1
-
-    # ---- 5. (v0.4) no renaming: with no fork, main-path regions are trunk, and
-    # beyond a width drop they keep the branch1 / branch1far names. ----
-
-    # ---- 6. SIDE-BRANCH regions (branch2, branch3, ...) ----
-    # Determine next branch number
-    existing_branch_nums = set()
-    for rname, _, rrole, _ in regions:
-        if rrole == "branch" and "branch" in rname:
-            import re
-            m = re.search(r"branch(\d+)", rname)
-            if m:
-                existing_branch_nums.add(int(m.group(1)))
-    branch_num = max(existing_branch_nums, default=1) + 1
-    # But skip numbers already used
-    while branch_num in existing_branch_nums:
-        branch_num += 1
-
-    for sb_terr in side_branch_territories:
-        n_sb = int(sb_terr.sum())
-        if n_sb < MIN_REGION_VOXELS:
-            continue
-        idx = np.flatnonzero(sb_terr.ravel())
-        rel = split_half_reliability(flat, idx)
-        name = f"branch{branch_num}"
-        regions.append((name, sb_terr, "branch", rel))
-        sb_dists = dist_from_root[sb_terr]
-        sb_dists = sb_dists[np.isfinite(sb_dists)]
-        log(f"  REGION {name} (side): {n_sb} vox, dist={np.median(sb_dists):.1f}, rel={rel:.4f}")
-        existing_branch_nums.add(branch_num)
-        branch_num += 1
+                # Check if this overlaps with any trunk region already placed
+                overlap = False
+                for rn, rm, rr, _ in regions:
+                    if rr == "trunk" and rn not in ("trunk_soma_end",):
+                        if (rmask & rm).sum() > 0.3 * n:
+                            overlap = True
+                            break
+                if not overlap:
+                    regions.append(("branch", rmask, "branch", w[2]))
+                    log(f"  REGION branch (distal): {n} vox, X=[{w[0]},{w[1]}], rel={w[2]:.4f}")
 
     if not regions:
         raise ValueError("no regions found")
 
-    # ====================================================================
-    # BUILD OUTPUT
-    # ====================================================================
+    # ================================================================
+    # 6. BUILD OUTPUT
+    # ================================================================
     seg = np.zeros(mask.shape, np.uint8)
     region_meta = []
 
-    # Sort by geodesic distance
-    def region_dist(r):
+    # Sort regions by their median X coordinate
+    def region_median_x(r):
         name, rmask, role, rel = r
-        d = dist_from_root[rmask]
-        d = d[np.isfinite(d)]
-        return float(np.median(d)) if len(d) > 0 else 0.0
+        pts = np.argwhere(rmask)
+        return float(pts[:, 2].mean()) if len(pts) > 0 else 0.0
 
-    regions.sort(key=region_dist)
+    if deep_end_first:
+        regions.sort(key=region_median_x)
+    else:
+        regions.sort(key=lambda r: -region_median_x(r))
 
     label_num = 1
     for name, rmask, role, rel in regions:
         seg[rmask] = label_num
-        d = dist_from_root[rmask]
-        d = d[np.isfinite(d)]
-        med_dist = float(np.median(d)) if len(d) > 0 else 0.0
+        pts = np.argwhere(rmask)
+        x_lo_r = int(pts[:, 2].min()) if len(pts) > 0 else 0
+        x_hi_r = int(pts[:, 2].max()) if len(pts) > 0 else 0
         region_meta.append({
             "label": label_num,
             "name": name,
             "role": role,
             "voxels": int(rmask.sum()),
             "reliability": round(rel, 4) if rel == rel else 0.0,
-            "distance_um": round(med_dist, 2),
+            "x_range": [x_lo_r, x_hi_r],
+            "x_span_um": round((x_hi_r - x_lo_r) * vx, 1),
         })
         label_num += 1
 
     # Clamp to mask
-    seg[~mask.astype(bool)] = 0
-    if exclude is not None:
-        seg[exclude.astype(bool)] = 0
+    seg[~mask] = 0
+    if excl_bool is not None:
+        seg[excl_bool] = 0
 
     # Drop small islands
     seg, rep = drop_small_islands(seg, min_voxels=MIN_ISLAND_VOX)
@@ -894,15 +1076,15 @@ def pick_regions(stack_path, mask, voxel, exclude=None, deep_end_first=True):
     # Determine reference
     ref_label = None
     for rm in region_meta:
-        if rm["role"] == "soma":
+        if rm["name"] == "soma" or rm["name"] == "trunk_soma_end":
             ref_label = rm["label"]
             break
     if ref_label is None:
         trunk_regions = [rm for rm in region_meta if rm["role"] == "trunk"]
         if trunk_regions:
-            ref_label = min(trunk_regions, key=lambda rm: rm["distance_um"])["label"]
+            ref_label = trunk_regions[0]["label"]
 
-    # Recompute distances from reference
+    # Compute geodesic distances from reference
     if ref_label is not None:
         ref_voxels = np.argwhere(seg == ref_label)
         if len(ref_voxels) > 0:
@@ -911,30 +1093,35 @@ def pick_regions(stack_path, mask, voxel, exclude=None, deep_end_first=True):
                 d = ref_dist[seg == rm["label"]]
                 d = d[np.isfinite(d)]
                 rm["distance_um"] = round(float(np.median(d)), 2) if len(d) > 0 else 0.0
+    else:
+        for rm in region_meta:
+            rm["distance_um"] = 0.0
 
-    region_meta.sort(key=lambda rm: rm["distance_um"])
+    region_meta.sort(key=lambda rm: rm.get("distance_um", 0))
 
     # Reason strings
     for rm in region_meta:
         reasons = []
-        if rm["role"] == "soma":
+        if rm["name"] == "soma":
             reasons.append("thick blob (EDT >= 2x median arc radius)")
-        elif rm["name"] == "trunk1" and not has_soma:
-            reasons.append("proximal reference (deep end)")
+        elif rm["name"] == "trunk_soma_end":
+            reasons.append("proximal reference (deep end, no soma detected)")
+        elif rm["name"] == "bifurcation":
+            reasons.append("junction where cross-section splits into multiple lobes")
+        elif rm["name"] == "branch2":
+            reasons.append("side lobe diverging from main path in cross-section")
+        elif rm["name"].startswith("main_branch"):
+            reasons.append("main-path continuation beyond the side-branch fork")
+        elif rm["name"] == "branch":
+            reasons.append("distal end of the dendrite (no fork detected)")
         elif "trunk" in rm["name"]:
             reasons.append("main-path trunk region")
-        elif rm["name"] == "bifurcation":
-            reasons.append("skeleton bifurcation point")
-        elif "branch" in rm["name"] and rm["name"] not in ("branch1", "branch1far") and not rm["name"].startswith("branch1far"):
-            reasons.append("side branch leaving main path")
-        elif real_bifurcation:
-            reasons.append("main-path continuation beyond bifurcation")
         else:
-            reasons.append(f"main path beyond a sustained width drop at {width_drop_dist:.0f} um (no fork in the scan)")
+            reasons.append("region")
         reasons.append(f"full cross-section, {rm['voxels']} vox, rel={rm['reliability']:.4f}")
         rm["reason"] = "; ".join(reasons)
 
-    reference_type = "soma" if any(rm["role"] == "soma" for rm in region_meta) else "proximal_trunk"
+    reference_type = "soma" if has_soma else "proximal_trunk"
     reference_name = None
     for rm in region_meta:
         if rm["label"] == ref_label:
@@ -942,36 +1129,34 @@ def pick_regions(stack_path, mask, voxel, exclude=None, deep_end_first=True):
             break
 
     flags = []
-    if not real_bifurcation:
-        flags.append("no_bifurcation_detected")
-        if width_drop_dist is not None:
-            flags.append(f"branch_from_width_drop_at_{width_drop_dist:.0f}um")
-        else:
-            flags.append("all_main_path_regions_trunk")
+    if sb is None:
+        flags.append("no_side_branch_detected")
+    if not has_soma:
+        flags.append("no_soma_detected")
 
     return seg, {
         "regions": region_meta,
         "reference": reference_type,
         "reference_region": reference_name,
         "reference_label": ref_label,
-        "trunk_branch_boundary": ("skeleton_fork" if real_bifurcation else
-                                  "width_drop" if width_drop_dist is not None else "none"),
-        "width_drop_um": width_drop_dist,
-        "width_profile_vox_per_bin": width_profile,
-        "width_bin_um": WIDTH_BIN_UM,
+        "side_branch": {
+            "found": sb is not None,
+            "multi_lobe_start": sb["multi_lobe_start"] if sb else None,
+            "multi_lobe_end": sb["multi_lobe_end"] if sb else None,
+            "bif_x_range": list(sb["bif_x_range"]) if sb else None,
+            "branch2_x_range": list(sb["branch2_x_range"]) if sb else None,
+            "branch2_voxels": sb["branch2_voxels"] if sb else None,
+        } if sb else {"found": False},
+        "cell_end_x": cell_end_x,
+        "cell_start_x": cell_start_x,
         "flags": flags,
         "tree_info": {
-            "n_arcs": graph["n_arcs"],
-            "n_skel_voxels": int(graph["skel"].sum()),
-            "main_path_arcs": main_path,
-            "branch_arc_groups": [[int(a) for a in br] for br in branches],
-            "bifurcation_junctions": [int(j) for j in bif_junctions],
-            "bifurcation_dist_um": round(bifurcation_dist, 2) if bifurcation_dist is not None else None,
             "has_soma": has_soma,
             "soma_blob_voxels": int(soma_blob.sum()) if soma_blob is not None else 0,
-            "median_arc_radius_um": graph["median_arc_radius"],
+            "median_arc_radius_um": median_arc_radius,
             "deep_end_first": deep_end_first,
-            "total_path_length_um": round(mp_length + (float(dist_from_root[soma_blob].max()) if has_soma and soma_blob.any() else 0), 2),
+            "total_path_length_um": round(total_path_um, 2),
+            "n_arcs": n_arcs,
         },
         "log": log_lines,
     }
@@ -1010,13 +1195,12 @@ def build_sidecar(seg, voxel, meta, stack_path, mask_path, version=__version__):
                 "region_length_um": REGION_LENGTH_UM,
                 "region_min_length_um": REGION_MIN_LENGTH_UM,
                 "min_region_voxels": MIN_REGION_VOXELS,
-                "trunk_spacing_um": TRUNK_REGION_SPACING_UM,
-                "branch_spacing_um": BRANCH_REGION_SPACING_UM,
                 "bif_region_length_um": BIF_REGION_LENGTH_UM,
                 "proximal_ref_length_um": PROXIMAL_REF_LENGTH_UM,
                 "soma_factor": SOMA_FACTOR,
-                "spur_threshold_um": SPUR_THRESHOLD_UM,
-                "branch_min_territory": BRANCH_MIN_TERRITORY,
+                "multi_lobe_run_min": MULTI_LOBE_RUN_MIN,
+                "side_lobe_min_cols": SIDE_LOBE_MIN_COLS,
+                "side_lobe_min_voxels": SIDE_LOBE_MIN_VOXELS,
             },
             "reference": meta["reference"],
             "reference_region": meta.get("reference_region"),
@@ -1027,10 +1211,13 @@ def build_sidecar(seg, voxel, meta, stack_path, mask_path, version=__version__):
                     "voxels": rm["voxels"],
                     "distance_um": rm.get("distance_um", 0.0),
                     "reliability": rm["reliability"],
+                    "x_range": rm.get("x_range", [0, 0]),
                     "reason": rm.get("reason", ""),
                 }
                 for rm in meta["regions"]
             },
+            "side_branch": meta.get("side_branch", {"found": False}),
+            "cell_end_x": meta.get("cell_end_x"),
             "tree_info": meta["tree_info"],
             "flags": meta.get("flags", []),
         },
@@ -1119,15 +1306,21 @@ def make_qc_figure(seg, mask, voxel, meta, stack_path, out_path, flat=None):
 
     # Summary table
     ax = axes[1, 1]; ax.axis("off")
-    headers = ["Region", "Voxels", "Dist(um)", "Rel", "Role"]
+    headers = ["Region", "Voxels", "X range", "Dist(um)", "Rel", "Role"]
     table_data = [[rm["name"], str(rm["voxels"]),
+                   f"{rm.get('x_range', [0,0])[0]}-{rm.get('x_range', [0,0])[1]}",
                    f"{rm.get('distance_um', 0):.1f}",
                    f"{rm['reliability']:.4f}", rm["role"]]
                   for rm in meta["regions"]]
     if table_data:
         table = ax.table(cellText=table_data, colLabels=headers, loc="center", cellLoc="center")
         table.auto_set_font_size(False); table.set_fontsize(8); table.scale(1.0, 1.3)
-    ax.set_title(f"auto_regions v{__version__}: {Path(stack_path).stem}", fontsize=9)
+
+    sb_info = meta.get("side_branch", {})
+    title_extra = ""
+    if sb_info.get("found"):
+        title_extra = f" | bif X={sb_info.get('bif_x_range')}"
+    ax.set_title(f"auto_regions v{__version__}: {Path(stack_path).stem}{title_extra}", fontsize=9)
 
     plt.tight_layout()
     plt.savefig(str(out_path), dpi=150, bbox_inches="tight")
@@ -1176,12 +1369,31 @@ def run_auto_regions(stack_path, mask_path, exclude_path=None, out_dir=None,
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    log_file = ROOT / "auto_pipeline" / "logs" / "regioner.jsonl"
-    log_jsonl(log_file, {"stage": "regioner", "what": "start",
+    log_file = ROOT / "auto_pipeline" / "logs" / "regions_v5.jsonl"
+    log_jsonl(log_file, {"stage": "regions_v5", "what": "start",
                          "result": f"stack={stack_path.name} mask={mask_path.name} v={__version__}"})
 
+    # Load the mask JSON sidecar (if auto_mask produced it) for soma hints
+    mask_meta = None
+    mask_json_candidates = [
+        mask_path.parent / mask_path.name.replace("_autoseg_labelmap_reviewed.tif", "_autoseg_reviewed.json"),
+        mask_path.parent / mask_path.name.replace("_labelmap_reviewed.tif", "_reviewed.json"),
+    ]
+    for mjp in mask_json_candidates:
+        if mjp.exists():
+            try:
+                with open(mjp) as f:
+                    mjdata = json.load(f)
+                reviews = mjdata.get("reviews", [])
+                if reviews:
+                    mask_meta = reviews[-1].get("params", {})
+                    print(f"[auto_regions] loaded mask_meta from {mjp.name}: soma_detected={mask_meta.get('soma_detected')}")
+                break
+            except Exception:
+                pass
+
     seg, meta = pick_regions(stack_path, mask, voxel, exclude=exclude,
-                             deep_end_first=deep_end_first)
+                             deep_end_first=deep_end_first, mask_meta=mask_meta)
 
     seg_path = out_dir / f"{stem}_segments_final.tif"
     json_path = out_dir / f"{stem}_segments_final.json"
@@ -1199,7 +1411,7 @@ def run_auto_regions(stack_path, mask_path, exclude_path=None, out_dir=None,
     make_qc_figure(seg, mask.astype(bool) if not isinstance(mask, np.ndarray) else mask,
                    voxel, meta, stack_path, qc_path)
 
-    log_jsonl(log_file, {"stage": "regioner", "what": "done",
+    log_jsonl(log_file, {"stage": "regions_v5", "what": "done",
                          "result": f"seg={seg_path.name} regions={[rm['name'] for rm in meta['regions']]} v={__version__}"})
 
     print(f"\nOutputs:")

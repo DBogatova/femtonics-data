@@ -1,0 +1,341 @@
+{
+  "cells": [
+    {
+      "id": 1,
+      "labels": {
+        "soma": 1,
+        "trunk": 2,
+        "branches": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ]
+      },
+      "n_voxels": 28213,
+      "temporal_r_to_others": {
+        "2": 0.677,
+        "3": 0.524,
+        "4": 0.531,
+        "5": 0.54,
+        "6": 0.763
+      },
+      "anatomy_provisional": false,
+      "provisional_reasons": [],
+      "n_skeleton_voxels": 2200,
+      "max_radius_um": 3.4,
+      "n_branches": 7
+    },
+    {
+      "id": 2,
+      "labels": {
+        "soma": 11,
+        "trunk": 12,
+        "branches": [
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ]
+      },
+      "n_voxels": 2850,
+      "temporal_r_to_others": {
+        "1": 0.677,
+        "3": 0.184,
+        "4": 0.191,
+        "5": 0.394,
+        "6": 0.765
+      },
+      "anatomy_provisional": true,
+      "provisional_reasons": [
+        "max radius small (1.41 um)"
+      ],
+      "n_skeleton_voxels": 451,
+      "max_radius_um": 1.41,
+      "n_branches": 7
+    },
+    {
+      "id": 3,
+      "labels": {
+        "soma": 21,
+        "trunk": 22,
+        "branches": [
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29
+        ]
+      },
+      "n_voxels": 1470,
+      "temporal_r_to_others": {
+        "1": 0.524,
+        "2": 0.184,
+        "4": 0.581,
+        "5": 0.615,
+        "6": 0.4
+      },
+      "anatomy_provisional": true,
+      "provisional_reasons": [
+        "max radius small (1.16 um)"
+      ],
+      "n_skeleton_voxels": 569,
+      "max_radius_um": 1.164,
+      "n_branches": 7
+    },
+    {
+      "id": 4,
+      "labels": {
+        "soma": 31,
+        "trunk": 32,
+        "branches": [
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39
+        ]
+      },
+      "n_voxels": 5224,
+      "temporal_r_to_others": {
+        "1": 0.531,
+        "2": 0.191,
+        "3": 0.581,
+        "5": 0.458,
+        "6": 0.279
+      },
+      "anatomy_provisional": false,
+      "provisional_reasons": [],
+      "n_skeleton_voxels": 433,
+      "max_radius_um": 2.656,
+      "n_branches": 7
+    },
+    {
+      "id": 5,
+      "labels": {
+        "soma": 41,
+        "trunk": 42,
+        "branches": [
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49
+        ]
+      },
+      "n_voxels": 19548,
+      "temporal_r_to_others": {
+        "1": 0.54,
+        "2": 0.394,
+        "3": 0.615,
+        "4": 0.458,
+        "6": 0.428
+      },
+      "anatomy_provisional": false,
+      "provisional_reasons": [],
+      "n_skeleton_voxels": 1348,
+      "max_radius_um": 2.671,
+      "n_branches": 7
+    },
+    {
+      "id": 6,
+      "labels": {
+        "soma": 51,
+        "trunk": 52,
+        "branches": [
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59
+        ]
+      },
+      "n_voxels": 6317,
+      "temporal_r_to_others": {
+        "1": 0.763,
+        "2": 0.765,
+        "3": 0.4,
+        "4": 0.279,
+        "5": 0.428
+      },
+      "anatomy_provisional": true,
+      "provisional_reasons": [
+        "max radius small (1.80 um)"
+      ],
+      "n_skeleton_voxels": 762,
+      "max_radius_um": 1.804,
+      "n_branches": 7
+    }
+  ],
+  "params": {
+    "version": "1.0.0",
+    "created": "2026-09-28T20:35:35.067507+00:00",
+    "input": "/Users/daria/Desktop/femtonics-data/rbp4_141_phpeb/06-17-2026/preprocessed/run06/run06_clean.tif",
+    "input_shape_TZYX": [
+      1230,
+      18,
+      19,
+      456
+    ],
+    "voxel_zyx_um": [
+      0.85,
+      0.7958,
+      0.7958
+    ],
+    "mask_source": "denoised",
+    "computed_from": "run06_clean_denoised.tif",
+    "analysis_note": "mask geometry only; traces/events use the raw registered stack",
+    "thr": 0.8,
+    "k": 6,
+    "merge_r": 0.8,
+    "min_voxels": 60,
+    "sigma": 0.8,
+    "max_branches": 7,
+    "close_iter": 1,
+    "nmf_max_iter": 300,
+    "seed": 0,
+    "skan_available": false
+  },
+  "stats": {
+    "mask_voxels": 63622,
+    "mask_fraction": 0.40796,
+    "score_thr": 0.8,
+    "n_cells": 6,
+    "nmf": {
+      "n_vox": 63622,
+      "k_requested": 6,
+      "k_effective": 6,
+      "n_components_active": 6,
+      "n_cells": 6,
+      "merge_r": 0.8,
+      "single_component": false
+    },
+    "runtime_s": 11.75,
+    "peak_mem_mb": 5311.6,
+    "any_provisional_anatomy": true
+  },
+  "reviews": [
+    {
+      "tool": "trace_mask_napari",
+      "version": "0.1.0",
+      "created": "2026-10-05T02:46:47.291844+00:00",
+      "output": "run06_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 5953,
+      "n_arcs": 73,
+      "islands_removed": [],
+      "min_island_voxels": 20,
+      "arc_lengths_vox": [
+        8,
+        16,
+        13,
+        7,
+        39,
+        11,
+        5,
+        4,
+        8,
+        5,
+        17,
+        97,
+        11,
+        17,
+        73,
+        19,
+        5,
+        3,
+        16,
+        14,
+        6,
+        9,
+        29,
+        15,
+        13,
+        17,
+        21,
+        21,
+        18,
+        13,
+        18,
+        19,
+        27,
+        24,
+        31,
+        26,
+        13,
+        12,
+        30,
+        21,
+        49,
+        44,
+        13,
+        66,
+        22,
+        23,
+        62,
+        24,
+        8,
+        124,
+        4,
+        60,
+        129,
+        5,
+        52,
+        4,
+        17,
+        26,
+        26,
+        12,
+        17,
+        25,
+        22,
+        35,
+        44,
+        28,
+        20,
+        17,
+        34,
+        34,
+        50,
+        6,
+        29
+      ],
+      "voxel_zyx_um": [
+        0.85,
+        0.7958,
+        0.7958
+      ],
+      "params": {
+        "alpha": 0.13,
+        "radius_x": 1.23,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "manually_erased_voxels": 2022,
+        "manually_added_voxels": 0,
+        "other_cells": {
+          "alpha": 0.5,
+          "radius_x": 1.5,
+          "pad": 0,
+          "erased": 0,
+          "added": 0
+        },
+        "n_other_cell_arcs": 0
+      },
+      "label_convention": "cell 1, class 2 (structure) -> label 2; anatomy assigned later by wrap_segments"
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+{
+  "created": "2026-10-04T22:52:35.771956-04:00",
+  "tool": "wrap_segments_napari.py",
+  "voxel_zyx_um": [
+    0.85,
+    0.7958,
+    0.7958
+  ],
+  "labels": {
+    "1": "soma",
+    "2": "trunk",
+    "3": "branch1",
+    "4": "branch2",
+    "5": "branch3"
+  },
+  "voxels_per_label": {
+    "1": 375,
+    "2": 351,
+    "3": 212,
+    "4": 256,
+    "5": 196
+  },
+  "source_clean": "/Users/daria/Desktop/femtonics-data/rbp4_141_phpeb/06-17-2026/preprocessed/run06/run06_clean.tif",
+  "source_autoseg": "/Users/daria/Desktop/femtonics-data/rbp4_141_phpeb/06-17-2026/preprocessed/run06/run06_clean_autoseg_labelmap_reviewed.tif",
+  "accepted_cells": [
+    1
+  ],
+  "segment_names": {
+    "1": "trunk_soma_side",
+    "2": "trunk1",
+    "3": "trunk2",
+    "4": "branch_mid",
+    "5": "branch_end"
+  },
+  "islands_removed": [],
+  "min_island_voxels": 20,
+  "wrap_clicks": [
+    {
+      "click_zyx": [
+        8,
+        11,
+        17
+      ],
+      "arc": -1,
+      "label": 3,
+      "name": "trunk_soma_side",
+      "size": 375,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        4,
+        12,
+        5
+      ],
+      "length_um": 12.42
+    },
+    {
+      "click_zyx": [
+        1,
+        14,
+        120
+      ],
+      "arc": -1,
+      "label": 4,
+      "name": "trunk1",
+      "size": 351,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        4,
+        11,
+        143
+      ],
+      "length_um": 21.63
+    },
+    {
+      "click_zyx": [
+        5,
+        14,
+        266
+      ],
+      "arc": -1,
+      "label": 5,
+      "name": "trunk2",
+      "size": 212,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        6,
+        16,
+        288
+      ],
+      "length_um": 19.76
+    },
+    {
+      "click_zyx": [
+        9,
+        9,
+        363
+      ],
+      "arc": -1,
+      "label": 6,
+      "name": "branch_mid",
+      "size": 256,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        10,
+        15,
+        382
+      ],
+      "length_um": 17.47
+    },
+    {
+      "click_zyx": [
+        7,
+        12,
+        438
+      ],
+      "arc": -1,
+      "label": 7,
+      "name": "branch_end",
+      "size": 196,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        6,
+        11,
+        452
+      ],
+      "length_um": 13.07
+    }
+  ]
+}

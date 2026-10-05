@@ -1,0 +1,115 @@
+{
+  "created": "2026-10-04T23:14:26.488491-04:00",
+  "tool": "wrap_segments_napari.py",
+  "voxel_zyx_um": [
+    0.8,
+    0.9,
+    0.9
+  ],
+  "labels": {
+    "1": "soma",
+    "2": "trunk",
+    "3": "branch1",
+    "4": "branch2"
+  },
+  "voxels_per_label": {
+    "1": 775,
+    "2": 308,
+    "3": 263,
+    "4": 140
+  },
+  "source_clean": "/Users/daria/Desktop/femtonics-data/rbp4_141_phpeb/06-25-2026/preprocessed/run3/run3_clean.tif",
+  "source_autoseg": "/Users/daria/Desktop/femtonics-data/rbp4_141_phpeb/06-25-2026/preprocessed/run3/run3_clean_autoseg_labelmap_reviewed.tif",
+  "accepted_cells": [
+    1
+  ],
+  "segment_names": {
+    "1": "soma",
+    "2": "trunk1",
+    "3": "trunk2",
+    "4": "branch"
+  },
+  "islands_removed": [],
+  "min_island_voxels": 20,
+  "wrap_clicks": [
+    {
+      "click_zyx": [
+        11,
+        12,
+        17
+      ],
+      "arc": -1,
+      "label": 1,
+      "name": "soma",
+      "size": 775,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        12,
+        8,
+        5
+      ],
+      "length_um": 13.34
+    },
+    {
+      "click_zyx": [
+        12,
+        11,
+        94
+      ],
+      "arc": -1,
+      "label": 3,
+      "name": "trunk1",
+      "size": 308,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        13,
+        12,
+        73
+      ],
+      "length_um": 21.39
+    },
+    {
+      "click_zyx": [
+        12,
+        8,
+        244
+      ],
+      "arc": -1,
+      "label": 4,
+      "name": "trunk2",
+      "size": 263,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        12,
+        9,
+        217
+      ],
+      "length_um": 25.28
+    },
+    {
+      "click_zyx": [
+        11,
+        11,
+        352
+      ],
+      "arc": -1,
+      "label": 5,
+      "name": "branch",
+      "size": 140,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        11,
+        9,
+        343
+      ],
+      "length_um": 8.85,
+      "merged_from": [
+        "interval5"
+      ]
+    }
+  ]
+}

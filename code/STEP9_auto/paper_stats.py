@@ -102,6 +102,46 @@ CURATED = {
         "stack": PROJECT / "rbp4_140_phpeb/06-18-2026/preprocessed/run04/run04_clean.tif",
         "desc": "soma + bifurcation, another cell at high X limits auto mask extent",
     },
+    "run04_phpebach": {
+        "run_dir": PROJECT / "rbp4_phpebach/06-26-2026/run04",
+        "stem": "run04_clean",
+        "mask": PROJECT / "rbp4_phpebach/06-26-2026/run04/run04_clean_autoseg_labelmap_reviewed.tif",
+        "segments": PROJECT / "rbp4_phpebach/06-26-2026/run04/run04_clean_segments_final.tif",
+        "segments_json": PROJECT / "rbp4_phpebach/06-26-2026/run04/run04_clean_segments_final.json",
+        "metrics": PROJECT / "rbp4_phpebach/06-26-2026/run04/run04_clean_metrics.json",
+        "stack": PROJECT / "rbp4_phpebach/06-26-2026/run04/run04_clean.tif",
+        "desc": "no soma (trunk_soma_end), bifurcation with branch2, mask ends X 360/392",
+    },
+    "run05_140_0623": {
+        "run_dir": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05",
+        "stem": "run05_clean",
+        "mask": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean_autoseg_labelmap_reviewed.tif",
+        "segments": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean_segments_final.tif",
+        "segments_json": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean_segments_final.json",
+        "metrics": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean_metrics.json",
+        "stack": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean.tif",
+        "desc": "trunk_soma_end, bifurcation, branch2 + main_branch",
+    },
+    "run06_140_0623": {
+        "run_dir": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06",
+        "stem": "run06_clean",
+        "mask": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean_autoseg_labelmap_reviewed.tif",
+        "segments": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean_segments_final.tif",
+        "segments_json": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean_segments_final.json",
+        "metrics": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean_metrics.json",
+        "stack": PROJECT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean.tif",
+        "desc": "soma, bifurcation, branch2 + main_branch1/2",
+    },
+    "run07_phpebach": {
+        "run_dir": PROJECT / "rbp4_phpebach/06-26-2026/run07",
+        "stem": "run07_clean",
+        "mask": PROJECT / "rbp4_phpebach/06-26-2026/run07/run07_clean_autoseg_labelmap_reviewed.tif",
+        "segments": PROJECT / "rbp4_phpebach/06-26-2026/run07/run07_clean_segments_final.tif",
+        "segments_json": PROJECT / "rbp4_phpebach/06-26-2026/run07/run07_clean_segments_final.json",
+        "metrics": PROJECT / "rbp4_phpebach/06-26-2026/run07/run07_clean_metrics.json",
+        "stack": PROJECT / "rbp4_phpebach/06-26-2026/run07/run07_clean.tif",
+        "desc": "soma, no bifurcation (branch at distal end)",
+    },
 }
 AUTO = {
     "run05": {
@@ -130,6 +170,42 @@ AUTO = {
         "segments_json": AUTO_ROOT / "rbp4_140_phpeb/06-18-2026/preprocessed/run04/run04_clean_segments_final.json",
         "metrics": AUTO_ROOT / "rbp4_140_phpeb/06-18-2026/preprocessed/run04/run04_clean_metrics.json",
         "stack": AUTO_ROOT / "rbp4_140_phpeb/06-18-2026/preprocessed/run04/run04_clean.tif",
+    },
+    "run04_phpebach": {
+        "run_dir": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run04",
+        "stem": "run04_clean",
+        "mask": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run04/run04_clean_autoseg_labelmap_reviewed.tif",
+        "segments": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run04/run04_clean_segments_final.tif",
+        "segments_json": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run04/run04_clean_segments_final.json",
+        "metrics": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run04/run04_clean_metrics.json",
+        "stack": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run04/run04_clean.tif",
+    },
+    "run05_140_0623": {
+        "run_dir": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05",
+        "stem": "run05_clean",
+        "mask": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean_autoseg_labelmap_reviewed.tif",
+        "segments": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean_segments_final.tif",
+        "segments_json": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean_segments_final.json",
+        "metrics": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean_metrics.json",
+        "stack": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run05/run05_clean.tif",
+    },
+    "run06_140_0623": {
+        "run_dir": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06",
+        "stem": "run06_clean",
+        "mask": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean_autoseg_labelmap_reviewed.tif",
+        "segments": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean_segments_final.tif",
+        "segments_json": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean_segments_final.json",
+        "metrics": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean_metrics.json",
+        "stack": AUTO_ROOT / "rbp4_140_phpeb/06-23-2026/preprocessed/run06/run06_clean.tif",
+    },
+    "run07_phpebach": {
+        "run_dir": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run07",
+        "stem": "run07_clean",
+        "mask": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run07/run07_clean_autoseg_labelmap_reviewed.tif",
+        "segments": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run07/run07_clean_segments_final.tif",
+        "segments_json": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run07/run07_clean_segments_final.json",
+        "metrics": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run07/run07_clean_metrics.json",
+        "stack": AUTO_ROOT / "rbp4_phpebach/06-26-2026/run07/run07_clean.tif",
     },
 }
 
@@ -768,7 +844,8 @@ def test_01_validation() -> tuple[dict, list[str], list]:
     lines.append("**Calibration caveat (leave-one-out):** The auto_mask alpha calibration uses "
                   "soma detection (anatomy), not Dice optimization against these curated cells. "
                   "Leave-one-out produces the same parameters because the calibration does not "
-                  "depend on the held-out cell's ground truth. Nevertheless, with n=3 ground-truth "
+                  "depend on the held-out cell's ground truth. Nevertheless, with n=" +
+                  str(len(CURATED)) + " ground-truth "
                   "cells the validation power is limited; additional curated cells would strengthen "
                   "the claim.")
     lines.append("")

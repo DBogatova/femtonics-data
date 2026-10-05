@@ -9,26 +9,49 @@ picking regions.
 
 Double-click **Femto Panel** on the Desktop, or type `femto` in a terminal.
 
-## Fully automatic (default)
+## Automatic mask, regions by hand (default)
 
-With **fully automatic** ticked, the program makes the mask and picks the regions itself: **Run next automatic step** (with **chain** ticked) goes from the stack to the finished figure. **Automate all runs** does this for every local, unmarked run that isn't complete, then rebuilds the statistics.
+Two checkboxes control what the program does automatically:
 
-- It never replaces a mask or regions that already exist; your curated cells stay as they are.
+- **automatic mask** (default ON) — the program draws the mask. When the run reaches the
+  mask step, `auto_mask.py` runs instead of opening the mask napari tool. It never
+  replaces a mask that already exists; your curated cells stay as they are.
+- **automatic regions** (default OFF) — the program picks the regions. Because region
+  placement is subjective, the default is OFF: after the mask is made, the **region tool**
+  opens for you to pick regions by hand. Tick this checkbox only if you want the program
+  to pick regions too (e.g. for a first pass over many runs).
+
+With the defaults (**automatic mask** ON, **automatic regions** OFF, **chain steps** ON):
+
+1. Click **Run next step** — the program builds the reference volume and the mask
+   automatically, then opens the **region tool** for you.
+2. Pick regions in the region tool (see below), **Ctrl+S**, close napari.
+3. Click **Refresh**, then **Run next step** — the figure, movies and statistics are built.
+
+**Automate all runs** does this for every local, unmarked run: reference + automatic mask,
+stopping at the region step. Runs that already have regions continue to the figure. Then
+the statistics are rebuilt once.
+
+Other features:
+
 - The **mask/regions by** column shows **program**, **you** or **both**.
-- To correct the program's choice, use **Edit mask** / **Edit regions** (they open the automatic result), then **Build figure + movies**.
-- **Mark run…** sets a whole run aside (excluded / revisit later); **Ignore regions…** leaves single regions out of the figure and statistics.
-- Runs without behavior (imaging only, e.g. the September sessions) show "needs behavior"; they get the imaging figure and are left out of behavior statistics.
+- To correct the program's mask, use **Edit mask** (it opens the automatic result with your
+  saved session), then **Build figure**.
+- **Mark run…** sets a whole run aside (excluded / revisit later); **Ignore regions…** leaves
+  single regions out of the figure and statistics.
+- Runs without behavior (imaging only, e.g. the September sessions) show "needs behavior";
+  they get the imaging figure and are left out of behavior statistics.
 - Removed 4D stacks: `femto restore PATH|all`.
 - Every cell on one page with a 3D view: `python code/STEP8_stats/cell_atlas.py` (writes `stats/cell_atlas/index.html`).
 
-## Processing one cell by hand (untick "fully automatic")
+## Processing one cell fully by hand (untick "automatic mask")
 
-1. In the panel, select the highlighted run and click **Open GUI step**. Each time a step finishes, click **Refresh**, then **Open GUI step** again.
+1. In the panel, select the highlighted run and click **Open tool**. Each time a step finishes, click **Refresh**, then **Open tool** again.
 2. **Mask tool** opens. Get the mask right (see below), press **Ctrl+S**, then close napari.
 3. **Region tool** opens. Pick regions (see below), press **Ctrl+S**, then close napari.
-4. Click **Run next automatic step**. The figure, movies and statistics are built for you. The two progress bars show what is running.
+4. Click **Run next step**. The figure, movies and statistics are built for you. The two progress bars show what is running.
 
-To redo a cell later: **Edit mask** or **Edit regions**, save, then **Build figure + movies**.
+To redo a cell later: **Edit mask** or **Edit regions**, save, then **Build figure** (or **Build movies**).
 The mask tool reopens exactly where you left it. Previous files are moved to `old/`, never
 deleted.
 
