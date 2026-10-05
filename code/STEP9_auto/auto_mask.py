@@ -133,6 +133,8 @@ def period_from_mesc(run_dir: Path) -> tuple[int, str] | None:
             except ValueError:
                 return None
 
+        if sess.startswith("auto_pipeline/"):           # mirror tree: same relative layout
+            sess = sess[len("auto_pipeline/"):]
         run_no_str = run_dir.name.replace("run", "").lstrip("0") or "0"
 
         r = None
@@ -155,7 +157,8 @@ def period_from_mesc(run_dir: Path) -> tuple[int, str] | None:
                         break
         if r is None:
             # imaging-only runs (no behavior pairing) are listed in imaging_only_runs.csv
-            want = f"{sess}/{run_dir.name}"
+            want = f"{sess}/{run_dir.relative_to(session).as_posix()}" if run_dir.is_relative_to(session) \
+                else f"{sess}/{run_dir.name}"
             for root_try in [_project_root(), _ROOT]:
                 io = root_try / "imaging_only_runs.csv"
                 if io.exists():
