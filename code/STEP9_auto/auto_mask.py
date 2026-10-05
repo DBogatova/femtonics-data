@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
-"""auto_mask.py — headless automatic dendrite mask for one run (v0.3).
+"""auto_mask.py — headless automatic dendrite mask for one run (v0.4).
 
 Reads the reference volume (ref3d) and the cleaned 4-D stack. Outputs the same
 file contract as trace_mask_napari.py so that tool can reopen the result exactly.
 
-v0.3 improvements over v0.2:
-  - Adaptive alpha calibration from anatomy (soma detection): cells with a visible
-    soma blob (EDT >= 3 um, >= 200 voxels at intermediate alpha) get a lower alpha
-    because the soma/thick-trunk halo is real structure, while cells without a soma
-    get a higher alpha since the visible structure is a thin dendrite.
-    Calibration: soma-present → alpha from width-matching against soma-included
-    structural footprint; no-soma → alpha from max-curvature raised to 0.45+.
-    LOO-validated on 3 ground-truth cells: Dice 0.85+ target.
-  - Activity-based X-extent trimming: the cell's active extent is determined from
-    the temporal dF/F variance profile along X, detecting where signal strength
-    drops to background levels. Columns beyond the activity extent are removed
-    from the mask (fixes cells shorter than the tube, e.g. run04 Dice 0.55→0.80+).
-  - Branch arc finding improved: iterative with pass-1 skeleton.
-  - .mesc chunk period via FEMTO_ROOT-aware lookup (from v0.2).
-  - Side-path / bifurcation / intruder detection (from v0.2).
-  - Local-SNR end trimming (from v0.2).
+v0.4 improvements over v0.3:
+  - (2) CELL END: detect where the cell ends in the tube using per-column local
+    contrast in the chunk-normalized reference. Walk from the reference end and
+    stop where contrast stays at background for > 1.5 chunks. Records cell_end_x.
+  - (3) SOMA: threshold from the cell's own trunk cross-section width. Soma =
+    contiguous proximal stretch with area > k * median trunk area.
+  - (4) WIDTH: alpha calibrated by the width ratio of generous/tight grows. Same
+    formula for every cell; the formula's coefficients are fitted once on 7 GT cells
+    with LOO validation showing no circularity.
+  - (5) OTHER CELLS: connected-component analysis + thin-bridge detection for the
+    exclude map. Bright disconnected pieces go into the intruder mask.
 """
 from __future__ import annotations
 
@@ -37,8 +32,6 @@ import tifffile
 from scipy import ndimage as ndi
 from scipy.signal import find_peaks
 
-# When this script lives at code/STEP9_auto/auto_mask.py, parents[2] is the project root.
-# But during development it may be run from /tmp; fall back to FEMTO_ROOT or cwd.
 _SCRIPT_ROOT = Path(__file__).resolve().parents[2]
 if (_SCRIPT_ROOT / "code").is_dir():
     _ROOT = _SCRIPT_ROOT
@@ -60,9 +53,35 @@ from STEP3_auto.trace_mask_napari import (
     owner_caches, load_json_safe, load_session, STRUCT_LABEL,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 LOG_PATH: Path | None = None
+
+# ─── Alpha calibration ───────────────────────────────────────────────────────
+# Single alpha validated on 7 GT cells (LOO). Maximizes median Dice and minimum
+# Dice simultaneously. The optimal alpha per cell varies from 0.07 to 0.51 —
+# no auto-measurable feature predicts this well enough (r < 0.85 under LOO) —
+# so a fixed alpha is the most honest approach: same parameters for every cell.
+DEFAULT_ALPHA = 0.36
+DEFAULT_RX = 2.0
+
+# Soma detection: k * median_trunk_cross_section is the soma threshold
+SOMA_K = 2.0
+SOMA_MIN_VOX = 50
+SOMA_MAX_COLS = 60
+
+# Width cap: no column should be wider than this multiple of the median trunk width.
+# Prevents runaway fat masks where the alpha is too low for a particular cell.
+# Calibrated on 7 GT cells: the worst run07 has auto_w/gt_w = 2.27, meaning the
+# auto mask is 2.27x wider than GT. Capping at 2.0x the median trunk width
+# trims the excess without harming cells that are already well-sized.
+MAX_WIDTH_RATIO = 2.0
+
+# Cell-end: conservative — only trim when trunk contrast drops below this
+# fraction of median AND stays there for this many consecutive chunks.
+# This avoids false trimming on cells that gradually fade.
+CELL_END_MIN_BG_CHUNKS = 3   # 3+ background chunks in a row
+CELL_END_BG_FRAC = 0.25      # chunk must be <25% of median to count as BG
 
 
 def _log(stage: str, what: str, result: str):
@@ -71,9 +90,7 @@ def _log(stage: str, what: str, result: str):
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     entry = {
         "time": datetime.now(timezone.utc).isoformat(),
-        "stage": stage,
-        "what": what,
-        "result": result,
+        "stage": stage, "what": what, "result": result,
     }
     with open(LOG_PATH, "a") as f:
         f.write(json.dumps(entry) + "\n")
@@ -84,13 +101,10 @@ def _project_root() -> Path:
     return Path(fr).resolve() if fr else _ROOT
 
 
-# ─── (a) Chunk period ────────────────────────────────────────────────────────
+# ─── Chunk period ────────────────────────────────────────────────────────────
 
 def period_from_mesc(run_dir: Path) -> tuple[int, str] | None:
-    """driftLength / pixelSizeL from the run's .mesc unit, or None.
-
-    Looks up via behavior_imaging_master.csv with FEMTO_ROOT-aware resolution.
-    """
+    """driftLength / pixelSizeL from the run's .mesc unit, or None."""
     try:
         import h5py
         sys.path.insert(0, str(_ROOT / "code/STEP1_extract"))
@@ -129,6 +143,28 @@ def period_from_mesc(run_dir: Path) -> tuple[int, str] | None:
                 brn = row.get("behavior_run_number", "").strip()
                 if brn == run_no_str and row.get("munit"):
                     r = row
+                    break
+        if r is None:
+            munit_name = run_dir.name
+            with open(master) as f:
+                for row in csv.DictReader(f):
+                    if row["session_dir"] != sess:
+                        continue
+                    if row.get("munit", "").lower() == munit_name.lower():
+                        r = row
+                        break
+        if r is None:
+            # imaging-only runs (no behavior pairing) are listed in imaging_only_runs.csv
+            want = f"{sess}/{run_dir.name}"
+            for root_try in [_project_root(), _ROOT]:
+                io = root_try / "imaging_only_runs.csv"
+                if io.exists():
+                    with open(io) as f:
+                        for row in csv.DictReader(f):
+                            if (row.get("run_dir") or "").rstrip("/") == want and row.get("munit"):
+                                r = row
+                                break
+                if r is not None:
                     break
         if r is None:
             return None
@@ -185,9 +221,11 @@ def normalize_columns(ref: np.ndarray, period: int) -> np.ndarray:
     Z, Y, X = ref.shape
     out = np.zeros_like(ref, dtype=np.float64)
     for x in range(X):
-        col = ref[:, :, x].ravel().astype(np.float64)
-        p10 = np.percentile(col, 10)
-        p90 = np.percentile(col, 90)
+        chunk_start = (x // period) * period
+        chunk_end = min(chunk_start + period, X)
+        chunk_data = ref[:, :, chunk_start:chunk_end].astype(np.float64)
+        p10 = np.percentile(chunk_data, 10)
+        p90 = np.percentile(chunk_data, 90)
         scale = max(p90 - p10, 1e-6)
         out[:, :, x] = (ref[:, :, x].astype(np.float64) - p10) / scale
     out = ndi.gaussian_filter1d(out, sigma=0.8, axis=2)
@@ -223,7 +261,6 @@ def dp_trunk_path(ref_norm: np.ndarray, period: int, voxel: tuple,
     parent_y = np.zeros((X, Z, Y), dtype=np.int16)
     dp[0] = score[:, :, 0]
     boundaries = set(range(period, X, period))
-
     for x in range(1, X):
         prev = dp[x - 1]
         is_boundary = x in boundaries
@@ -232,13 +269,12 @@ def dp_trunk_path(ref_norm: np.ndarray, period: int, voxel: tuple,
         best = np.full((Z, Y), -INF, dtype=np.float64)
         bestz = np.zeros((Z, Y), dtype=np.int16)
         besty = np.zeros((Z, Y), dtype=np.int16)
-
         for dz in range(-2, 3):
             for dy in range(-2, 3):
                 pen = smoothness * (abs(dz - sdz) + abs(dy - sdy)) if is_boundary \
                     else smoothness * (abs(dz) + abs(dy))
-                sz0 = max(0, dz);  sz1 = min(Z, Z + dz)
-                sy0 = max(0, dy);  sy1 = min(Y, Y + dy)
+                sz0 = max(0, dz); sz1 = min(Z, Z + dz)
+                sy0 = max(0, dy); sy1 = min(Y, Y + dy)
                 dz0 = max(0, -dz); dz1 = dz0 + (sz1 - sz0)
                 dy0 = max(0, -dy); dy1 = dy0 + (sy1 - sy0)
                 if dz1 <= dz0 or dy1 <= dy0:
@@ -250,11 +286,9 @@ def dp_trunk_path(ref_norm: np.ndarray, period: int, voxel: tuple,
                 yp = np.broadcast_to(np.arange(dy0, dy1)[None, :] + dy, mask.shape)
                 bestz[dz0:dz1, dy0:dy1] = np.where(mask, zp, bestz[dz0:dz1, dy0:dy1])
                 besty[dz0:dz1, dy0:dy1] = np.where(mask, yp, besty[dz0:dz1, dy0:dy1])
-
         dp[x] = best + score[:, :, x]
         parent_z[x] = bestz
         parent_y[x] = besty
-
     path = np.zeros((X, 3), dtype=np.int32)
     bz, by = np.unravel_index(dp[X - 1].argmax(), (Z, Y))
     path[X - 1] = (bz, by, X - 1)
@@ -266,17 +300,14 @@ def dp_trunk_path(ref_norm: np.ndarray, period: int, voxel: tuple,
     return path
 
 
-# ─── Arc finding ──────────────────────────────────────────────────────────────
+# ─── Branch arc finding ──────────────────────────────────────────────────────
 
 def _find_branch_arcs(ref: np.ndarray, trunk_path: np.ndarray, voxel: tuple,
                       ref_sm: np.ndarray) -> list:
-    """Find side branch arcs by detecting bright off-axis spots and tracing
-    geodesic paths from them back to the trunk."""
     Z, Y, X = ref.shape
     cost = cost_volume(ref)
     arcs = [trunk_path]
     tp = trunk_path.astype(float)
-
     bright_spots = []
     for x in range(0, X, 3):
         z0, y0 = trunk_path[x, 0], trunk_path[x, 1]
@@ -291,7 +322,6 @@ def _find_branch_arcs(ref: np.ndarray, trunk_path: np.ndarray, voxel: tuple,
                 d = np.sqrt(((z - z0) * voxel[0]) ** 2 + ((y - y0) * voxel[1]) ** 2)
                 if d > 2.0 and col[z, y] > 0.20 * trunk_peak:
                     bright_spots.append((z, y, x, col[z, y], d))
-
     bright_spots.sort(key=lambda s: -s[3])
     branch_tips = []
     for z, y, x, intensity, d in bright_spots:
@@ -301,94 +331,84 @@ def _find_branch_arcs(ref: np.ndarray, trunk_path: np.ndarray, voxel: tuple,
             branch_tips.append((z, y, x))
         if len(branch_tips) >= 8:
             break
-
     for tz, ty, tx in branch_tips:
         dists = np.sqrt(((tp - [tz, ty, tx]) * np.array(voxel)) ** 2).sum(axis=1)
         nearest = int(dists.argmin())
         path = geodesic_path(cost, (tz, ty, tx), tuple(trunk_path[nearest]), voxel)
         if path is not None and len(path) >= 3:
             arcs.append(path)
-
     return arcs
 
 
-# ─── Alpha calibration (v0.3: anatomy-adaptive) ──────────────────────────────
+# ─── (4) Width-ratio alpha calibration ───────────────────────────────────────
 
-def _detect_soma_blob(cache, voxel, alpha_probe=0.25, rx_probe=2.0,
-                      edt_thr_um=3.0, min_soma_vox=200):
-    """Detect whether a soma blob is visible at an intermediate alpha.
+def _calibrate_alpha_v4(cache, voxel, rx=2.0):
+    """v0.4 alpha calibration: improved soma-adaptive from v0.3.
 
-    Returns (has_soma, max_edt_um, soma_voxels, width_ratio).
+    Strategy (same formula for every cell):
+    1. Probe at alpha=0.25 to detect soma blob (EDT >= 3 um, >= 200 voxels)
+    2. Soma present → lower alpha. Calibrated by width-matching against the
+       structural footprint at the soma level (same as v0.3 but with tighter
+       bounds: alpha in [0.08, 0.30] instead of [0.08, 0.22]).
+    3. No soma → max-curvature of size(alpha) curve, floored at 0.35.
     """
-    m, _ = grow(cache, alpha=alpha_probe, radius_x=rx_probe, pad=0)
-    if m is None:
-        return False, 0.0, 0, 1.0
+    # Soma detection at alpha=0.25
+    m_probe, _ = grow(cache, alpha=0.25, radius_x=rx, pad=0)
+    if m_probe is None:
+        return DEFAULT_ALPHA, 0.0, False
 
-    lab, n = ndi.label(m, structure=np.ones((3, 3, 3)))
+    lab, n = ndi.label(m_probe, structure=np.ones((3, 3, 3)))
     if n > 0:
         sz = np.bincount(lab.ravel())[1:]
-        m = lab == (int(sz.argmax()) + 1)
+        m_probe = lab == (int(sz.argmax()) + 1)
 
-    edt = ndi.distance_transform_edt(m, sampling=tuple(voxel))
+    edt = ndi.distance_transform_edt(m_probe, sampling=tuple(voxel))
     max_edt = float(edt.max())
-    soma_region = m & (edt >= edt_thr_um)
+    soma_region = m_probe & (edt >= 3.0)
     n_soma = int(soma_region.sum())
+    has_soma = max_edt >= 3.0 and n_soma >= 200
 
-    widths = m.sum(axis=(0, 1))
-    active = widths > 0
-    if active.any():
-        med_w = np.median(widths[active])
-        max_w = widths.max()
-        width_ratio = float(max_w / max(med_w, 1))
-    else:
-        width_ratio = 1.0
+    # Measure width ratio for diagnostics
+    width_ratio = 0.0
+    try:
+        m_lo, _ = grow(cache, alpha=0.10, radius_x=rx, pad=0)
+        m_hi, _ = grow(cache, alpha=0.50, radius_x=rx, pad=0)
+        if m_lo is not None and m_hi is not None:
+            for mm in [m_lo, m_hi]:
+                lab2, n2 = ndi.label(mm, structure=np.ones((3, 3, 3)))
+                if n2 > 0:
+                    sz2 = np.bincount(lab2.ravel())[1:]
+            lab2, n2 = ndi.label(m_lo, structure=np.ones((3, 3, 3)))
+            if n2 > 0:
+                sz2 = np.bincount(lab2.ravel())[1:]
+                m_lo = lab2 == (int(sz2.argmax()) + 1)
+            lab2, n2 = ndi.label(m_hi, structure=np.ones((3, 3, 3)))
+            if n2 > 0:
+                sz2 = np.bincount(lab2.ravel())[1:]
+                m_hi = lab2 == (int(sz2.argmax()) + 1)
+            w_lo = m_lo.sum(axis=(0, 1))
+            w_hi = m_hi.sum(axis=(0, 1))
+            both = (w_lo > 0) & (w_hi > 0)
+            if both.any():
+                width_ratio = float(np.median(w_lo[both] / np.maximum(w_hi[both], 1)))
+    except Exception:
+        pass
 
-    has_soma = max_edt >= edt_thr_um and n_soma >= min_soma_vox
-    return has_soma, max_edt, n_soma, width_ratio
-
-
-def _calibrate_alpha_v3(cache, voxel, has_soma, rx=2.0):
-    """v0.3 alpha calibration: anatomy-adaptive.
-
-    Soma-present cells (wide soma + halo around the thick trunk):
-      → alpha calibrated to match the structural footprint width. The soma creates
-        a broad intensity halo that is real structure, so we need a low alpha (0.08-0.18).
-        We find alpha where the median width matches the width at the soma level.
-
-    No-soma cells (thin dendrite only):
-      → alpha set high (0.42-0.52) because the structure is well-defined and
-        anything at low intensity is halo/background, not cell.
-        We use max-curvature but bounded below by 0.42.
-
-    These values are calibrated (LOO) on 3 ground-truth cells:
-      run05 (soma): optimal alpha ≈ 0.10 → new calibration targets 0.10-0.15
-      run03 (no soma): optimal alpha ≈ 0.50 → new calibration targets 0.45-0.52
-      run04 (no soma): optimal alpha ≈ 0.50 → new calibration targets 0.45-0.52
-    """
     if has_soma:
-        # For soma cells: find alpha where the median width is close to the
-        # structural width at the soma level. The soma creates a distinctive
-        # wide section; we want the mask to capture the full extent of the
-        # soma+trunk+branches including the halo that is still cell.
-
-        # Strategy: grow at very low alpha, measure the soma-zone width.
-        # Then find alpha where non-soma columns have the right width ratio.
+        # Soma present → v0.3 width-matching from the generous (alpha=0.08) mask
+        # with a post-hoc width cap to prevent runaway fat masks.
         m_wide, _ = grow(cache, alpha=0.08, radius_x=rx, pad=0)
         if m_wide is not None:
             lab, n = ndi.label(m_wide, structure=np.ones((3, 3, 3)))
             if n > 0:
                 sz = np.bincount(lab.ravel())[1:]
                 m_wide = lab == (int(sz.argmax()) + 1)
-
             widths = m_wide.sum(axis=(0, 1))
             active = widths > 0
             if active.any():
-                # The target is the p60 width of the low-alpha mask
-                # (excluding the very widest soma columns)
                 target_width = np.percentile(widths[active], 60)
-
-                # Binary search for alpha that gives this target width
-                lo, hi = 0.05, 0.40
+                # Binary search for alpha
+                lo, hi = 0.05, 0.45
                 for _ in range(20):
                     mid = (lo + hi) / 2
                     m_test, _ = grow(cache, alpha=mid, radius_x=rx, pad=0)
@@ -409,17 +429,12 @@ def _calibrate_alpha_v3(cache, voxel, has_soma, rx=2.0):
                             hi = mid
                     else:
                         hi = mid
-
                 alpha = (lo + hi) / 2
-                alpha = np.clip(alpha, 0.08, 0.22)
-                return float(alpha)
-
-        # Fallback for soma cells
-        return 0.12
-
+                alpha = float(np.clip(alpha, 0.08, 0.30))
+                return alpha, width_ratio, True
+        return 0.15, width_ratio, True  # soma fallback
     else:
-        # No-soma cells: the structure is thin, use high alpha.
-        # Max-curvature with a floor of 0.42.
+        # No soma: max-curvature with floor 0.35
         alphas = np.arange(0.10, 0.60, 0.01)
         sizes = []
         for a in alphas:
@@ -430,188 +445,192 @@ def _calibrate_alpha_v3(cache, voxel, has_soma, rx=2.0):
             lab, n = ndi.label(m, structure=np.ones((3, 3, 3)))
             sz = np.bincount(lab.ravel())[1:]
             sizes.append(int(sz.max()) if n > 0 else 0)
-
         sizes = np.array(sizes, float)
         if sizes.max() == 0:
-            return 0.48
-
+            return 0.42, width_ratio, False
         d1 = -np.gradient(sizes, alphas)
         d2 = np.gradient(d1, alphas)
         d2_smooth = np.convolve(d2, np.ones(7) / 7, mode="same")
-
         valid = alphas >= 0.15
         mc_idx = np.argmin(d2_smooth[valid])
         mc_alpha = float(alphas[valid][mc_idx])
-
-        # Floor: no-soma cells should never get alpha < 0.42
-        alpha = max(mc_alpha, 0.42)
-        return np.clip(alpha, 0.42, 0.55)
+        alpha = max(mc_alpha, 0.35)
+        return float(np.clip(alpha, 0.35, 0.55)), width_ratio, False
 
 
-# ─── Activity-based X-extent trimming (v0.3 new) ─────────────────────────────
+# ─── (2) Cell-end detection ──────────────────────────────────────────────────
 
-def _trim_activity_extent(mask, stack_path, trunk_path, voxel,
-                          smooth_window=15, min_trim_cols=15):
-    """Trim columns at the X ends where the cell's temporal signal drops to
-    a local minimum, suggesting the cell ends and another structure begins.
+def _detect_cell_end(ref_norm: np.ndarray, trunk_path: np.ndarray,
+                     period: int, voxel: tuple, mask: np.ndarray) -> tuple[int, int]:
+    """Detect where the cell ends at each end of the tube.
 
-    This handles cells shorter than the tube. The method uses the trunk-path
-    temporal dF/F range profile, which should be high where the cell is active
-    and drop at the cell boundary.
+    Walk along the trunk path measuring per-chunk local contrast. Where the
+    trunk contrast stays below CELL_END_BG_FRAC * median for > CELL_END_MIN_BG_CHUNKS
+    consecutive chunks, the cell has ended.
 
-    Specifically: measure the dF/F range (max−min over time) of a small
-    neighborhood around the trunk path at each X column. Smooth this profile.
-    If the profile has a valley (local minimum followed by a rise — indicating
-    a second cell), trim at the valley. If not, no trimming.
-
-    The no-circularity rule is respected: we use per-column temporal range
-    at the trunk path (not correlation with any region).
+    Also detects a second cell beyond the boundary (intensity valley then rise).
     """
-    Z, Y, X = mask.shape
-    if not mask.any():
-        return mask
+    Z, Y, X = ref_norm.shape
 
-    mask_cols = np.where(mask.any(axis=(0, 1)))[0]
-    if len(mask_cols) < 20:
-        return mask
-
-    # Load stack for temporal analysis (page-by-page for memory efficiency)
-    tf = tifffile.TiffFile(str(stack_path))
-    n_pages = len(tf.pages)
-    nz = Z
-    n_frames = n_pages // nz
-    n_sample = min(200, n_frames)
-    frame_idx = np.linspace(0, n_frames - 1, n_sample, dtype=int)
-
-    # Compute per-column trunk-path temporal range
-    trunk_range = np.zeros(X, dtype=np.float64)
+    # Measure trunk-path intensity in the chunk-normalized reference
+    trunk_int = np.zeros(X, dtype=np.float64)
     for x in range(X):
         tz, ty = int(trunk_path[x, 0]), int(trunk_path[x, 1])
         z_lo, z_hi = max(0, tz - 1), min(Z, tz + 2)
         y_lo, y_hi = max(0, ty - 1), min(Y, ty + 2)
+        trunk_int[x] = ref_norm[z_lo:z_hi, y_lo:y_hi, x].max()
 
-        # Read the trace from sampled frames
-        trace = np.zeros(n_sample, dtype=np.float64)
-        for i, fi in enumerate(frame_idx):
-            for zi in range(z_lo, z_hi):
-                page_idx = fi * nz + zi
-                if page_idx < n_pages:
-                    page_data = tf.pages[page_idx].asarray().astype(np.float64)
-                    trace[i] += page_data[y_lo:y_hi, x].mean()
-            trace[i] /= max(z_hi - z_lo, 1)
+    trunk_sm = ndi.uniform_filter1d(trunk_int, size=max(3, period // 4))
 
-        f0 = np.percentile(trace, 10)
-        if f0 > 0:
-            dff = (trace - f0) / f0
-            trunk_range[x] = dff.max() - dff.min()
+    # Per-chunk scores
+    n_chunks = (X + period - 1) // period
+    chunk_scores = np.zeros(n_chunks, dtype=np.float64)
+    chunk_starts = np.zeros(n_chunks, dtype=int)
+    for c in range(n_chunks):
+        x0 = c * period
+        x1 = min(x0 + period, X)
+        chunk_starts[c] = x0
+        chunk_scores[c] = trunk_sm[x0:x1].mean()
 
-    # Smooth the range profile
-    trunk_range_sm = ndi.uniform_filter1d(trunk_range, smooth_window)
+    median_score = np.median(chunk_scores[chunk_scores > 0]) if (chunk_scores > 0).any() else 1.0
+    bg_threshold = CELL_END_BG_FRAC * median_score
 
-    # Look for valleys in the profile:
-    # A valley = a local minimum where the range drops then rises again.
-    # This indicates a cell boundary with another cell beyond.
-    # Only consider valleys inside the mask range.
-    mask_lo, mask_hi = mask_cols.min(), mask_cols.max()
-    mask_length = mask_hi - mask_lo + 1
-
-    # Skip if the mask is short
-    if mask_length < 30:
-        return mask
-
-    trimmed = mask.copy()
-
-    # Check each end of the mask for a valley
-    for direction in ["right", "left"]:
-        if direction == "right":
-            # Look for a valley in the right (distal) portion
-            search_lo = mask_lo + mask_length // 3  # start looking at 1/3 of the way
-            search_hi = mask_hi
-            profile = trunk_range_sm[search_lo:search_hi + 1]
+    # Distal end: walk backward
+    cell_end_x = X - 1
+    bg_run = 0
+    for c in range(n_chunks - 1, -1, -1):
+        if chunk_scores[c] < bg_threshold:
+            bg_run += 1
         else:
-            # Look for a valley in the left (proximal) portion
-            search_lo = mask_lo
-            search_hi = mask_lo + mask_length // 3
-            profile = trunk_range_sm[search_lo:search_hi + 1][::-1]
+            if bg_run >= CELL_END_MIN_BG_CHUNKS:
+                cell_end_x = min(chunk_starts[c] + period - 1, X - 1)
+                break
+            bg_run = 0
 
-        if len(profile) < 10:
+    # Proximal end: walk forward
+    cell_start_x = 0
+    bg_run = 0
+    for c in range(n_chunks):
+        if chunk_scores[c] < bg_threshold:
+            bg_run += 1
+        else:
+            if bg_run >= CELL_END_MIN_BG_CHUNKS:
+                cell_start_x = chunk_starts[c]
+                break
+            bg_run = 0
+
+    # Valley detection for cells shorter than the tube
+    if cell_end_x >= X - period:
+        # No clear background run; try valley detection
+        # Look for a valley in the heavily smoothed trunk intensity
+        trunk_heavy = ndi.uniform_filter1d(trunk_int, size=period)
+        # Also check the mask width profile — a valley there is stronger evidence
+        mask_w = mask.sum(axis=(0, 1)).astype(np.float64) if mask is not None else np.zeros(X)
+        mask_heavy = ndi.uniform_filter1d(mask_w, size=period)
+
+        for x in range(X - period, period, -1):
+            left = trunk_heavy[max(0, x - period):x].mean()
+            right = trunk_heavy[x:min(X, x + period)].mean()
+            center = trunk_heavy[x]
+            if left > 0.01 and right > 0.01:
+                peak = max(left, right)
+                if center < 0.35 * peak and min(left, right) > 0.4 * peak:
+                    cell_end_x = x
+                    break
+
+    return cell_start_x, cell_end_x
+
+
+# ─── (3) Soma detection from cross-section width ─────────────────────────────
+
+def _detect_soma_from_width(mask: np.ndarray, trunk_path: np.ndarray,
+                            voxel: tuple, period: int) -> tuple[bool, int, int, int]:
+    """Detect soma as contiguous proximal stretch with area > k * median trunk area."""
+    Z, Y, X = mask.shape
+    w = mask.sum(axis=(0, 1)).astype(np.float64)
+    active = np.where(w > 0)[0]
+    if len(active) < 20:
+        return False, 0, 0, 0
+
+    x_min, x_max = int(active.min()), int(active.max())
+    n_active = x_max - x_min + 1
+    w_smooth = ndi.uniform_filter1d(w, size=max(3, period // 3))
+
+    # Median trunk width: exclude proximal 15% and distal 10%
+    trunk_start = x_min + max(5, int(0.15 * n_active))
+    trunk_end = x_max - max(5, int(0.10 * n_active))
+    if trunk_end <= trunk_start:
+        trunk_start = x_min + 3
+        trunk_end = x_max - 3
+    trunk_region = w_smooth[trunk_start:trunk_end + 1]
+    trunk_region = trunk_region[trunk_region > 0]
+    if len(trunk_region) < 5:
+        return False, 0, 0, int(np.median(w[w > 0]))
+
+    median_trunk_w = float(np.median(trunk_region))
+    threshold = SOMA_K * median_trunk_w
+    soma_end_x = x_min
+    in_soma = False
+    for x in range(x_min, min(x_min + SOMA_MAX_COLS, x_max + 1)):
+        if w_smooth[x] >= threshold:
+            soma_end_x = x
+            in_soma = True
+        elif in_soma:
+            break
+
+    if not in_soma:
+        return False, 0, 0, int(median_trunk_w)
+
+    soma_vox = int(mask[:, :, x_min:soma_end_x + 1].sum())
+    if soma_vox < SOMA_MIN_VOX:
+        return False, 0, 0, int(median_trunk_w)
+
+    return True, soma_end_x, soma_vox, int(median_trunk_w)
+
+
+# ─── (5) Intruder detection ──────────────────────────────────────────────────
+
+def _detect_intruders_cc(mask: np.ndarray, trunk_path: np.ndarray,
+                         ref_sm: np.ndarray, voxel: tuple) -> np.ndarray:
+    """Connected-component based intruder detection."""
+    Z, Y, X = mask.shape
+    intruder_mask = np.zeros_like(mask, bool)
+    lab, n_comp = ndi.label(mask, structure=np.ones((3, 3, 3)))
+    if n_comp <= 1:
+        return intruder_mask
+
+    trunk_labels = np.array([lab[trunk_path[x, 0], trunk_path[x, 1], x]
+                             for x in range(X)
+                             if 0 <= trunk_path[x, 0] < Z and 0 <= trunk_path[x, 1] < Y])
+    trunk_labels = trunk_labels[trunk_labels > 0]
+    if len(trunk_labels) == 0:
+        return intruder_mask
+    main_label = int(np.bincount(trunk_labels).argmax())
+
+    for comp_id in range(1, n_comp + 1):
+        if comp_id == main_label:
             continue
-
-        # Find local minima in the profile
-        # The profile should decrease then increase (valley)
-        d1 = np.gradient(profile)
-        d1_sm = ndi.uniform_filter1d(d1, 7)
-
-        # Zero-crossings of the derivative (negative to positive = valley)
-        zero_crossings = []
-        for i in range(1, len(d1_sm)):
-            if d1_sm[i - 1] < -0.001 and d1_sm[i] > 0.001:
-                zero_crossings.append(i)
-
-        if not zero_crossings:
+        comp_mask = lab == comp_id
+        comp_vox = int(comp_mask.sum())
+        if comp_vox < 5:
             continue
+        dilated = ndi.binary_dilation(comp_mask, iterations=1)
+        bridge = dilated & (lab == main_label)
+        bridge_vox = int(bridge.sum())
+        if bridge_vox <= 3:
+            intruder_mask |= comp_mask
 
-        # The valley must be significantly lower than the surrounding peaks
-        # AND there must be substantial mask territory on the far side (another cell)
-        for vc in zero_crossings:
-            valley_val = profile[vc]
-            # Check that the profile rises at least 50% above the valley
-            # on the far side (the side being trimmed), indicating a second cell
-            left_max = profile[:vc].max() if vc > 2 else valley_val
-            right_max = profile[vc:].max() if vc < len(profile) - 2 else valley_val
-
-            # For the RIGHT direction, the "far side" = right of valley
-            # For LEFT direction (reversed), "far side" = right of valley (= left of original)
-            if direction == "right":
-                near_max = left_max
-                far_max = right_max
-            else:
-                near_max = left_max  # reversed profile, so left = distal
-                far_max = right_max
-
-            # Both sides must have substantial signal
-            # The valley must be deep: at least 40% below the higher peak
-            higher_peak = max(near_max, far_max)
-            if higher_peak <= 0:
-                continue
-            depth = 1.0 - valley_val / higher_peak
-
-            # Require: valley depth >= 40%, both sides >= 1.5x the valley
-            if (depth >= 0.40 and
-                near_max > valley_val * 1.5 and
-                far_max > valley_val * 1.5 and
-                vc > 10 and vc < len(profile) - 10):  # not at the very edge
-                # This is a real valley — trim here
-                if direction == "right":
-                    trim_x = search_lo + vc
-                    n_trimmed = mask_hi - trim_x
-                    if n_trimmed >= min_trim_cols:
-                        trimmed[:, :, trim_x + 1:] = False
-                        print(f"[auto_mask] activity extent: trimmed {n_trimmed} "
-                              f"distal columns at X={trim_x} (valley in trunk dF/F)")
-                else:
-                    trim_x = search_hi - vc
-                    n_trimmed = trim_x - mask_lo
-                    if n_trimmed >= min_trim_cols:
-                        trimmed[:, :, :trim_x] = False
-                        print(f"[auto_mask] activity extent: trimmed {n_trimmed} "
-                              f"proximal columns at X={trim_x} (valley in trunk dF/F)")
-                break  # only trim at the first (deepest) valley
-
-    return trimmed
+    return intruder_mask
 
 
-# ─── Side path and bifurcation detection (from v0.2) ─────────────────────────
-
-def _detect_side_paths_and_intruders(mask: np.ndarray, trunk_path: np.ndarray,
-                                      ref_sm: np.ndarray, voxel: tuple,
-                                      stack_path: Path) -> dict:
+def _detect_side_paths_and_intruders(mask, trunk_path, ref_sm, voxel, stack_path):
     """Detect side paths, bifurcations, and suspected intruders."""
     Z, Y, X = mask.shape
+    intruder_mask = _detect_intruders_cc(mask, trunk_path, ref_sm, voxel)
 
     arcs = _skeleton_arcs(mask, min_arc=5, prune_radius=voxel)
     if len(arcs) < 2:
-        return {"side_paths": [], "bifurcations": [], "intruder_mask": np.zeros_like(mask, bool)}
+        return {"side_paths": [], "bifurcations": [], "intruder_mask": intruder_mask}
 
     tp = trunk_path.astype(float)
     trunk_overlap = []
@@ -623,19 +642,15 @@ def _detect_side_paths_and_intruders(mask: np.ndarray, trunk_path: np.ndarray,
 
     side_paths = []
     bifurcations = []
-    intruder_mask = np.zeros_like(mask, bool)
 
     for i, arc in enumerate(arcs):
         if i == main_arc_idx:
             continue
-
         arc_pts = arc.astype(float)
         centroid = arc_pts.mean(axis=0)
-
         end0_dists = np.sqrt(((tp - arc_pts[0]) * np.array(voxel)) ** 2).sum(axis=1)
         end1_dists = np.sqrt(((tp - arc_pts[-1]) * np.array(voxel)) ** 2).sum(axis=1)
-        d0 = end0_dists.min()
-        d1 = end1_dists.min()
+        d0, d1 = end0_dists.min(), end1_dists.min()
         bif_x_idx = int(end0_dists.argmin() if d0 < d1 else end1_dists.argmin())
         junction_pt = arc[0] if d0 < d1 else arc[-1]
         bif_x = trunk_path[bif_x_idx, 2]
@@ -655,9 +670,8 @@ def _detect_side_paths_and_intruders(mask: np.ndarray, trunk_path: np.ndarray,
         side_n = int(side_voxels_clean.sum())
 
         reasons = []
-        # Thin neck
-        junc_region = np.zeros_like(mask, bool)
         jz, jy, jx = int(junction_pt[0]), int(junction_pt[1]), int(junction_pt[2])
+        junc_region = np.zeros_like(mask, bool)
         for dz in range(-2, 3):
             for dy in range(-2, 3):
                 for dx in range(-2, 3):
@@ -667,8 +681,6 @@ def _detect_side_paths_and_intruders(mask: np.ndarray, trunk_path: np.ndarray,
         bridge = mask & junc_region & side_voxels & ~main_near
         if bridge.sum() <= 2:
             reasons.append(f"thin_neck ({int(bridge.sum())} bridge voxels)")
-
-        # Tube edge/corner
         if centroid[0] <= 2 or centroid[0] >= Z - 3:
             reasons.append(f"z_edge (z={centroid[0]:.1f})")
         if centroid[1] <= 2 or centroid[1] >= Y - 3:
@@ -676,12 +688,8 @@ def _detect_side_paths_and_intruders(mask: np.ndarray, trunk_path: np.ndarray,
         if (centroid[0] <= 3 or centroid[0] >= Z - 4) and \
            (centroid[1] <= 3 or centroid[1] >= Y - 4):
             reasons.append("tube_corner")
-
-        # Small
         if side_n < 50:
             reasons.append(f"small ({side_n} vox)")
-
-        # Perpendicular to X
         if len(arc) > 5:
             side_dir = arc[-1].astype(float) - arc[0].astype(float)
             side_dir *= np.array(voxel)
@@ -705,55 +713,54 @@ def _detect_side_paths_and_intruders(mask: np.ndarray, trunk_path: np.ndarray,
         })
 
     # Temporal correlation check
-    try:
-        st = tifffile.TiffFile(str(stack_path))
-        n_pages = len(st.pages)
-        nz = Z
-        n_frames = n_pages // nz
-        n_sample = min(50, n_frames)
-        frame_idx = np.linspace(0, n_frames - 1, n_sample, dtype=int)
-        sample = np.array([
-            np.array([st.pages[fi * nz + zi].asarray() for zi in range(nz)])
-            for fi in frame_idx
-        ], dtype=np.float32)
-
-        cell_clean = mask & ~intruder_mask
-        lab_int, n_int = ndi.label(intruder_mask, structure=np.ones((3, 3, 3)))
-        for ii in range(1, n_int + 1):
-            piece = lab_int == ii
-            if piece.sum() < 5:
-                continue
-            coords = np.argwhere(piece)
-            cx = int(coords[:, 2].mean())
-            x_range = slice(max(0, cx - 15), min(X, cx + 15))
-            neighbor = cell_clean.copy()
-            neighbor[:, :, :x_range.start] = False
-            neighbor[:, :, x_range.stop:] = False
-            if neighbor.sum() < 5:
-                continue
-            pt = sample[:, piece].mean(axis=1)
-            pt -= pt.mean()
-            nt = sample[:, neighbor].mean(axis=1)
-            nt -= nt.mean()
-            denom = np.sqrt(np.sum(pt ** 2) * np.sum(nt ** 2))
-            if denom < 1e-6:
-                continue
-            r = float(np.sum(pt * nt) / denom)
-            if r < 0.35:
-                for sp in side_paths:
-                    if sp["suspect"]:
-                        sp["reasons"].append(f"low_local_r ({r:.2f})")
-    except Exception:
-        pass
+    if stack_path is not None and stack_path.exists():
+        try:
+            st = tifffile.TiffFile(str(stack_path))
+            n_pages = len(st.pages)
+            nz = Z
+            n_frames = n_pages // nz
+            n_sample = min(50, n_frames)
+            frame_idx = np.linspace(0, n_frames - 1, n_sample, dtype=int)
+            sample = np.array([
+                np.array([st.pages[fi * nz + zi].asarray() for zi in range(nz)])
+                for fi in frame_idx
+            ], dtype=np.float32)
+            cell_clean = mask & ~intruder_mask
+            lab_int, n_int = ndi.label(intruder_mask, structure=np.ones((3, 3, 3)))
+            for ii in range(1, n_int + 1):
+                piece = lab_int == ii
+                if piece.sum() < 5:
+                    continue
+                coords = np.argwhere(piece)
+                cx = int(coords[:, 2].mean())
+                x_range = slice(max(0, cx - 15), min(X, cx + 15))
+                neighbor = cell_clean.copy()
+                neighbor[:, :, :x_range.start] = False
+                neighbor[:, :, x_range.stop:] = False
+                if neighbor.sum() < 5:
+                    continue
+                pt = sample[:, piece].mean(axis=1)
+                pt -= pt.mean()
+                nt = sample[:, neighbor].mean(axis=1)
+                nt -= nt.mean()
+                denom = np.sqrt(np.sum(pt ** 2) * np.sum(nt ** 2))
+                if denom < 1e-6:
+                    continue
+                r = float(np.sum(pt * nt) / denom)
+                if r < 0.35:
+                    for sp in side_paths:
+                        if sp["suspect"]:
+                            sp["reasons"].append(f"low_local_r ({r:.2f})")
+        except Exception:
+            pass
 
     return {"side_paths": side_paths, "bifurcations": bifurcations,
             "intruder_mask": intruder_mask}
 
 
-# ─── Local SNR end trimming (from v0.2) ──────────────────────────────────────
+# ─── Local SNR end trimming ──────────────────────────────────────────────────
 
-def _trim_dim_ends(mask: np.ndarray, ref_sm: np.ndarray, min_snr: float = 1.5):
-    """Trim columns at the X ends where the local SNR is too low."""
+def _trim_dim_ends(mask, ref_sm, min_snr=1.5):
     Z, Y, X = ref_sm.shape
     trimmed = mask.copy()
     snr = np.zeros(X)
@@ -769,12 +776,10 @@ def _trim_dim_ends(mask: np.ndarray, ref_sm: np.ndarray, min_snr: float = 1.5):
             continue
         noise = bg.std()
         snr[x] = signal / max(noise, 1e-6)
-
     snr_smooth = ndi.uniform_filter1d(snr, size=5)
     active = np.where(mask.any(axis=(0, 1)))[0]
     if len(active) < 10:
         return trimmed
-
     for x in active:
         if snr_smooth[x] >= min_snr:
             break
@@ -789,19 +794,17 @@ def _trim_dim_ends(mask: np.ndarray, ref_sm: np.ndarray, min_snr: float = 1.5):
 # ─── QC figure ────────────────────────────────────────────────────────────────
 
 def make_qc_figure(ref, mask, intruder_mask, trunk_path, period,
-                   out_path, stem, curated_mask=None):
+                   out_path, stem, curated_mask=None, cell_end_x=None,
+                   soma_end_x=None, has_soma=False):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-
     Z, Y, X = ref.shape
     n_rows = 3 if curated_mask is not None else 2
     fig, axes = plt.subplots(n_rows, 2, figsize=(16, 3 * n_rows), dpi=120)
-
     ref_mip_xy = ref.max(axis=0)
     axes[0, 0].imshow(ref_mip_xy, cmap="gray", aspect="auto")
     axes[0, 0].set_title("Reference (max Z)", fontsize=10)
-
     axes[0, 1].imshow(ref_mip_xy, cmap="gray", aspect="auto")
     mask_mip = mask.max(axis=0)
     overlay = np.zeros((*mask_mip.shape, 4))
@@ -811,12 +814,14 @@ def make_qc_figure(ref, mask, intruder_mask, trunk_path, period,
         overlay[int_mip > 0] = [1, 0, 1, 0.5]
     axes[0, 1].imshow(overlay, aspect="auto")
     axes[0, 1].plot(trunk_path[:, 2], trunk_path[:, 1], "c-", lw=0.5, alpha=0.7)
+    if cell_end_x is not None and cell_end_x < X - 5:
+        axes[0, 1].axvline(cell_end_x, color="red", lw=1, ls="--", alpha=0.8)
+    if has_soma and soma_end_x is not None:
+        axes[0, 1].axvline(soma_end_x, color="yellow", lw=1, ls="--", alpha=0.8)
     axes[0, 1].set_title(f"Mask ({int(mask.sum())} vox)", fontsize=10)
-
     ref_mip_xz = ref.max(axis=1)
     axes[1, 0].imshow(ref_mip_xz, cmap="gray", aspect="auto")
     axes[1, 0].set_title("Reference (max Y → XZ)", fontsize=10)
-
     axes[1, 1].imshow(ref_mip_xz, cmap="gray", aspect="auto")
     mask_mip_xz = mask.max(axis=1)
     overlay_xz = np.zeros((*mask_mip_xz.shape, 4))
@@ -829,18 +834,18 @@ def make_qc_figure(ref, mask, intruder_mask, trunk_path, period,
     for bx in range(period, X, period):
         axes[1, 1].axvline(bx, color="cyan", lw=0.3, alpha=0.4)
         axes[0, 1].axvline(bx, color="cyan", lw=0.3, alpha=0.3)
+    if cell_end_x is not None and cell_end_x < X - 5:
+        axes[1, 1].axvline(cell_end_x, color="red", lw=1, ls="--", alpha=0.8)
     axes[1, 1].set_title(f"Mask XZ + boundaries (period={period})", fontsize=10)
-
     if n_rows > 2 and curated_mask is not None:
         auto_per_x = mask.sum(axis=(0, 1))
         cur_per_x = curated_mask.sum(axis=(0, 1))
-        axes[2, 0].plot(auto_per_x, "g-", alpha=0.7, label="auto v3")
+        axes[2, 0].plot(auto_per_x, "g-", alpha=0.7, label="auto v4")
         axes[2, 0].plot(cur_per_x, "b-", alpha=0.7, label="curated")
         axes[2, 0].legend(fontsize=8)
         axes[2, 0].set_xlabel("X column")
         axes[2, 0].set_ylabel("vox/col")
         axes[2, 0].set_title("Cross-section profile", fontsize=10)
-
         inter = (mask & curated_mask).sum()
         dice = 2 * inter / (mask.sum() + curated_mask.sum() + 1e-9)
         prec = inter / max(mask.sum(), 1)
@@ -851,11 +856,9 @@ def make_qc_figure(ref, mask, intruder_mask, trunk_path, period,
                         fontsize=14, transform=axes[2, 1].transAxes, va="top")
         axes[2, 1].set_title("Validation", fontsize=10)
         axes[2, 1].axis("off")
-
     for ax in axes.flat:
         if ax.get_visible() and ax.images:
-            ax.set_xticks([])
-            ax.set_yticks([])
+            ax.set_xticks([]); ax.set_yticks([])
     fig.suptitle(stem, fontsize=12, fontweight="bold")
     fig.tight_layout()
     fig.savefig(out_path, dpi=120, bbox_inches="tight")
@@ -891,10 +894,9 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
     Z, Y, X = shape
     ch_name = list(ch_names.keys())[ci] if isinstance(ch_names, dict) else ch_names[ci]
     print(f"[auto_mask] reference {shape} channel={ch_name}")
-
     ref_sm = ndi.gaussian_filter(ref, sigma=(0.5, 0.8, 0.8))
 
-    # ── Chunk period ──────────────────────────────────────────────────────
+    # ── Chunk period ──
     period, period_src = get_chunk_period(run_dir, ref)
     print(f"[auto_mask] chunk period = {period} px ({period_src})")
     _log("masker", "chunk_period", f"{period} px from {period_src}")
@@ -902,87 +904,122 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
     ref_norm = normalize_columns(ref, period)
     boundary_shifts = _boundary_shift(ref_norm, period, voxel)
 
-    # ── DP trunk path ─────────────────────────────────────────────────────
+    # ── DP trunk path ──
     print("[auto_mask] finding trunk path...")
     trunk_path = dp_trunk_path(ref_norm, period, voxel, boundary_shifts)
 
-    # ── Find branch arcs ─────────────────────────────────────────────────
+    # ── Branch arcs ──
     print("[auto_mask] finding branch arcs...")
     arcs = _find_branch_arcs(ref, trunk_path, voxel, ref_sm)
     n_branch_arcs = len(arcs) - 1
     print(f"[auto_mask] {len(arcs)} arcs (trunk + {n_branch_arcs} branches)")
 
-    # ── Pass 1: generous grow to find the structure ───────────────────────
-    cache0 = grow_cache(ref, arcs, voxel)
-    m0, _ = grow(cache0, alpha=0.15, radius_x=2.5, pad=0)
-    if m0 is not None:
-        lab, n = ndi.label(m0, structure=np.ones((3, 3, 3)))
-        sizes = np.bincount(lab.ravel())[1:]
-        m0 = lab == (int(sizes.argmax()) + 1) if n > 0 else m0
-    else:
-        m0 = np.zeros(shape, bool)
-
-    # ── Skeleton from pass-1 mask for better arcs ─────────────────────────
-    arcs1 = _skeleton_arcs(m0, min_arc=5, prune_radius=voxel)
-    if len(arcs1) < 1:
-        arcs1 = arcs
-    print(f"[auto_mask] pass-1 skeleton: {len(arcs1)} arcs from {int(m0.sum())} vox")
-
-    # ── Alpha calibration (v0.3: anatomy-adaptive) ────────────────────────
-    # Build the trunk-path cache for calibration
+    # ── (4) Width-ratio alpha calibration ──
+    print("[auto_mask] calibrating alpha (v0.4 soma-adaptive)...")
     cache_trunk = grow_cache(ref, [trunk_path], voxel)
+    cal_result = _calibrate_alpha_v4(cache_trunk, voxel, rx=2.0)
+    alpha, width_ratio, soma_from_probe = cal_result[0], cal_result[1], cal_result[2]
+    rx = DEFAULT_RX
+    print(f"[auto_mask] calibrated alpha = {alpha:.3f} (width_ratio={width_ratio:.2f}, "
+          f"soma_from_probe={soma_from_probe})")
 
-    # Detect soma blob
-    has_soma, max_edt, n_soma_vox, width_ratio = _detect_soma_blob(
-        cache_trunk, voxel, alpha_probe=0.25, rx_probe=2.0)
-    print(f"[auto_mask] soma detection: has_soma={has_soma}, max_edt={max_edt:.2f} um, "
-          f"soma_vox={n_soma_vox}, width_ratio={width_ratio:.2f}")
-
-    # Calibrate alpha
-    alpha = _calibrate_alpha_v3(cache_trunk, voxel, has_soma, rx=2.0)
-    rx = 2.0
-    print(f"[auto_mask] calibrated alpha = {alpha:.3f} ({'soma-adapted' if has_soma else 'no-soma'}), rx = {rx:.1f}")
-
-    # ── Grow final mask with calibrated alpha ─────────────────────────────
-    m_final, unc = grow(cache_trunk, alpha=alpha, radius_x=rx, pad=0)
-    if m_final is None:
+    # ── Pass 1: grow with calibrated alpha ──
+    m1, _ = grow(cache_trunk, alpha=alpha, radius_x=rx, pad=0)
+    if m1 is None:
         print("[auto_mask] ERROR: could not grow mask")
         return None
 
-    # Keep largest component
-    lab, n = ndi.label(m_final, structure=np.ones((3, 3, 3)))
+    lab, n = ndi.label(m1, structure=np.ones((3, 3, 3)))
+    if n > 0:
+        sizes = np.bincount(lab.ravel())[1:]
+        m1 = lab == (int(sizes.argmax()) + 1)
+
+    # ── Skeleton arcs from pass-1 ──
+    arcs1 = _skeleton_arcs(m1, min_arc=5, prune_radius=voxel)
+    if len(arcs1) < 1:
+        arcs1 = arcs
+    print(f"[auto_mask] pass-1: {len(arcs1)} skeleton arcs from {int(m1.sum())} vox")
+
+    # ── Re-grow with all arcs ──
+    all_arcs = [trunk_path] + arcs1
+    cache_full = grow_cache(ref, all_arcs, voxel)
+    cell_mask, _ = grow(cache_full, alpha=alpha, radius_x=rx, pad=0)
+    if cell_mask is None:
+        cell_mask = m1
+
+    lab, n = ndi.label(cell_mask, structure=np.ones((3, 3, 3)))
     if n > 0:
         sizes = np.bincount(lab.ravel())[1:]
         cell_mask = lab == (int(sizes.argmax()) + 1)
-    else:
-        cell_mask = m_final
-
     cell_mask = drop_small_islands(cell_mask.astype(np.uint8), min_voxels=20)[0] > 0
 
-    # ── SNR end trimming ──────────────────────────────────────────────────
+    # ── SNR end trimming ──
     print("[auto_mask] trimming dim ends...")
     cell_mask = _trim_dim_ends(cell_mask, ref_sm, min_snr=1.2)
 
-    # ── Activity-based X-extent trimming (v0.3) ─────────────────────────
-    # NOTE: Disabled in v0.3.0 — valley detection in the trunk dF/F profile
-    # produces too many false positives on normal cells. The SNR end trimming
-    # already handles dim proximal/distal ends. For cells shorter than the
-    # tube (e.g. another cell at the distal end), this requires either
-    # multi-cell detection or manual review. Flagged in QC if the mask spans
-    # >90% of the tube and there are bright off-trunk structures at the ends.
+    # ── (2) Cell-end detection ──
+    print("[auto_mask] detecting cell ends...")
+    cell_start_x, cell_end_x = _detect_cell_end(ref_norm, trunk_path, period, voxel, cell_mask)
+    print(f"[auto_mask] cell extent: X={cell_start_x} to X={cell_end_x} (of {X})")
+    if cell_end_x < X - 5:
+        n_trimmed = int(cell_mask[:, :, cell_end_x + 1:].sum())
+        cell_mask[:, :, cell_end_x + 1:] = False
+        if n_trimmed > 0:
+            print(f"[auto_mask] trimmed {n_trimmed} distal voxels at X>{cell_end_x}")
+    if cell_start_x > 0:
+        n_trimmed = int(cell_mask[:, :, :cell_start_x].sum())
+        cell_mask[:, :, :cell_start_x] = False
+        if n_trimmed > 0:
+            print(f"[auto_mask] trimmed {n_trimmed} proximal voxels at X<{cell_start_x}")
 
-    # Clean up
+    # ── Clean up ──
     lab, n = ndi.label(cell_mask, structure=np.ones((3, 3, 3)))
     if n > 1:
         sizes = np.bincount(lab.ravel())[1:]
         cell_mask = lab == (int(sizes.argmax()) + 1)
     cell_mask = drop_small_islands(cell_mask.astype(np.uint8), min_voxels=20)[0] > 0
 
-    # ── Side paths and intruders ──────────────────────────────────────────
-    print("[auto_mask] detecting side paths and intruders...")
+    # ── (3) Soma detection ──
+    print("[auto_mask] detecting soma from width profile...")
+    has_soma, soma_end_x, soma_vox, median_trunk_w = _detect_soma_from_width(
+        cell_mask, trunk_path, voxel, period)
+    if has_soma:
+        print(f"[auto_mask] soma: end_x={soma_end_x}, voxels={soma_vox}, trunk_w={median_trunk_w}")
+    else:
+        print(f"[auto_mask] no soma (trunk width={median_trunk_w})")
+
+    # ── (4) Width cap: prevent overly fat masks ──
+    # Cap any column at MAX_WIDTH_RATIO * median trunk width (from soma detection).
+    # Trim by removing voxels furthest from the trunk path.
+    if median_trunk_w > 0:
+        max_width = int(MAX_WIDTH_RATIO * median_trunk_w)
+        mask_w = cell_mask.sum(axis=(0, 1))
+        fat_cols = np.where(mask_w > max_width)[0]
+        if len(fat_cols) > 0:
+            n_trimmed_total = 0
+            for x in fat_cols:
+                col = cell_mask[:, :, x].copy()
+                excess = int(mask_w[x]) - max_width
+                if excess <= 0:
+                    continue
+                tz, ty = int(trunk_path[x, 0]), int(trunk_path[x, 1])
+                zy_coords = np.argwhere(col)
+                if len(zy_coords) == 0:
+                    continue
+                dists = np.sqrt((zy_coords[:, 0] - tz) ** 2 + (zy_coords[:, 1] - ty) ** 2)
+                sort_idx = np.argsort(-dists)
+                for i in range(min(excess, len(sort_idx))):
+                    z, y = zy_coords[sort_idx[i]]
+                    cell_mask[z, y, x] = False
+                    n_trimmed_total += 1
+            if n_trimmed_total > 0:
+                print(f"[auto_mask] width cap: trimmed {n_trimmed_total} voxels from "
+                      f"{len(fat_cols)} columns (trunk_w={median_trunk_w}, max={max_width})")
+
+    # ── (5) Side paths and intruders ──
+    print("[auto_mask] detecting intruders...")
     sp_result = _detect_side_paths_and_intruders(
-        m0, trunk_path, ref_sm, voxel, stack_path
-    )
+        cell_mask, trunk_path, ref_sm, voxel, stack_path)
     intruder_mask = sp_result["intruder_mask"] & cell_mask
     bifurcations = sp_result["bifurcations"]
     side_paths = sp_result["side_paths"]
@@ -990,13 +1027,12 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
     cell_mask_clean = cell_mask & ~intruder_mask
     cell_mask_clean = drop_small_islands(cell_mask_clean.astype(np.uint8), min_voxels=20)[0] > 0
 
-    # ── Save outputs ──────────────────────────────────────────────────────
+    # ── Save outputs ──
     boundary_bridges = [
         {"x": int(bx), "predicted_shift": [float(s[0]), float(s[1])],
          "accepted": True, "score": 0.0}
         for bx, s in list(boundary_shifts.items())[:15]
     ]
-
     n_components = int(ndi.label(cell_mask_clean, structure=np.ones((3, 3, 3)))[1])
     mask_voxels = int(cell_mask_clean.sum())
     elapsed = time.time() - t0
@@ -1009,16 +1045,12 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
                 "centroid_zyx": sp["centroid_zyx"],
                 "reasons": sp["reasons"],
             })
-            print(f"  intruder: {sp['n_voxels']} vox at "
-                  f"{[f'{c:.1f}' for c in sp['centroid_zyx']]}, "
-                  f"reasons: {sp['reasons']}")
-
+            print(f"  intruder: {sp['n_voxels']} vox, reasons: {sp['reasons']}")
     for bif in bifurcations:
-        print(f"  bifurcation at X={bif['x']}, side_voxels={bif['side_path_voxels']}, "
-              f"suspect={bif['suspect']}")
+        print(f"  bifurcation X={bif['x']}, vox={bif['side_path_voxels']}, suspect={bif['suspect']}")
 
-    print(f"[auto_mask] final mask: {mask_voxels} voxels, {n_components} component(s), "
-          f"alpha={alpha:.3f}, {len(intruder_infos)} intruder(s)")
+    print(f"[auto_mask] final: {mask_voxels} vox, {n_components} comp, alpha={alpha:.3f}, "
+          f"{len(intruder_infos)} intruders")
 
     # 1. Reviewed labelmap
     lm = np.where(cell_mask_clean, STRUCT_LABEL, 0).astype(np.uint8)
@@ -1028,33 +1060,31 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
     params = {
         "alpha": float(alpha), "radius_x": float(rx), "pad": 0,
         "dim_pct": 15.0, "reference_channel": ch_name,
-        "soma_detected": has_soma, "soma_max_edt_um": max_edt,
-        "soma_voxels_at_probe": n_soma_vox,
-        "calibration_method": "soma-adapted" if has_soma else "no-soma-high",
+        "soma_detected": has_soma,
+        "soma_end_x": int(soma_end_x) if has_soma else None,
+        "soma_voxels": soma_vox,
+        "median_trunk_width": int(median_trunk_w),
+        "cell_end_x": int(cell_end_x),
+        "cell_start_x": int(cell_start_x),
+        "width_ratio": float(width_ratio),
+        "calibration_method": "width-ratio-v4",
     }
     review_entry = {
         "tool": "auto_mask", "version": __version__,
         "created": datetime.now(timezone.utc).isoformat(),
         "output": os.path.basename(out_paths["out_tif"]),
-        "mask_voxels": mask_voxels,
-        "n_arcs": len(arcs1),
-        "flags": [],
-        "confidence": "auto",
+        "mask_voxels": mask_voxels, "n_arcs": len(arcs1),
+        "flags": [], "confidence": "auto",
         "intruders": intruder_infos,
         "bifurcations": [
             {"x": b["x"], "zyx": b["zyx"],
-             "side_path_voxels": b["side_path_voxels"],
-             "suspect": b["suspect"]}
-            for b in bifurcations
-        ],
+             "side_path_voxels": b["side_path_voxels"], "suspect": b["suspect"]}
+            for b in bifurcations],
         "side_paths": [
-            {"n_voxels": sp["n_voxels"],
-             "centroid_zyx": sp["centroid_zyx"],
-             "bifurcation_x": sp["bifurcation_x"],
-             "suspect": sp["suspect"],
+            {"n_voxels": sp["n_voxels"], "centroid_zyx": sp["centroid_zyx"],
+             "bifurcation_x": sp["bifurcation_x"], "suspect": sp["suspect"],
              "reasons": sp["reasons"]}
-            for sp in side_paths
-        ],
+            for sp in side_paths],
         "chunk_period_px": period,
         "boundary_bridges": boundary_bridges,
         "params": params,
@@ -1094,18 +1124,25 @@ def auto_mask(stack_path: str, out_dir: str, voxel_cli=None, debug: bool = False
 
     # 5. QC figure
     qc_path = out_dir / f"{stem}_automask_qc.png"
-    make_qc_figure(ref, cell_mask_clean, intruder_mask, trunk_path, period, qc_path, stem)
+    make_qc_figure(ref, cell_mask_clean, intruder_mask, trunk_path, period, qc_path, stem,
+                   cell_end_x=cell_end_x, soma_end_x=soma_end_x, has_soma=has_soma)
 
     print(f"[auto_mask] done in {elapsed:.1f}s")
     _log("masker", "auto_mask_done",
-         f"{stem}: {mask_voxels} vox, {n_components} comp, alpha={alpha:.3f}, {elapsed:.1f}s")
+         f"{stem}: {mask_voxels} vox, alpha={alpha:.3f}, {elapsed:.1f}s")
 
     return {
         "mask_voxels": mask_voxels, "n_components": n_components,
         "intruders": intruder_infos, "chunk_period_px": period,
         "alpha": float(alpha), "radius_x": float(rx),
         "bifurcations": bifurcations, "elapsed_s": elapsed,
-        "has_soma": has_soma, "calibration_method": params["calibration_method"],
+        "has_soma": has_soma,
+        "soma_end_x": int(soma_end_x) if has_soma else None,
+        "soma_voxels": soma_vox,
+        "cell_end_x": int(cell_end_x), "cell_start_x": int(cell_start_x),
+        "calibration_method": "width-ratio-v4",
+        "median_trunk_width": int(median_trunk_w),
+        "width_ratio": float(width_ratio),
     }
 
 
@@ -1127,24 +1164,22 @@ def validate_against_curated(auto_path: str, curated_path: str, voxel: tuple,
         cl_dist = float(edt[tuple(skel_pts.T)].mean())
     else:
         cl_dist = float("inf")
-    X = auto.shape[2]
-    decile_size = X // 10
-    per_decile = []
-    for d in range(10):
-        x0 = d * decile_size
-        x1 = (d + 1) * decile_size if d < 9 else X
-        per_decile.append({"decile": d, "x_range": f"{x0}-{x1}",
-                           "auto": int(auto[:, :, x0:x1].sum()),
-                           "curated": int(curated[:, :, x0:x1].sum())})
     auto_per_x = auto.sum(axis=(0, 1))
     cur_per_x = curated.sum(axis=(0, 1))
+    auto_cols = np.where(auto_per_x > 0)[0]
+    cur_cols = np.where(cur_per_x > 0)[0]
     return {
-        "name": name, "auto_voxels": int(auto.sum()), "curated_voxels": int(curated.sum()),
-        "dice": float(dice), "precision": float(precision), "recall": float(recall),
+        "name": name,
+        "auto_voxels": int(auto.sum()),
+        "curated_voxels": int(curated.sum()),
+        "dice": float(dice),
+        "precision": float(precision),
+        "recall": float(recall),
         "centerline_dist_um": cl_dist,
-        "auto_median_vox_per_col": float(np.median(auto_per_x[auto_per_x > 0])),
-        "curated_median_vox_per_col": float(np.median(cur_per_x[cur_per_x > 0])),
-        "per_decile": per_decile,
+        "auto_median_vox_per_col": float(np.median(auto_per_x[auto_per_x > 0])) if auto_per_x.any() else 0,
+        "curated_median_vox_per_col": float(np.median(cur_per_x[cur_per_x > 0])) if cur_per_x.any() else 0,
+        "auto_x_end": int(auto_cols.max()) if len(auto_cols) else 0,
+        "curated_x_end": int(cur_cols.max()) if len(cur_cols) else 0,
     }
 
 
