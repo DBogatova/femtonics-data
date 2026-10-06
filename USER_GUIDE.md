@@ -37,12 +37,20 @@ Other features:
 - The **mask/regions by** column shows **program**, **you** or **both**.
 - To correct the program's mask, use **Edit mask** (it opens the automatic result with your
   saved session), then **Build figure**.
-- **Mark run…** sets a whole run aside (excluded / revisit later); **Ignore regions…** leaves
+- **Mark / rate…** sets a whole run aside (excluded / revisit later); **Ignore regions…** leaves
   single regions out of the figure and statistics.
+- The same dialog rates a processed run **very good / good / questionable** (or none), shown
+  in the **rating** column (`femto rate RUN very_good|good|questionable|clear --reason "..."`;
+  stored in `run_quality.csv`). A rating never removes a run: the statistics keep every rated
+  run and add a sensitivity table next to the main tests, (a) without 'questionable' runs and
+  (b) 'very good' only (`stats/cohort_summary.txt`, `stats/cohort_tests_sensitivity.csv`, and
+  the automatic report). The rating also appears in the cell atlas and overview headers.
+  (The **priority** column, P1–P4, is the old ranking from your imaging comments.)
 - Runs without behavior (imaging only, e.g. the September sessions) show "needs behavior";
   they get the imaging figure and are left out of behavior statistics.
 - Removed 4D stacks: `femto restore PATH|all`.
 - Every cell on one page with a 3D view: `python code/STEP8_stats/cell_atlas.py` (writes `stats/cell_atlas/index.html`).
+- **common amplitude scale** (Options, default OFF): tick it and **Build figure** draws traces at one cohort-wide dF/F per inch (`stats/plot_scale.json`), so amplitudes compare between cells. Left unticked, figures keep the old per-run scaling. All curated runs on one page: `stats/normalized/sheet_common.pdf` and `sheet_zscore.pdf` (`python code/STEP8_stats/normalized_plots.py`).
 
 ## Processing one cell fully by hand (untick "automatic mask")
 

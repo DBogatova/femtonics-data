@@ -60,6 +60,7 @@ PROJECT = HERE.parents[1]
 AUTO_ROOT = PROJECT / "auto_pipeline"
 sys.path.insert(0, str(PROJECT / "code"))
 from common.run_marks import is_set_aside, load_marks   # noqa: E402  (run_marks.csv)
+from common.run_marks import load_quality, rating_label  # noqa: E402  (run_quality.csv, never sets a run aside)
 RESULTS = AUTO_ROOT / "results"
 FIG_ROOT = RESULTS / "figures"
 LOG_FILE = AUTO_ROOT / "logs" / "paper_stats.jsonl"
@@ -667,6 +668,8 @@ def collect_all_metrics() -> pd.DataFrame:
         return d
     # Flag imaging-only cells
     d["is_imaging_only"] = d["behavior_base"].apply(_is_imaging_only)
+    _q = load_quality()
+    d["rating"] = d["behavior_base"].map(lambda b: (_q.get(b) or {}).get("rating", ""))
     mice = pd.read_csv(AUTO_ROOT / "mice.csv", parse_dates=["injection_date"])
     d = d.merge(mice[["mouse", "injection_date", "line", "virus"]], on="mouse", how="left")
     d["date_dt"] = pd.to_datetime(d["date"], format="%m-%d-%Y")
@@ -822,6 +825,7 @@ def collect_qc() -> pd.DataFrame:
             "n_soma_events": met.get("n_soma_events", 0),
             "n_branch_events": met.get("n_branch_events", 0),
             "is_ground_truth": is_gt,
+            "rating": (load_quality().get(met.get("behavior_base", "")) or {}).get("rating", ""),
         }
         rows.append(row)
     return pd.DataFrame(rows)
@@ -1788,12 +1792,13 @@ def test_10_qc(qc: pd.DataFrame) -> tuple[dict, list[str], list]:
     results["n_runs_total"] = n
     results["n_with_soma"] = int(qc.has_soma.sum()) if "has_soma" in qc.columns else 0
 
-    lines.append("| Run | Mouse | Mask vox | Regions | Reference | Intruders | Soma events | Branch events | Flags |")
-    lines.append("|-----|-------|----------|---------|-----------|-----------|-------------|---------------|-------|")
+    lines.append("| Run | Mouse | Rating | Mask vox | Regions | Reference | Intruders | Soma events | Branch events | Flags |")
+    lines.append("|-----|-------|--------|----------|---------|-----------|-----------|-------------|---------------|-------|")
     for _, row in qc.iterrows():
         flags_str = ", ".join(row.get("flags", []))
         gt = " **[GT]**" if row.get("is_ground_truth", False) else ""
         lines.append(f"| {row.get('run_dir', '')[-35:]}{gt} | {row.get('mouse', '')} | "
+                     f"{rating_label(row.get('rating')) or '-'} | "
                      f"{row.get('mask_voxels', 0)} | {row.get('n_regions', 0)} | "
                      f"{row.get('reference', '')} | {row.get('n_intruders', 0)} | "
                      f"{int(row.get('n_soma_events', 0))} | {int(row.get('n_branch_events', 0))} | "
@@ -1803,9 +1808,114 @@ def test_10_qc(qc: pd.DataFrame) -> tuple[dict, list[str], list]:
     low_conf = qc[qc.confidence == "auto"]
     results["n_low_confidence"] = len(low_conf)
     lines.append(f"All {n} runs have confidence='auto' (fully automatic, no manual review).")
+    lines.append("Rating = Daria's quality rating (run_quality.csv: very good / good / questionable; '-' = unrated). "
+                 "A rating never removes a run; see the Sensitivity Analysis section.")
     lines.append("")
 
     return results, lines, figs
+
+
+# ==============================================================================
+# Sensitivity to Daria's quality ratings (run_quality.csv)
+# ==============================================================================
+
+QUALITY_SUBSETS = [("without_questionable", "(a) without 'questionable' (unrated kept)",
+                    lambda r: r != "questionable"),
+                   ("very_good_only", "(b) 'very good' only", lambda r: r == "very_good")]
+
+
+def _indep_pvals(per_cell: list) -> list:
+    """Cohort p-values of test 3 (Wilcoxon A and B) from its stored per-cell numbers,
+    exactly as test_03_independence computes them (no surrogates re-run)."""
+    if not per_cell:
+        return []
+    obs = np.array([c["observed"] for c in per_cell], float)
+    out = []
+    for x in (obs - np.array([c["null_coupled_mean"] for c in per_cell], float),
+              np.array([c["null_independent_mean"] for c in per_cell], float) - obs):
+        v = np.isfinite(x)
+        if v.sum() >= 2:
+            out.append(_full_p(sp.wilcoxon(x[v], alternative="greater").pvalue))
+    return out
+
+
+def _cohort_family(d, dd, beh, per_cell):
+    """[(label, p, n_runs, n_mice)] for the global-FDR family (tests 2, 3, 4, 5, 7, 8), figures off."""
+    global save_fig
+    keep = save_fig
+    save_fig = lambda fig, *a, **k: plt.close(fig)        # never overwrite the main figures
+    fam = []
+    try:
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            for lab, fn, key in (("test02_coupling", lambda: test_02_coupling(d), "_p_values_02"),
+                                 ("test04_distance", lambda: test_04_distance(dd), "_p_values_04"),
+                                 ("test05_event_order", lambda: test_05_event_order(d), "_p_values_05"),
+                                 ("test07_behavior", lambda: test_07_behavior(d, beh), "_p_values_07"),
+                                 ("test08_expression", lambda: test_08_expression(d), "_p_values_08")):
+                try:
+                    ps = fn()[0].get(key, [])
+                except Exception as e:                       # too few runs for a test in a subset
+                    ps = []
+                for p in ps:
+                    fam.append((lab, p))
+                if lab == "test02_coupling":
+                    for p in _indep_pvals(per_cell):
+                        fam.append(("test03_independence", p))
+    finally:
+        save_fig = keep
+    order = ["test02_coupling", "test03_independence", "test04_distance", "test05_event_order",
+             "test07_behavior", "test08_expression"]
+    return sorted(fam, key=lambda x: order.index(x[0]))
+
+
+def quality_sensitivity(d, dd, beh, per_cell, main_labels, main_p):
+    """Repeat the global-FDR family (a) without 'questionable' runs, (b) on 'very good' only.
+    BH within each subset. Returns (markdown lines, JSON dict). The main result is not touched."""
+    rt = d["rating"].fillna("") if "rating" in d.columns else pd.Series("", index=d.index)
+    cnt = {k: int((rt == k).sum()) for k in ("very_good", "good", "questionable")}
+    L = ["## Sensitivity to Daria's quality ratings (run_quality.csv)", "",
+         f"Ratings among the {len(d)} cells: very good {cnt['very_good']}, good {cnt['good']}, "
+         f"questionable {cnt['questionable']}, unrated {int((rt == '').sum())}. Ratings are human judgments made after "
+         "seeing the data, so these are robustness checks next to the main result, not new tests. "
+         "Each column is BH-FDR corrected on its own; test 3 reuses the per-cell surrogate results "
+         "(no new surrogates).", ""]
+    out = {"counts": cnt, "subsets": {}}
+    q_main = bh_fdr(list(main_p)) if main_p else []
+    cols = {"main": [(l, p, q) for l, p, q in zip(main_labels, main_p, q_main)]}
+    notes = {"main": f"{len(d)} cells, {d.mouse.nunique()} mice"}
+    for key, label, keep in QUALITY_SUBSETS:
+        sel = rt.map(keep)
+        sub = d[sel.values].reset_index(drop=True)
+        bases = set(sub.behavior_base)
+        n_note = f"{len(sub)} cells, {sub.mouse.nunique() if len(sub) else 0} mice"
+        if len(sub) == len(d):
+            cols[key] = cols["main"]; notes[key] = n_note + " - identical to main (no cell removed)"
+        elif len(sub) == 0 or sub.mouse.nunique() < 2:
+            cols[key] = []; notes[key] = n_note + " - not computable (needs >= 2 mice)"
+        else:
+            fam = _cohort_family(sub, dd[dd.behavior_base.isin(bases)] if not dd.empty else dd,
+                                 beh[beh.behavior_base.isin(bases)] if not beh.empty else beh,
+                                 [c for c in per_cell if c.get("behavior_base") in bases])
+            qs = bh_fdr([p for _, p in fam]) if fam else []
+            cols[key] = [(l, p, q) for (l, p), q in zip(fam, qs)]; notes[key] = n_note
+        out["subsets"][key] = {"label": label, "n_cells": len(sub), "n_mice": int(sub.mouse.nunique()) if len(sub) else 0,
+                               "note": notes[key], "tests": [{"label": l, "p": p, "q": q} for l, p, q in cols[key]]}
+    for key, label in [("main", "main")] + [(k, l) for k, l, _ in QUALITY_SUBSETS]:
+        L.append(f"- **{label}**: {notes[key]}")
+    L.append("")
+    L.append("| Test | main p (q) | (a) no questionable p (q) | (b) very good only p (q) |")
+    L.append("|------|-----------|---------------------------|--------------------------|")
+    def cell(key, lab, i):
+        xs = [(p, q) for l, p, q in cols[key] if l == lab]
+        return f"{fmt_p(xs[i][0])} ({fmt_p(xs[i][1])})" if i < len(xs) else "n/a"
+    seen = {}
+    for lab in main_labels:
+        i = seen.get(lab, 0); seen[lab] = i + 1
+        L.append(f"| {lab}{'' if i == 0 else f' #{i + 1}'} | {cell('main', lab, i)} | "
+                 f"{cell('without_questionable', lab, i)} | {cell('very_good_only', lab, i)} |")
+    L.append("")
+    return L, out
 
 
 # ==============================================================================
@@ -1983,8 +2093,12 @@ def main():
     all_lines.append("---")
     all_lines.append("## Sensitivity Analysis")
     all_lines.append("All runs are automatic (confidence='auto'), so no high vs low confidence split is possible.")
-    all_lines.append("The full cohort results above ARE the only analysis.")
+    all_lines.append("The full cohort results above are the main analysis; the quality-rating checks below sit next to it.")
     all_lines.append("")
+    _ql, _qj = quality_sensitivity(d, dd, beh, all_results.get("per_cell", []), cohort_pval_labels, cohort_pvals)
+    all_lines.extend(_ql)
+    all_results["quality_sensitivity"] = _qj
+    all_results["ratings"] = {b: r for b, r in zip(d.behavior_base, d.get("rating", [""] * len(d))) if r}
 
     # Statistical notes
     all_lines.append("---")

@@ -17,6 +17,18 @@ Command line (also: `femto mark ...`):
     python code/common/run_marks.py RUN revisit --reason "try again with a tighter mask"
     python code/common/run_marks.py RUN clear
 RUN = behavior_base (e.g. rbp4_141_phpeb_26-06-17_Run001) or the run folder.
+
+QUALITY RATING (separate from the marks above; also `femto rate ...`)
+A processed, analyzable run can be rated 'very good', 'good' or 'questionable'. A rating
+never sets a run aside: rated runs stay in every statistic. cohort_stats / paper_stats
+print the rating per run and repeat their main tests (a) without 'questionable' runs and
+(b) on 'very good' runs only, next to the main result. Stored in its own table,
+<project root>/run_quality.csv  (behavior_base,rating,reason,updated), so run_marks.csv
+and everything that reads it are unchanged.
+    python code/common/run_marks.py rate                               # list rated runs
+    python code/common/run_marks.py rate RUN very_good --reason "clean, big events"
+    python code/common/run_marks.py rate RUN questionable --reason "drift at the end"
+    python code/common/run_marks.py rate RUN clear
 """
 from __future__ import annotations
 
@@ -65,6 +77,75 @@ def set_mark(behavior_base: str, mark, reason: str = ""):
             w.writerow({c: marks[k].get(c, "") for c in FIELDS})
 
 
+# ---------------------------------------------------------------- quality rating
+QUALITY_CSV = PROJECT / "run_quality.csv"
+QUALITY_FIELDS = ["behavior_base", "rating", "reason", "updated"]
+RATINGS = ("very_good", "good", "questionable")             # best -> worst
+RATING_LABELS = {"very_good": "very good", "good": "good", "questionable": "questionable"}
+RATING_ALIASES = {"very_good": "very_good", "very-good": "very_good", "verygood": "very_good",
+                  "very good": "very_good", "vg": "very_good", "good": "good",
+                  "questionable": "questionable", "q": "questionable",
+                  "clear": None, "none": None, "": None}
+
+
+def normalize_rating(rating):
+    """'very good' / 'very-good' / 'VG' -> 'very_good'; 'clear'/'none'/None -> None.
+    Raises ValueError for anything else."""
+    if rating is None:
+        return None
+    key = str(rating).strip().lower()
+    if key not in RATING_ALIASES:
+        raise ValueError(f"unknown rating {rating!r}; use one of {', '.join(RATINGS)} or clear")
+    return RATING_ALIASES[key]
+
+
+def load_quality() -> dict:
+    """{behavior_base: row} for every rated run (rows with an unknown rating are ignored)."""
+    p = QUALITY_CSV
+    if not p.exists():
+        return {}
+    with open(p, newline="") as f:
+        return {r["behavior_base"]: r for r in csv.DictReader(f) if r.get("rating") in RATINGS}
+
+
+def quality_of(behavior_base: str):
+    """(rating, reason) or (None, '')."""
+    r = load_quality().get(behavior_base or "")
+    return (r["rating"], r.get("reason", "")) if r else (None, "")
+
+
+def get_quality(behavior_base: str):
+    """'very_good' | 'good' | 'questionable' | None. Never affects is_set_aside()."""
+    return quality_of(behavior_base)[0]
+
+
+def rating_label(rating) -> str:
+    """'very_good' -> 'very good'; None -> ''."""
+    return RATING_LABELS.get(rating or "", "")
+
+
+def set_quality(behavior_base: str, rating, reason: str = ""):
+    """Rate a run (very_good | good | questionable) or clear its rating (None / 'clear')."""
+    rating = normalize_rating(rating)
+    if not behavior_base:
+        raise ValueError("behavior_base is required")
+    rows = load_quality()
+    if rating is None:
+        rows.pop(behavior_base, None)
+    else:
+        rows[behavior_base] = {"behavior_base": behavior_base, "rating": rating, "reason": reason,
+                               "updated": datetime.now().isoformat(timespec="seconds")}
+    p = QUALITY_CSV
+    tmp = p.with_name(p.name + ".tmp")
+    with open(tmp, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=QUALITY_FIELDS)
+        w.writeheader()
+        for k in sorted(rows):
+            w.writerow({c: rows[k].get(c, "") for c in QUALITY_FIELDS})
+    tmp.replace(p)                                       # atomic: a reader never sees half a file
+    return rating
+
+
 def resolve_base(target: str) -> str:
     """behavior_base from a behavior_base or a run folder (via femto_status)."""
     if "_Run" in target and not Path(target).exists():
@@ -101,5 +182,38 @@ def main(argv=None):
         print(f"  {r['mark']:8s} {k}  {r.get('reason', '')}")
 
 
+def main_rate(argv=None):
+    """`run_marks.py rate [RUN RATING] [--reason TEXT]` (also `femto rate ...`)."""
+    ap = argparse.ArgumentParser(prog="femto rate", description="Rate a processed run: "
+                                 "very_good | good | questionable | clear. A rating never sets a run aside.")
+    ap.add_argument("run", nargs="?", help="behavior_base or run folder")
+    ap.add_argument("rating", nargs="?", help="very_good | good | questionable | clear")
+    ap.add_argument("--reason", default="")
+    a = ap.parse_args(argv)
+    if a.run and a.rating:
+        try:
+            rating = normalize_rating(a.rating)
+        except ValueError as e:
+            ap.error(str(e))
+        base = resolve_base(a.run)
+        set_quality(base, rating, a.reason)
+        m, _ = mark_of(base)
+        print(f"{base}: " + (f"rated {rating_label(rating)}" if rating else "rating cleared")
+              + (f" - {a.reason}" if a.reason and rating else "")
+              + (f"  (note: this run is also marked '{m}', so it stays out of the statistics)" if m else ""))
+        return
+    if a.run:
+        base = resolve_base(a.run); q, why = quality_of(base)
+        print(f"{base}: {rating_label(q) or 'not rated'}" + (f" - {why}" if why else ""))
+        return
+    rows = load_quality()
+    print(f"{len(rows)} rated run(s) in {QUALITY_CSV.name}" + (":" if rows else ""))
+    for k, r in sorted(rows.items(), key=lambda kv: (RATINGS.index(kv[1]["rating"]), kv[0])):
+        print(f"  {rating_label(r['rating']):12s} {k}  {r.get('reason', '')}")
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "rate":
+        main_rate(sys.argv[2:])
+    else:
+        main()

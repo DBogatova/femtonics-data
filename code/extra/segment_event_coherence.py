@@ -60,7 +60,25 @@ def main():
     ap.add_argument("--show-other", dest="hide_other", action="store_false",
                     help="show other cells as recorded")
     ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
+    ap.add_argument("--scale", choices=["auto", "common", "zscore"], default="auto",
+                    help="trace panel amplitude scale. auto (default, historical look): spacing from this "
+                         "run's own range. common: one cohort-wide dF/F per inch from --scale-file, so "
+                         "amplitudes compare across figures. zscore: traces / their noise SD (SNR), "
+                         "cohort-wide SD per inch. Traces, events and statistics never change.")
+    ap.add_argument("--scale-file", default=None,
+                    help="plot_scale.json (default: <project>/stats/plot_scale.json)")
     args = ap.parse_args()
+    import sys as _sys, pathlib as _pl
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1]))
+    from common.plot_scale import load_scale, robust_noise, default_scale_file
+    scale_cfg = None
+    if args.scale != "auto":
+        sf = args.scale_file or default_scale_file()
+        scale_cfg = load_scale(sf)
+        if scale_cfg is None:
+            print(f"WARNING: --scale {args.scale} needs {sf} (build it with "
+                  f"code/STEP8_stats/normalized_plots.py --write-scale); using --scale auto")
+            args.scale = "auto"
 
     stack = tifffile.imread(args.stack)
     assert stack.ndim == 4, f"expected 4D, got {stack.shape}"
@@ -201,8 +219,18 @@ def main():
             f.write(f"{r[0]},{r[1]},{r[2]},{r[3]},{r[4]}\n")
 
     # ---- figure ----
-    fig = plt.figure(figsize=(12, 8))
-    gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.2], width_ratios=[1, 1.1])
+    # auto: the historical 12 x 8 in figure. common / zscore: the trace panel gets a fixed
+    # height per region (inch_per_lane), so one lane is the same dF/F (or SD) per inch on
+    # every run; the top row keeps its auto size (8 in x 1/2.2).
+    if args.scale == "auto":
+        fig_h, hr = 8.0, [1, 1.2]
+    else:
+        top_in = 8.0 / 2.2
+        lane_in = float(scale_cfg["inch_per_lane"])
+        trace_in = (n + 1.0) * lane_in + 0.9      # room for the top trace's peaks
+        fig_h, hr = top_in + trace_in, [top_in, trace_in]
+    fig = plt.figure(figsize=(12, fig_h))
+    gs = fig.add_gridspec(2, 2, height_ratios=hr, width_ratios=[1, 1.1])
     cmap = plt.get_cmap("turbo")
     col = [cmap((i + 0.5) / n) for i in range(n)]
 
@@ -274,7 +302,25 @@ def main():
 
     # C: event raster with traces (soma bottom -> branch top)
     axR = fig.add_subplot(gs[1, :])
-    off = 1.15 * max(float(t.max() - t.min()) for t in traces)
+    # what is drawn: dF/F (auto, common) or dF/F / noise SD (zscore); events, correlations
+    # and the CSV above are always computed on the dF/F traces
+    if args.scale == "zscore":
+        noise_sd = np.array([robust_noise(t) for t in traces])
+        shown = traces / noise_sd[:, None]
+        off = float(scale_cfg["z_per_lane"])
+        SB, sb_unit = float(scale_cfg["z_scale_bar"]), "SD"
+        scale_note = (f"z-scored: each trace / its noise SD (signal-to-noise); "
+                      f"lane = {off:g} SD, same on every run")
+    elif args.scale == "common":
+        shown = traces
+        off = float(scale_cfg["dff_per_lane"])
+        SB, sb_unit = float(scale_cfg["dff_scale_bar"]), "ΔF/F"
+        scale_note = f"common amplitude scale: lane = {off:g} ΔF/F, same on every run"
+    else:
+        shown = traces
+        off = 1.15 * max(float(t.max() - t.min()) for t in traces)
+        SB, sb_unit = 0.5, "ΔF/F"     # fixed-size bar (same 0.5 dF/F on every run)
+        scale_note = None
     # network-event guide lines colored by leader position
     for r in rows:
         onset, npart, leadseg, leadrole, _ = r
@@ -282,21 +328,21 @@ def main():
         if npart >= 2:
             axR.axvline(onset, color=c, lw=0.5, alpha=0.35)
     for i in range(n):
-        axR.plot(traces[i] + i * off, color=col[i], lw=0.6)
+        axR.plot(shown[i] + i * off, color=col[i], lw=0.6)
         pk = per_seg_peaks[i]
-        axR.plot(pk, traces[i][pk] + i * off, ".", color="k", ms=4)
-        axR.text(-0.01 * T, i * off + traces[i].mean(), f"{names[i]}\n{role[i]}",
+        axR.plot(pk, shown[i][pk] + i * off, ".", color="k", ms=4)
+        ylab = i * off + (shown[i].mean() if args.scale == "auto" else 0.25 * off)
+        axR.text(-0.01 * T, ylab, f"{names[i]}\n{role[i]}",
                  ha="right", va="center", fontsize=7, color=col[i])
     axR.set_xlabel("frame", fontsize=11); axR.set_yticks([])
     axR.tick_params(axis="x", labelsize=11)            # same as the behavior panel
-    # fixed-size dF/F scale bar (same 0.5 dF/F on every run, so figures compare)
-    SB = 0.5
     xb = T - 1 + 0.012 * T
     axR.plot([xb, xb], [0, SB], color="k", lw=1.6, clip_on=False, solid_capstyle="butt")
-    axR.text(xb + 0.006 * T, SB / 2, f"{SB:g} ΔF/F", rotation=90, ha="left", va="center",
+    axR.text(xb + 0.006 * T, SB / 2, f"{SB:g} {sb_unit}", rotation=90, ha="left", va="center",
              fontsize=8, clip_on=False)
-    axR.set_title("per-segment ΔF/F (soma bottom → branch top); dots=events; "
-                  "vlines=multi-seg events (red=soma-led, blue=branch-led)", fontsize=9)
+    ttl = ("per-segment ΔF/F (soma bottom → branch top); dots=events; "
+           "vlines=multi-seg events (red=soma-led, blue=branch-led)")
+    axR.set_title(ttl if scale_note is None else ttl + "\n" + scale_note, fontsize=9)
     plt.tight_layout()
     # Pin the trace axis to a fixed horizontal span of the figure and to the exact frame
     # range, so the behavior panel (same span, same range, same figure width) lines up
@@ -305,6 +351,14 @@ def main():
     pos = axR.get_position()
     axR.set_position([TRACE_LEFT, pos.y0, TRACE_RIGHT - TRACE_LEFT, pos.height])
     axR.set_xlim(0, T - 1)
+    if args.scale != "auto":
+        # exact units per inch: the y range is set from the axis' physical height
+        h_in = pos.height * fig_h
+        per_in = off / float(scale_cfg["inch_per_lane"])
+        y0 = -0.35 * off
+        axR.set_ylim(y0, y0 + h_in * per_in)
+        print(f"trace panel: --scale {args.scale}, lane {off:g} {sb_unit} = "
+              f"{scale_cfg['inch_per_lane']:g} in ({per_in:.3g} {sb_unit}/in)")
     plt.savefig(f"{tag}.png", dpi=180); plt.savefig(f"{tag}.pdf")
     print(f"saved: {tag}.png / .pdf  and  {tag}_network_events.csv\n")
 

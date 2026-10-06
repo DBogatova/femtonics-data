@@ -12,7 +12,9 @@ step for the selected run:
   [Edit mask]                opens trace_mask_napari.py (resumes saved session)
   [Edit regions]             opens wrap_segments_napari.py
   [Ignore regions…]          leave chosen regions out of figure + statistics
-  [Mark run…]                exclude / revisit / normal
+  [Mark / rate…]             exclude / revisit / normal, and a quality rating
+                             (very good / good / questionable / none; a rating
+                             never sets the run aside - shown in the 'rating' column)
   [Build figure]             coherence + behavior composite
   [Build movies]             3D movies
   [Automate all runs]        every local unmarked run: reference + auto mask,
@@ -55,6 +57,10 @@ PYEXE = sys.executable
 
 # stage -> (label, script, is_gui) ; script args are built per run
 AUTO_STAGES = {"stack", "reference", "auto_segmented_pending"}  # informational
+
+# quality rating (run_quality.csv) shown in the 'rating' column; tints are deliberately faint
+RATING_TEXT = {"very_good": "very good", "good": "good", "questionable": "questionable"}
+RATING_TINT = {"very_good": "#e3f1e6", "good": "#eef4e8", "questionable": "#fbf0dc"}
 
 
 def build_runs():
@@ -168,6 +174,13 @@ def selftest() -> int:
             n_cmd += 1
     print("stage tally:", stages)
     print(f"runnable commands built: {n_cmd}")
+    # quality ratings (run_quality.csv): present on every run, labels cover every rating
+    sys.path.insert(0, str(CODE_ROOT / "code"))
+    from common.run_marks import RATINGS
+    assert set(RATING_TEXT) == set(RATINGS) == set(RATING_TINT), "rating labels/tints out of sync with run_marks.RATINGS"
+    assert all("rating" in r for r in runs), "femto_status did not attach 'rating' to every run"
+    n_rated = sum(1 for r in runs if r.get("rating"))
+    print(f"rated runs: {n_rated}")
     # Count imaging-only runs if present
     n_io = sum(1 for r in runs if r.get("_imaging_only"))
     if n_io:
@@ -205,9 +218,9 @@ def run_gui() -> int:
 
             # ---- table (stretches) ----
             self.table = QtWidgets.QTableWidget()
-            self.table.setColumnCount(6)
+            self.table.setColumnCount(7)
             self.table.setHorizontalHeaderLabels(
-                ["rank", "run", "quality", "stage", "mask/regions by", "next step"])
+                ["rank", "run", "priority", "rating", "stage", "mask/regions by", "next step"])
             self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
             self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -234,9 +247,10 @@ def run_gui() -> int:
             self.b_ign = QtWidgets.QPushButton("Ignore regions…")
             self.b_ign.setToolTip("Leave chosen regions out of the figure and all statistics, "
                                   "without changing the mask or regions. Untick to bring them back.")
-            self.b_mark = QtWidgets.QPushButton("Mark run…")
-            self.b_mark.setToolTip("Exclude this run from everything, or set it aside to re-analyze later. "
-                                   "Files are kept; clear the mark to bring it back.")
+            self.b_mark = QtWidgets.QPushButton("Mark / rate…")
+            self.b_mark.setToolTip("Exclude this run from everything, or set it aside to re-analyze later "
+                                   "(files are kept; clear the mark to bring it back). Also: rate a processed "
+                                   "run very good / good / questionable - a rating keeps the run in the statistics.")
             self.b_fig = QtWidgets.QPushButton("Build figure")
             self.b_fig.setToolTip("Build the coherence + behavior figure for this run (also rebuilds statistics)")
             self.b_mov = QtWidgets.QPushButton("Build movies")
@@ -280,7 +294,14 @@ def run_gui() -> int:
             self.auto_regions.setChecked(False)
             self.auto_regions.setToolTip("The program picks the regions (auto_regions.py) instead of opening "
                                          "the region tool. Default off: Daria picks regions by hand.")
-            for cb in (self.chain, self.auto_mask, self.auto_regions):
+            self.common_scale = QtWidgets.QCheckBox("common amplitude scale")
+            # default OFF = the historical per-run auto scale (default-preserving)
+            self.common_scale.setChecked(False)
+            self.common_scale.setToolTip("Tick to draw every run's traces at the same dF/F per inch "
+                                         "(cohort value in stats/plot_scale.json), so you can see which "
+                                         "cell has larger or smaller signals. Default off: each run scaled "
+                                         "to its own range, as before. Traces and statistics never change.")
+            for cb in (self.chain, self.auto_mask, self.auto_regions, self.common_scale):
                 opts_flow.addWidget(cb)
             # how many runs 'Automate all' processes at the same time. The stages are
             # separate single-core subprocesses writing only inside their own run
@@ -416,12 +437,16 @@ def run_gui() -> int:
                 display_desc = desc if len(desc) <= max_chars else desc[:max_chars - 1] + "…"
                 cells = [str(r.get("rank", "")), r.get("behavior_base", ""),
                          str(r.get("quality", r.get("priority", ""))),
+                         RATING_TEXT.get(r.get("rating") or "", ""),
                          r.get("stage", "?"), {"auto": "program", "yours": "you", "mixed": "both"}.get(provenance(r), ""),
                          ("[GUI] " if gui else "") + display_desc]
                 for j, txt in enumerate(cells):
                     it = QtWidgets.QTableWidgetItem(txt)
-                    if j == 5:   # next step column: full text as tooltip
+                    if j == 6:   # next step column: full text as tooltip
                         it.setToolTip(("[GUI] " if gui else "") + desc)
+                    if j == 3 and r.get("rating"):   # rating: subtle tint, reason as tooltip
+                        it.setBackground(QtGui.QColor(RATING_TINT[r["rating"]]))
+                        it.setToolTip(RATING_TEXT[r["rating"]] + (f": {r['rating_reason']}" if r.get("rating_reason") else ""))
                     if r.get("mark") == "excluded":
                         it.setForeground(QtGui.QColor("#c62828"))
                     elif r.get("mark") == "revisit":
@@ -433,8 +458,8 @@ def run_gui() -> int:
                     self.table.setItem(i, j, it)
             self.table.resizeColumnsToContents()
             # Limit the "next step" column so it does not push the window too wide
-            if self.table.columnCount() > 5:
-                self.table.setColumnWidth(5, min(self.table.columnWidth(5), 400))
+            if self.table.columnCount() > 6:
+                self.table.setColumnWidth(6, min(self.table.columnWidth(6), 400))
             self.logline("table refreshed from disk")
 
         def selected(self):
@@ -516,35 +541,60 @@ def run_gui() -> int:
                 self.launch_gui([PYEXE, str(CODE_ROOT / "code/STEP7_workflow/wrap_segments_napari.py"), str(stack)], "region tool")
 
         def edit_mark(self):
-            """Exclude / revisit later / analyze normally -> run_marks.csv."""
+            """Exclude / revisit later / analyze normally -> run_marks.csv;
+            quality rating (very good / good / questionable / none) -> run_quality.csv."""
             r = self.selected()
             if r is None:
                 return
             sys.path.insert(0, str(CODE_ROOT / "code"))
             from common import run_marks as rm
             base = r.get("behavior_base", "")
-            dlg = QtWidgets.QDialog(self); dlg.setWindowTitle(f"Mark run - {base}")
+            dlg = QtWidgets.QDialog(self); dlg.setWindowTitle(f"Mark / rate run - {base}")
             v = QtWidgets.QVBoxLayout(dlg)
+            # group 1: use in statistics (run_marks.csv) - unchanged behavior
+            g1 = QtWidgets.QGroupBox("Use in statistics"); v1 = QtWidgets.QVBoxLayout(g1)
             opts = [(None, "Analyze normally"), ("revisit", "Set aside - re-analyze later"),
                     ("excluded", "Exclude - not analyzable")]
             radios = []
             for key, label in opts:
-                rb = QtWidgets.QRadioButton(label); rb.setChecked(r.get("mark") == key); v.addWidget(rb); radios.append((key, rb))
-            v.addWidget(QtWidgets.QLabel("Reason:"))
+                rb = QtWidgets.QRadioButton(label); rb.setChecked(r.get("mark") == key); v1.addWidget(rb); radios.append((key, rb))
+            v1.addWidget(QtWidgets.QLabel("Reason:"))
             reason = QtWidgets.QLineEdit(r.get("mark_reason", ""))
             reason.setPlaceholderText("e.g. multiple cells, part of the cell out of frame")
-            v.addWidget(reason)
-            v.addWidget(QtWidgets.QLabel("Files are kept. A marked run is greyed out here, its automatic steps\n"
-                                         "are not run, and it is left out of all statistics."))
+            v1.addWidget(reason)
+            v1.addWidget(QtWidgets.QLabel("Files are kept. A marked run is greyed out here, its automatic steps\n"
+                                          "are not run, and it is left out of all statistics."))
+            v.addWidget(g1)
+            # group 2: quality rating (run_quality.csv) - separate radios (own parent = own exclusivity)
+            g2 = QtWidgets.QGroupBox("Quality (processed, analyzable runs)"); v2 = QtWidgets.QVBoxLayout(g2)
+            qrow = QtWidgets.QHBoxLayout()
+            qradios = []
+            for key, label in ((None, "none"), ("very_good", "very good"), ("good", "good"), ("questionable", "questionable")):
+                rb = QtWidgets.QRadioButton(label); rb.setChecked(r.get("rating") == key); qrow.addWidget(rb); qradios.append((key, rb))
+            qrow.addStretch(1)
+            v2.addLayout(qrow)
+            qreason = QtWidgets.QLineEdit(r.get("rating_reason", ""))
+            qreason.setPlaceholderText("why (optional), e.g. clean traces, big events / drift at the end")
+            v2.addWidget(qreason)
+            v2.addWidget(QtWidgets.QLabel("A rating never sets the run aside: it stays in every statistic. The statistics\n"
+                                          "repeat their main tests without 'questionable' runs and on 'very good' only."))
+            v.addWidget(g2)
             bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
             bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject); v.addWidget(bb)
             if dlg.exec_() != QtWidgets.QDialog.Accepted:
                 return
             key = next(k for k, rb in radios if rb.isChecked())
-            rm.set_mark(base, key, reason.text().strip())
-            self.logline(f"[{base}] " + ({None: "analyzed normally", "revisit": "set aside to re-analyze later",
-                                          "excluded": "excluded"}[key]) + (f" - {reason.text().strip()}" if reason.text().strip() else "")
-                         + " - press 'Statistics' to update the cohort")
+            if key != r.get("mark") or (key and reason.text().strip() != (r.get("mark_reason") or "")):
+                rm.set_mark(base, key, reason.text().strip())
+                self.logline(f"[{base}] " + ({None: "analyzed normally", "revisit": "set aside to re-analyze later",
+                                              "excluded": "excluded"}[key]) + (f" - {reason.text().strip()}" if reason.text().strip() else "")
+                             + " - press 'Statistics' to update the cohort")
+            qkey = next(k for k, rb in qradios if rb.isChecked())
+            if qkey != r.get("rating") or (qkey and qreason.text().strip() != (r.get("rating_reason") or "")):
+                rm.set_quality(base, qkey, qreason.text().strip())
+                self.logline(f"[{base}] " + (f"rated {RATING_TEXT[qkey]}" if qkey else "rating cleared")
+                             + (f" - {qreason.text().strip()}" if qkey and qreason.text().strip() else "")
+                             + " - press 'Statistics' to update the sensitivity tables")
             self.refresh()
 
         def edit_ignore(self):
@@ -602,6 +652,11 @@ def run_gui() -> int:
             return ((["--mask"] if self.bg_black.isChecked() else ["--no-mask"]) + ["--edge-um", f"{self.edge.value():g}"]
                     + (["--hide-other"] if self.hide_other.isChecked() else ["--show-other"]))
 
+        def figure_args(self):
+            """display options + amplitude scale, for coherence_with_behavior.py only
+            (make_movies.py takes display_args, it has no traces)."""
+            return self.display_args() + ["--scale", "common" if self.common_scale.isChecked() else "auto"]
+
         def build_figure(self, with_movies=True, figure=True):
             r = self.selected()
             if r is None or self.busy:
@@ -611,7 +666,7 @@ def run_gui() -> int:
             disp = self.display_args()
             if figure:
                 seq.append([PYEXE, str(CODE_ROOT / "code/STEP7_workflow/coherence_with_behavior.py"),
-                            "--run", base, *disp] + (["--force"] if self.mv_force.isChecked() else []))
+                            "--run", base, *self.figure_args()] + (["--force"] if self.mv_force.isChecked() else []))
             kinds = [k for k, cb in self.mv.items() if cb.isChecked()]
             if with_movies and kinds:
                 mv = [PYEXE, str(CODE_ROOT / "code/STEP7_workflow/make_movies.py"), "--run", base,
@@ -648,7 +703,7 @@ def run_gui() -> int:
                 if not argv or gui:
                     break
                 if argv[1].endswith("coherence_with_behavior.py"):
-                    argv = argv + self.display_args()
+                    argv = argv + self.figure_args()
                 if not self._exec(argv, desc, prefix=base):
                     break
             return base, time.monotonic() - t0
@@ -708,7 +763,7 @@ def run_gui() -> int:
                     st = fresh[0].get("stage", ""); k = stages.index(st) if st in stages else 0
                     self.chain_signal.emit(k, len(stages), desc)
                     if argv and argv[1].endswith("coherence_with_behavior.py"):
-                        argv = argv + self.display_args()
+                        argv = argv + self.figure_args()
                     if not argv or gui:
                         self.logline(f"[{r.get('behavior_base')}] stopping: {desc}")
                         break

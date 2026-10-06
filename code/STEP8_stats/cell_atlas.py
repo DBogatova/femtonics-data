@@ -4,7 +4,9 @@
 For each cell (all automatic runs in auto_pipeline/, with Daria's hand curation used
 instead wherever it exists) it writes:
   stats/cell_atlas/cells/<cell>.png    MIPs (top and side view) with regions, a static
-                                       3D render, and the cell's key numbers
+                                       3D render, and the cell's key numbers; every view at
+                                       true aspect in um (long tubes are cut into pieces along X)
+  stats/cell_atlas/cells/<cell>_views.png  the top + side views alone (for slides)
   stats/cell_atlas/cells/<cell>_3d.html  interactive 3D (rotate / zoom in a browser):
                                        mask, each region, other cells
   stats/cell_atlas/index.html          one table row per cell, thumbnails, links
@@ -36,6 +38,7 @@ sys.path.insert(0, str(PROJECT / "code"))
 from common.voxel import resolve_voxel          # noqa: E402
 from common.regions import _names_from_json, ignored_names   # noqa: E402
 from common.run_marks import load_marks         # noqa: E402
+from common.run_marks import load_quality, rating_label   # noqa: E402  (run_quality.csv)
 
 # no red in the region palette: red is reserved for other cells
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#17becf", "#e377c2", "#bcbd22",
@@ -110,6 +113,7 @@ def numbers(c, m, bc, cp, names, ign, mark):
     row = {
         "cell": c["base"], "source": c["source"], "folder": c["rel"],
         "mark": (mark["mark"] + (": " + mark.get("reason", "") if mark.get("reason") else "")) if mark else "",
+        "rating": rating_label(c.get("rating")),
         "reference": m.get("reference_region") or m.get("reference") or "",
         "regions": ", ".join(n + (" (ignored)" if n.lower() in ign else "") for _, n in sorted(names.items())),
         "r_ref_branch": f(m.get("r_soma_branch")), "r_ref_trunk": f(m.get("r_soma_trunk")),
@@ -127,6 +131,8 @@ def render(c):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker
+    import matplotlib.transforms
     from matplotlib.colors import to_rgb
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
     from skimage.measure import marching_cubes
@@ -139,54 +145,110 @@ def render(c):
     vz, vy, vx = vox
     row = numbers(c, m, bc, cp, names, ign, c["mark"])
 
-    # ---- picture: top (XY) and side (XZ) MIPs with regions, static 3D, numbers
-    fig = plt.figure(figsize=(16, 10))
-    gs = fig.add_gridspec(3, 2, width_ratios=[2.3, 1], height_ratios=[1, 1, 1.5], hspace=0.38, wspace=0.05)
-    for k, (ax_i, proj, ext, lab) in enumerate([(0, 0, [0, X * vx, Y * vy, 0], "top view (max over Z)"),
-                                                (1, 1, [0, X * vx, Z * vz, 0], "side view (max over Y)")]):
-        ax = fig.add_subplot(gs[ax_i, 0])
+    # ---- picture: top (XY) and side (XZ) MIPs with regions, static 3D, numbers.
+    # Everything is drawn at TRUE aspect in um (1 um is the same length on every axis): the tube is
+    # ~20x longer than it is wide, so instead of stretching Y/Z it is cut into n consecutive pieces
+    # along X, stacked (MIPs) or side by side (3D), all at the same scale.
+    xum, yum, zum = X * vx, Y * vy, Z * vz
+    LW = 10.6                                            # inches available for one strip
+    n = 1
+    while n < 3 and yum * LW / (xum / n) < 0.75:         # cut until the strip is >= 0.75 in tall
+        n += 1
+    L = xum / n                                          # um of X per piece (same for every piece)
+    s = LW / L                                           # inches per um
+    hy, hz = yum * s, zum * s
+    lab_h, tick_h, title_h, gap3 = 0.32, 0.36, 0.30, 0.25
+    h_top = title_h + n * (lab_h + hy + tick_h)
+    h_side = title_h + n * (hz + tick_h)
+    h3 = 2.2
+    FW, FH = 16.0, 0.55 + h_top + h_side + gap3 + h3 + 0.25
+    fig = plt.figure(figsize=(FW, FH))
+    x0_in = 0.75
+    rect = lambda x, ytop, w, h: [x / FW, (FH - ytop - h) / FH, w / FW, h / FH]   # ytop from the page top
+    seg_lab = {l: (np.nonzero(seg == l)) for l in labels}
+    y_cur = 0.55
+    for proj, lab, hh in ((0, "top view (max over Z), true aspect", hy), (1, "side view (max over Y), true aspect", hz)):
+        fig.text(x0_in / FW, 1 - y_cur / FH, lab + (f", cut into {n} pieces along X" if n > 1 else ""),
+                 fontsize=10, va="top", ha="left")
+        y_cur += title_h
         im = anat.max(proj); lo, hi = np.percentile(im, [1, 99.7])
-        ax.imshow(np.clip((im - lo) / (hi - lo + 1e-9), 0, 1), cmap="gray", aspect="auto", extent=ext)
+        hum = yum if proj == 0 else zum
+        ext = [0, xum, hum, 0]
         rgba = np.zeros(im.shape + (4,))
         for l in labels:
-            r = (seg == l).any(proj)
-            rgba[r] = (*to_rgb(col[l]), 0.18 if names[l].lower() in ign else 0.55)
-        ax.imshow(rgba, aspect="auto", extent=ext, interpolation="nearest")
+            rgba[(seg == l).any(proj)] = (*to_rgb(col[l]), 0.18 if names[l].lower() in ign else 0.55)
         ex2 = excl.any(proj) & ~mask.any(proj)
-        if ex2.any():                                  # other cells: red outline only
-            ax.contour(np.linspace(0, X * vx, X), np.linspace(0, ext[2], im.shape[0]), ex2, [0.5],
-                       colors="red", linewidths=0.6)
-        ax.contour(np.linspace(0, X * vx, X), np.linspace(0, ext[2], im.shape[0]), mask.any(proj), [0.5],
-                   colors="yellow", linewidths=0.5)
-        if k == 0:
-            for l in labels:
-                zz, yy, xx = np.nonzero(seg == l)
-                ax.text(xx.mean() * vx, yy.min() * vy - 0.4, names[l] + (" (ignored)" if names[l].lower() in ign else ""),
-                        color=col[l], fontsize=8, ha="center", va="bottom", fontweight="bold")
-        ax.set_title(lab, loc="left", fontsize=9); ax.set_xlabel("X along the scanned path (um)", fontsize=8)
-        ax.set_ylabel("Y (um)" if k == 0 else "Z (um)", fontsize=8); ax.tick_params(labelsize=7)
+        xs_c = (np.arange(X) + 0.5) * vx; ys_c = (np.arange(im.shape[0]) + 0.5) * (vy if proj == 0 else vz)
+        for i in range(n):
+            if proj == 0:
+                y_cur += lab_h
+            ax = fig.add_axes(rect(x0_in, y_cur, LW, hh))
+            ax.imshow(np.clip((im - lo) / (hi - lo + 1e-9), 0, 1), cmap="gray", aspect="equal", extent=ext,
+                      interpolation="nearest")
+            ax.imshow(rgba, aspect="equal", extent=ext, interpolation="nearest")
+            if ex2.any():                              # other cells: red outline only
+                ax.contour(xs_c, ys_c, ex2.astype(float), [0.5], colors="red", linewidths=0.7)
+            ax.contour(xs_c, ys_c, mask.any(proj).astype(float), [0.5], colors="yellow", linewidths=0.6)
+            ax.set_xlim(i * L, (i + 1) * L); ax.set_ylim(hum, 0)
+            ax.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator(10))
+            ax.tick_params(labelsize=7.5, length=2.5, pad=1.5)
+            ax.set_ylabel("Y (um)" if proj == 0 else "Z (um)", fontsize=8, labelpad=2)
+            if i == n - 1 and proj == 1:
+                ax.set_xlabel("X along the scanned path (um)", fontsize=8.5, labelpad=1)
+            if proj == 0:                              # region names above the piece that holds them
+                prev = -1e9; row_ = 0
+                for l in sorted(labels, key=lambda l: seg_lab[l][2].mean()):
+                    xm = (seg_lab[l][2].mean() + 0.5) * vx
+                    if not (i * L <= xm < (i + 1) * L or (i == n - 1 and xm >= xum)):
+                        continue
+                    row_ = 1 - row_ if (xm - prev) * s < 1.1 else 0
+                    prev = xm
+                    ax.text(xm, 0, names[l] + (" (ignored)" if names[l].lower() in ign else ""), color=col[l],
+                            fontsize=8, ha="center", va="bottom", fontweight="bold", clip_on=False,
+                            transform=matplotlib.transforms.offset_copy(ax.transData, fig=fig, y=2 + 10 * row_,
+                                                                        units="points"))
+            y_cur += hh + tick_h
 
-    ax3 = fig.add_subplot(gs[2, :], projection="3d")
-    stretch = 5.0
-    def mesh(vol, color, alpha):
+    # static 3D, true aspect: the same n pieces side by side, each its own 3D axes at the same scale
+    y_cur += gap3
+    n3 = max(n, 2)
+    L3 = xum / n3
+    fig.text(x0_in / FW, 1 - (y_cur - 0.05) / FH,
+             f"3D surface, true aspect (no axis stretched), {n3} consecutive pieces along X; "
+             "grey = rest of the cell, red = other cells", fontsize=10, va="bottom", ha="left")
+
+    def mesh(ax, vol, color, alpha, xoff):
         if vol.sum() < 8:
             return
         v, f, _, _ = marching_cubes(np.pad(vol, 1).astype(np.float32), 0.5, spacing=(vz, vy, vx), step_size=1)
         v = v - np.array([vz, vy, vx])
-        pts = v[:, [2, 1, 0]] * np.array([1, stretch, stretch])
+        pts = v[:, [2, 1, 0]] + np.array([xoff, 0, 0])
         pc = Poly3DCollection(pts[f], facecolor=color, alpha=alpha, linewidth=0)
-        ax3.add_collection3d(pc)
-    mesh(mask & ~(seg > 0), "#bbbbbb", 0.15)
-    for l in labels:
-        mesh(seg == l, col[l], 0.25 if names[l].lower() in ign else 0.85)
-    mesh(excl & ~mask, "#ff4040", 0.12)
-    ax3.set_xlim(0, X * vx); ax3.set_ylim(0, Y * vy * stretch); ax3.set_zlim(0, Z * vz * stretch)
-    ax3.set_box_aspect((X * vx, Y * vy * stretch, Z * vz * stretch), zoom=1.45); ax3.view_init(elev=28, azim=-75)
-    ax3.set_xlabel("X (um)", fontsize=7); ax3.set_ylabel(f"Y (x{stretch:g})", fontsize=7); ax3.set_zlabel(f"Z (x{stretch:g})", fontsize=7)
-    ax3.tick_params(labelsize=6)
-    ax3.set_title(f"3D (Y and Z stretched x{stretch:g}; grey = rest of the cell, red = other cells)", fontsize=9, loc="left")
-
-    axt = fig.add_subplot(gs[:2, 1]); axt.axis("off")
+        pc.set_clip_on(False)                          # zoomed box may extend past the axes patch
+        ax.add_collection3d(pc)
+    w3 = (FW - 0.4) / n3
+    for i in range(n3):
+        xa, xb = int(np.floor(i * L3 / vx)), int(np.ceil((i + 1) * L3 / vx))
+        xa, xb = max(0, xa), min(X, xb)
+        ax3 = fig.add_axes(rect(0.2 + i * w3, y_cur, w3, h3), projection="3d")
+        sl = (slice(None), slice(None), slice(xa, xb))
+        mesh(ax3, (mask & ~(seg > 0))[sl], "#bbbbbb", 0.15, xa * vx)
+        for l in labels:
+            mesh(ax3, (seg == l)[sl], col[l], 0.25 if names[l].lower() in ign else 0.85, xa * vx)
+        mesh(ax3, (excl & ~mask)[sl], "#ff4040", 0.12, xa * vx)
+        ax3.set_xlim(i * L3, (i + 1) * L3); ax3.set_ylim(0, yum); ax3.set_zlim(0, zum)
+        ax3.set_box_aspect((L3, yum, zum), zoom=2.0)             # real um extents, no multiplier
+        ax3.view_init(elev=24, azim=-80)
+        for axis in (ax3.xaxis, ax3.yaxis, ax3.zaxis):
+            axis.pane.set_alpha(0.0)
+        ax3.set_xlabel("X (um)", fontsize=7, labelpad=2); ax3.set_ylabel("Y", fontsize=7, labelpad=-8)
+        ax3.set_zlabel("Z", fontsize=7, labelpad=-8)
+        ax3.tick_params(labelsize=6, pad=-2)
+        ax3.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator(10))
+        ax3.zaxis.set_major_locator(matplotlib.ticker.MultipleLocator(10))
+    # the numbers column, to the right of the strips
+    axt = fig.add_axes(rect(x0_in + LW + 0.45, 0.55, FW - (x0_in + LW + 0.45) - 0.1, h_top + h_side))
+    axt.axis("off")
     lines = [("cell", row["cell"]), ("masks/regions by", row["source"]), ("folder", row["folder"]),
              ("mark", row["mark"] or "-"), ("reference", row["reference"] or "-"), ("regions", row["regions"]),
              ("", ""), ("r(reference, branch)", row["r_ref_branch"] or "-"), ("r(reference, trunk)", row["r_ref_trunk"] or "-"),
@@ -206,9 +268,15 @@ def render(c):
         v = str(v); v = v if len(v) <= 46 else "\n".join(v[i:i + 46] for i in range(0, len(v), 46))
         axt.text(0.55, y, v, fontsize=8.5, va="top", transform=axt.transAxes)
         y -= 0.052 * (1 + v.count("\n"))
-    fig.suptitle(f"{row['cell']}   ({row['source']})", fontsize=12, x=0.01, ha="left")
+    fig.suptitle(f"{row['cell']}   ({row['source']})" + (f"   rating: {row['rating']}" if row.get("rating") else ""),
+                 fontsize=12, x=0.01, ha="left")
     png = OUT / "cells" / f"{c['base']}.png"
-    fig.savefig(png, dpi=90, bbox_inches="tight"); plt.close(fig)
+    fig.savefig(png, dpi=90, bbox_inches="tight")
+    # the top + side views alone (for slides), cut from the same figure in inches
+    from matplotlib.transforms import Bbox
+    fig.savefig(OUT / "cells" / f"{c['base']}_views.png", dpi=150,
+                bbox_inches=Bbox([[0.05, FH - (0.55 + h_top + h_side)], [x0_in + LW + 0.12, FH - 0.5]]))
+    plt.close(fig)
 
     # ---- interactive 3D (true aspect, um)
     traces = []
@@ -242,9 +310,11 @@ def main():
     js = Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
     (OUT / "plotly.min.js").write_bytes(js.read_bytes())          # offline, one copy for all pages
     marks = load_marks()
+    ratings = load_quality()
     cs = cells()
     for c in cs:
         c["base"] = base_of(c); c["mark"] = marks.get(c["base"])
+        c["rating"] = (ratings.get(c["base"]) or {}).get("rating")
     if a.only:
         cs = [c for c in cs if a.only in c["rel"]]
     rows = []

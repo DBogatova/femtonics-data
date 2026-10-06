@@ -1612,5 +1612,45 @@
    "mask_model": "v050 (HistGradientBoosting, 25 features, 11 cells)",
    "paper_stats": "4.0"
   }
+ },
+ "v7_result": {
+  "date": "2026-10-06",
+  "recorded": "2026-10-06T00:13:41-04:00",
+  "question": "PI: do high-correlation runs have low baseline + big peaks, and low-r runs more noise / smaller peaks? Plus normalized coherence plots, sensor/L5PN assumption tests, trace-based noise model, quality ratings.",
+  "built": {
+   "code/STEP8_stats/trace_features.py": "v1.0.0 NEW: per-region/per-run trace features from <stem>_clean.tif -> stats/trace_features.csv (322 regions), stats/trace_features_run.csv (66 runs)",
+   "code/STEP8_stats/pi_hypothesis.py": "v1.1.0 NEW: 7 pre-declared primary tests (mixed model 1|mouse, mouse bootstrap, within-mouse perm, LOMO, BH per family/set); secondary sets screening_all (44/8) and screening_all_independent (30/5) -> stats/assumptions/pi_hypothesis/",
+   "code/STEP8_stats/sensor_assumptions.py": "NEW: T1-T11 sensor/L5PN assumption tests, curated + screening -> stats/assumptions/sensor/",
+   "code/STEP8_stats/noise_model.py": "v1.0.0 NEW: trace-only noisy-run model, outer+inner leave-one-mouse-out -> stats/noise_model/",
+   "code/STEP8_stats/normalized_plots.py + code/common/plot_scale.py": "NEW: common dF/F and z-scored coherence figures/sheets -> stats/normalized/, stats/plot_scale.json",
+   "code/extra/segment_event_coherence.py, code/STEP7_workflow/coherence_with_behavior.py": "--scale auto|common|zscore (default auto, pixel-identical to before)",
+   "code/STEP7_workflow/femto_gui.py": "'common amplitude scale' checkbox (default OFF after audit), 'Mark / rate...' dialog with quality group, rating column",
+   "code/common/run_marks.py, code/femto, code/STEP7_workflow/femto_status.py": "quality ratings very good/good/questionable in separate run_quality.csv (never sets a run aside); 'femto rate'",
+   "code/STEP8_stats/cohort_stats.py, code/STEP9_auto/paper_stats.py, code/STEP8_stats/cell_atlas.py, pi_demo/figs/overviews/make_overviews.py": "rating column + SENSITIVITY block (without questionable / very good only)",
+   "code/STEP9_auto/tests/test_quality_marks.py": "NEW 5 tests",
+   "docs": "stats/OVERNIGHT_FINDINGS.md (PI-level summary), USER_GUIDE.md"
+  },
+  "headline": {
+   "measurement": "Detector floor ~1576 counts; resting dendrite ~50 counts above it, so pipeline dF/F is compressed 10-220x in a cell-dependent way. Correlations/events/SNR/z-scores unaffected; cross-cell dF/F amplitudes are not comparable.",
+   "pi_hypothesis": "PARTLY. Curated 16 runs/5 mice: high r <-> higher SNR (beta +0.76 [0.29,1.22], q=0.008; replicated 44 runs/8 mice beta +0.53 [0.32,0.75], q=0.008; 30 independent runs/5 mice q=0.04) and lower noise SD (rho -0.65, q=0.022; not replicated). NOT bigger dF/F peaks, NOT lower baseline; baseline and peak rise together (rho +0.56 curated/+0.64 all). Noise-corrected r changes r by median +0.007 -> not simple noise attenuation.",
+   "sensor": "Decay faster than expected and faster in branches (5/5 mice); amplitude attenuates with distance (q=0.03, 5/5); branch-only events small real local events; noise super-Poisson; no frame-rate, bleaching or overload confound; no behavior effect detected (low power).",
+   "noise_model": "Works only within June: LOMO AUC 0.75 [0.42,1.00] on 26 runs (10 set-aside/3 mice, 16 good/5 mice), driven by chunk_snr_top10 (alone AUC 0.86); pooled with September = chance. Misses 2 of Daria's 3 explicit noisy runs; label-free score AUC 0.81.",
+   "normalized_plots": "16 runs x {common,zscore} figures + sheets; peak size spans ~10x; use z-scored sheet across cells (offset issue).",
+   "quality_ratings": "Feature built; no runs rated (run_quality.csv absent)."
+  },
+  "auditor_verdict": "NEEDS_CHANGES (auditor_v7.jsonl) -> all 3 items fixed before commit: (1) '15 of 17' -> '14 of 17 (3 not)' in OVERNIGHT_FINDINGS.md + pi_hypothesis/summary.md; (2) common-scale checkbox default OFF (applied concurrently at 00:11:09, docs updated); (3) independence caveat for screening_all(_independent) added to both docs. Not re-audited by an independent auditor.",
+  "verification_after_fixes": "ast OK on all edited .py; femto_gui --selftest PASS (FEMTO_ROOT unset); test_quality_marks 5/5; test_imaging_only 14/14; run_marks.csv md5 c337a86f743325837d60d76a48ed1edf unchanged; run_quality.csv absent.",
+  "real_tree": "untouched (auditor: 4253 snapshot files, 0 changed, 0 gone).",
+  "open_issues": [
+   "Replication effective n < 44/30: 2 runs in screening_all_independent from curated sessions (139 06-12 Run004, 141 06-25 Run004); 050 09-15 (12) and 155 09-29 (7) dominate; model has mouse but no session term.",
+   "Post-hoc: screening_all sets added after 17-run set gave q=0.17; June-only noise model chosen after pooled was at chance (both disclosed).",
+   "Offset-corrected dF/F mode for normalized_plots not built; use z-scored sheet meanwhile.",
+   "No runs rated; Daria to rate 16 cohort runs (ideally blind to r), then rerun cohort_stats/paper_stats.",
+   "Flagged unmarked runs to review: 132 06-08 Run002, 140 06-23 Run001/Run003, 141 06-25 Run005, 053 MUnit18.",
+   "No cell_id for same-session runs; tests count runs/mice not cells.",
+   "Shared non-cell signal (neuropil) as source of high r untested (needs background ROI regression).",
+   "Earlier uncommitted work (pre-tonight) remains uncommitted in behavior_imaging_master.csv, ranked_runs.csv, run_marks.csv, match_behavior_imaging.py, clean_register_3d.py, auto_pipeline/results/*."
+  ],
+  "logs": "auto_pipeline/logs/{quality_marks,normalized_plots,sensor_assumptions,pi_hypothesis,noise_learner,integrate,auditor,recorder}_v7.jsonl"
  }
 }

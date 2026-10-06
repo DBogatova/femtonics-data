@@ -496,6 +496,17 @@ def build_status(root: Path) -> list[dict]:
             what = "EXCLUDED" if run["mark"] == "excluded" else "REVISIT LATER"
             run["next"] = {"label": f"{what}" + (f": {run['mark_reason']}" if run["mark_reason"] else ""),
                            "cmd": None, "gui": False, "runnable": False}
+    # your quality rating (run_quality.csv): very_good / good / questionable. Informational
+    # only - it never changes the stage, the next step or whether the run is analyzed.
+    try:
+        from common.run_marks import load_quality
+        ratings = load_quality()
+    except ImportError:                                  # older run_marks.py without ratings
+        ratings = {}
+    for run in runs:
+        q = ratings.get(run.get("behavior_base", ""))
+        run["rating"] = q["rating"] if q else None
+        run["rating_reason"] = q.get("reason", "") if q else ""
     return runs
 
 

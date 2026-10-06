@@ -2,7 +2,10 @@
 """cohort_stats.py - collect every run's metrics into one table and make the cohort figures.
 
 Inputs : <run_dir>/<stem>_metrics.json (from run_metrics.py), mice.csv (injection dates)
-Outputs: stats/cohort_metrics.csv                         one row per run
+Outputs: stats/cohort_metrics.csv                         one row per run (column 'rating' = your
+                                                          quality rating from run_quality.csv, '' if unrated)
+         stats/cohort_tests_sensitivity.csv               primary family repeated (a) without
+                                                          'questionable' runs, (b) 'very good' only
          stats/cohort_summary.txt                         tests, in words
          stats/fig_independence.{png,pdf}                 per run: soma-branch r, branch-independent
                                                           fraction, who leads, quiet vs active
@@ -39,6 +42,7 @@ ROOT = Path(os.environ["FEMTO_ROOT"]).resolve() if os.environ.get("FEMTO_ROOT") 
 OUT = ROOT / "stats"
 sys.path.insert(0, str(HERE.parents[1] / "code"))
 from common.run_marks import is_set_aside, load_marks   # noqa: E402  (run_marks.csv: excluded / revisit)
+from common.run_marks import load_quality, rating_label  # noqa: E402  (run_quality.csv: very_good / good / questionable)
 
 METRICS = ["r_soma_branch", "r_soma_branch_corr", "r_soma_trunk_corr", "r_soma_branch_core", "r_soma_trunk", "r_trunk_branch",
            "frac_branch_independent", "frac_soma_independent", "frac_global", "branch_first_frac",
@@ -50,6 +54,13 @@ METRICS = ["r_soma_branch", "r_soma_branch_corr", "r_soma_trunk_corr", "r_soma_b
 MIN_EVENTS = 5          # per-run event fractions from fewer events than this are not tested
 N_BOOT = 5000
 _STALE: list[str] = []  # metrics files whose regions no longer exist (filled by collect)
+_SENS: list[dict] = []
+_RATINGS: dict = {}
+_NO_CI = False          # True while the sensitivity subsets run (their CIs are not reported)  # quality-rating sensitivity rows (filled by tests(), written by main)
+# Sensitivity subsets on Daria's quality ratings (run_quality.csv). Unrated runs are kept in (a).
+SENS_SUBSETS = [("without_questionable", "(a) without 'questionable' runs (unrated kept)",
+                 lambda d: d[d.rating != "questionable"]),
+                ("very_good_only", "(b) 'very good' runs only", lambda d: d[d.rating == "very_good"])]
 
 
 def _is_current(f: str) -> bool:
@@ -76,7 +87,7 @@ def cluster_boot(df: pd.DataFrame, stat, B: int = N_BOOT, seed: int = 0):
     """95% percentile CI by two-stage bootstrap: resample mice, then runs within each mouse.
     stat(df) -> float. With few mice the CI is wide by construction - that is the point."""
     rng = np.random.default_rng(seed); groups = [g for _, g in df.groupby("mouse")]
-    if len(groups) < 2:
+    if len(groups) < 2 or _NO_CI:
         return (float("nan"), float("nan"))
     vals = []
     for _ in range(B):
@@ -105,7 +116,7 @@ def mouse_test(df: pd.DataFrame, col: str, alternative: str = "greater"):
         p = float(stats.wilcoxon(mm.values, alternative=alternative, method="exact").pvalue)
     except (TypeError, ValueError):
         p = float(stats.wilcoxon(mm.values, alternative=alternative).pvalue)
-    return p, k, 0.5 ** k
+    return p, k, (0.5 ** k) * (2 if alternative == "two-sided" else 1)   # smallest attainable p
 
 
 def ns(df: pd.DataFrame) -> str:
@@ -113,6 +124,8 @@ def ns(df: pd.DataFrame) -> str:
 
 
 def collect() -> pd.DataFrame:
+    global _RATINGS
+    _RATINGS = load_quality()          # human quality rating per run; never sets a run aside
     rows = []
     for f in glob.glob(str(ROOT / "rbp4_*/**/*_metrics.json"), recursive=True):
         if "/old/" in f:
@@ -128,6 +141,7 @@ def collect() -> pd.DataFrame:
         row["reference"] = row.get("reference") or "soma"
         row["n_branch_regions"] = sum(1 for v in m["regions"].values() if v["compartment"] == "branch")
         row["metrics_file"] = str(Path(f).relative_to(ROOT))
+        row["rating"] = (_RATINGS.get(row.get("behavior_base") or "") or {}).get("rating", "")
         # Mark imaging-only: no behavior_state keys present
         row["has_behavior"] = m.get("r_soma_branch_quiet") is not None or m.get("r_soma_branch_active") is not None
         rows.append(row)
@@ -164,7 +178,7 @@ def collect_distance() -> pd.DataFrame:
 
 
 def fig_distance(dd: pd.DataFrame, out: Path):
-    fig, ax = plt.subplots(figsize=(6.5, 4.4))
+    fig, ax = plt.subplots(figsize=(9.0, 4.6))
     mk = {"trunk": "o", "branch": "^"}
     _bases = sorted(dd.behavior_base.unique())
     _cmap = plt.cm.tab20 if len(_bases) > 10 else plt.cm.tab10
@@ -178,15 +192,91 @@ def fig_distance(dd: pd.DataFrame, out: Path):
                        facecolor="none" if hollow else colors[b], edgecolor=colors[b], linewidth=1.4)
         ax.plot([], [], "--" if hollow else "-", color=colors[b],
                 label=b.replace("rbp4_", "").replace("_phpeb", "") + (" (vs proximal trunk)" if hollow else ""))
+    # Mean trajectory: each cell's curve interpolated onto a fine grid (inside its own distance
+    # range only, no extrapolation), averaged per cell within 40 um bins, then across cells.
+    # One cell = one vote; a bin is drawn only when >= 3 cells cover it.
+    grid = np.arange(0, dd.distance_um.max() + 1, 2.0)
+    curves = []
+    for _, g in dd.groupby("behavior_base"):
+        g = g.dropna(subset=["distance_um", "r_with_soma_corr"]).groupby("distance_um", as_index=False).r_with_soma_corr.mean()
+        if len(g) >= 2:
+            curves.append(np.interp(grid, g.distance_um, g.r_with_soma_corr, left=np.nan, right=np.nan))
+    if curves:
+        C = np.vstack(curves); edges = np.arange(0, grid.max() + 40, 40.0)
+        cx, cy = [], []
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            sel = (grid >= lo) & (grid < hi)
+            with np.errstate(invalid="ignore"):
+                per_cell = np.array([np.nanmean(c[sel]) if np.isfinite(c[sel]).any() else np.nan for c in C])
+            if np.isfinite(per_cell).sum() >= 3:
+                cx.append((lo + hi) / 2); cy.append(np.nanmean(per_cell))
+        ax.plot(cx, cy, "-o", color="k", lw=3.2, ms=5, zorder=5, label="mean of cells (40 µm bins, ≥3 cells)")
     ax.scatter([], [], marker="o", color="0.4", label="trunk"); ax.scatter([], [], marker="^", color="0.4", label="branch")
-    ax.set_xlabel("distance from the reference region along the dendrite (um)"); ax.set_ylabel("r with reference (noise-corrected)")
-    ax.set_ylim(0, 1.02); ax.legend(fontsize=7, frameon=False)
+    ax.set_xlabel("distance from the reference region along the dendrite (µm)"); ax.set_ylabel("r with reference (noise-corrected)")
+    ax.set_ylim(0, 1.02)
+    ax.legend(fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0)
     ax.set_title("Coupling vs distance (filled: soma reference; hollow: proximal trunk, no soma in scan)", fontsize=9, loc="left")
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
     fig.tight_layout(); fig.savefig(out.with_suffix(".png"), dpi=170); fig.savefig(out.with_suffix(".pdf")); plt.close(fig)
 
 
-def tests(d: pd.DataFrame, dd: pd.DataFrame | None = None):
+def _sensitivity_lines(d: pd.DataFrame, dd: pd.DataFrame | None, tab: pd.DataFrame) -> list[str]:
+    """Repeat the primary family on the quality-rating subsets (SENS_SUBSETS), each subset
+    BH-FDR corrected within itself, and report it next to the main result. Fills _SENS."""
+    _SENS.clear()
+    rt = d["rating"].fillna("") if "rating" in d.columns else pd.Series("", index=d.index)
+    d = d.assign(rating=rt)
+    cnt = {k: int((rt == k).sum()) for k in ("very_good", "good", "questionable")}
+    L = ["SENSITIVITY TO YOUR QUALITY RATINGS (run_quality.csv; the main result above is unchanged)",
+         f"  ratings in this cohort: very good {cnt['very_good']}, good {cnt['good']}, questionable {cnt['questionable']}, "
+         f"unrated {int((rt == '').sum())} (of {len(d)} runs). Ratings are human judgments made after seeing the data, "
+         "so these are robustness checks, not new tests; each subset is BH-FDR corrected on its own."]
+    for _, r in tab.iterrows():
+        _SENS.append({"subset": "main", "test": r.test, "estimate": r.estimate, "p_mouse": r.p_mouse, "q_bh": r.q_bh,
+                      "n_runs": int(r.n_runs), "n_mice": int(r.n_mice), "verdict": r.verdict, "note": ""})
+    res = {}
+    for key, label, sel in SENS_SUBSETS:
+        sub = sel(d)
+        if len(sub) == len(d):
+            note = "identical to the main analysis (no run removed)"; st = tab
+        elif sub.mouse.nunique() < 2:
+            note = "not computable (needs >= 2 mice)"; st = None
+        else:
+            dsub = dd[dd.behavior_base.isin(sub.behavior_base)] if dd is not None and not dd.empty else dd
+            global _NO_CI
+            _NO_CI = True
+            try:
+                st = tests(sub.reset_index(drop=True), dsub, sensitivity=False)[1]
+            finally:
+                _NO_CI = False
+            note = ""
+        L.append(f"  {label}: {ns(sub)}" + (f" - {note}" if note else ""))
+        res[key] = (st, note)
+        for _, r in tab.iterrows():
+            m = st[st.test == r.test] if st is not None else pd.DataFrame()
+            x = m.iloc[0] if len(m) else None
+            _SENS.append({"subset": key, "test": r.test,
+                          "estimate": x.estimate if x is not None else float("nan"),
+                          "p_mouse": x.p_mouse if x is not None else float("nan"),
+                          "q_bh": x.q_bh if x is not None else float("nan"),
+                          "n_runs": int(x.n_runs) if x is not None else 0, "n_mice": int(x.n_mice) if x is not None else 0,
+                          "verdict": x.verdict if x is not None else "not testable",
+                          "note": note or ("" if x is not None else "test not computable in this subset")})
+    f = lambda v, k="{:+.3f}": (k.format(v) if v == v else "n/a")
+    L.append(f"  {'test':34s} {'main':>30s} | {'(a) no questionable':>30s} | {'(b) very good only':>30s}")
+    for t in tab.test:
+        cells = []
+        for key in ("main", "without_questionable", "very_good_only"):
+            x = next(r for r in _SENS if r["subset"] == key and r["test"] == t)
+            cells.append("n/a" if not x["n_runs"] else
+                         f"{f(x['estimate'])} q={f(x['q_bh'], '{:.3g}')}{'*' if str(x['verdict']).startswith('UNDER') else ''} ({x['n_runs']}r/{x['n_mice']}m)")
+        L.append(f"  {t:34s} {cells[0]:>30s} | {cells[1]:>30s} | {cells[2]:>30s}")
+    L.append("  (est = per-mouse mean as in the main family; q = BH within that column; r/m = runs/mice; "
+             "* = underpowered: that few mice cannot reach p<0.05)")
+    return L
+
+
+def tests(d: pd.DataFrame, dd: pd.DataFrame | None = None, sensitivity: bool = True):
     """Cohort tests. Unit of inference is the MOUSE: runs are nested in mice, so every
     p-value below comes from per-mouse means (exact Wilcoxon), every CI from a two-stage
     (mouse, then run) bootstrap, and the primary family is BH-FDR corrected together.
@@ -347,12 +437,22 @@ def tests(d: pd.DataFrame, dd: pd.DataFrame | None = None):
                      + f")  -> {r.verdict}")
             L.append(f"  {'':34s} {r.label}")
         L.append("")
+        if sensitivity:
+            L.extend(_sensitivity_lines(d, dd, tab)); L.append("")
 
     mk = load_marks()
     if mk:
         L.append(f"Runs set aside by you (run_marks.csv), not in any statistic: {len(mk)}")
         for k, r in sorted(mk.items()):
             L.append(f"  {r['mark']:8s} {k}" + (f"  - {r.get('reason')}" if r.get("reason") else ""))
+        L.append("")
+    if sensitivity and "rating" in d.columns:
+        rated = d[d.rating.fillna("") != ""]
+        L.append(f"Quality rating per run (run_quality.csv; rated runs stay in every statistic): {len(rated)} of {len(d)} rated"
+                 + ("" if len(rated) else " - none yet (femto rate RUN very_good|good|questionable, or 'Mark / rate…' in the panel)"))
+        for _, r in rated.iterrows():
+            why = (_RATINGS.get(r.behavior_base) or {}).get("reason", "")
+            L.append(f"  {rating_label(r.rating):12s} {r.behavior_base}" + (f"  - {why}" if why else ""))
         L.append("")
     L.append("Behavior (whole cell, cross-correlation within +-5 s, circular-shift null; q = BH across all runs x behaviors)")
     brow = []
@@ -465,6 +565,8 @@ def main(argv=None):
     txt, tab = tests(d, dd)
     if tab is not None:
         tab.to_csv(OUT / "cohort_tests.csv", index=False)
+    if _SENS:
+        pd.DataFrame(_SENS).to_csv(OUT / "cohort_tests_sensitivity.csv", index=False)
     (OUT / "cohort_summary.txt").write_text(txt + "\n"); print(txt)
     fig_independence(d, OUT / "fig_independence"); fig_within_mouse(d, OUT / "fig_within_mouse"); fig_expression(d, OUT / "fig_expression")
     print(f"\nwrote stats/cohort_metrics.csv ({len(d)} runs), cohort_summary.txt, fig_independence, fig_within_mouse, fig_expression, fig_coupling_vs_distance")

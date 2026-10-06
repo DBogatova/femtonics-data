@@ -53,9 +53,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import femto_status as fs  # noqa: E402
 from common.regions import ignore_path, ignored_names  # noqa: E402
 
-DISPLAY = {"mask": False, "edge_um": 2.0, "hide_other": True}          # cell-picture display mask (set from CLI)
+DISPLAY = {"mask": False, "edge_um": 2.0, "hide_other": True,          # cell-picture display mask (set from CLI)
+           "scale": "auto"}                                             # trace amplitude scale (auto|common|zscore)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.display_mask import options_match, write_options   # noqa: E402
+from common.plot_scale import default_scale_file, load_scale     # noqa: E402
+
+
+def _scale_sidecar(png: Path) -> Path:
+    return Path(str(png) + ".scale.json")
+
+
+def scale_matches(png: Path, scale: str, scale_file: Path) -> bool:
+    """The figure was drawn with this amplitude scale (missing sidecar = 'auto', the
+    historical look) and, for common/zscore, after the cohort scale file last changed."""
+    side = _scale_sidecar(png)
+    try:
+        rec = json.loads(side.read_text()) if side.exists() else {"scale": "auto"}
+    except Exception:
+        return False
+    if rec.get("scale", "auto") != scale:
+        return False
+    return scale == "auto" or (scale_file.exists() and png.stat().st_mtime >= scale_file.stat().st_mtime)
+
+
+def write_scale(png: Path, scale: str, scale_file: Path):
+    rec = {"scale": scale}
+    if scale != "auto":
+        cfg = load_scale(scale_file) or {}
+        rec.update({"scale_file": str(scale_file), "dff_per_lane": cfg.get("dff_per_lane"),
+                    "z_per_lane": cfg.get("z_per_lane"), "inch_per_lane": cfg.get("inch_per_lane")})
+    _scale_sidecar(png).write_text(json.dumps(rec))
 _CODE_ROOT = Path(__file__).resolve().parents[2]   # real project root (for scripts)
 COHERENCE_TOOL = str(_CODE_ROOT / "code/extra/segment_event_coherence.py")
 BEHAVIOR_TOOL = "/Users/daria/Desktop/behavior-tracking-daria/batch/coherence_behavior.py"
@@ -110,8 +138,15 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
     deps = [Path(lm), ignore_path(Path(lm))] + [Path(run_dir) / f"{stem}{suf}" for suf in
                          ("_autoseg_labelmap_reviewed.tif", "_exclude_labelmap.tif")]
     newest = max(d.stat().st_mtime for d in deps if d.exists())
+    scale_file = default_scale_file(root)
+    scale = DISPLAY["scale"]
+    if scale != "auto" and load_scale(scale_file) is None:
+        print(f"  coherence: WARNING --scale {scale} needs {scale_file} "
+              f"(code/STEP8_stats/normalized_plots.py --write-scale); using the auto scale")
+        scale = "auto"
     up_to_date = (coh_png.exists() and events.exists() and coh_png.stat().st_mtime >= newest
-                  and options_match(coh_png, DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"]))
+                  and options_match(coh_png, DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"])
+                  and scale_matches(coh_png, scale, scale_file))
     if up_to_date and not force:
         print(f"  coherence: reuse existing (newer than labelmap {lm.name})")
         return coh_png, events, run_dir, False
@@ -142,6 +177,8 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
         cmd += ["--mask"] if DISPLAY["mask"] else ["--no-mask"]
         cmd += ["--hide-other"] if DISPLAY["hide_other"] else ["--show-other"]
         cmd += ["--edge-um", f"{DISPLAY['edge_um']:g}"]
+        if scale != "auto":
+            cmd += ["--scale", scale, "--scale-file", str(scale_file)]
         cmd += ["--out-prefix", str(out_prefix)]
         run_subprocess(cmd, root, "segment_event_coherence")
 
@@ -150,15 +187,17 @@ def ensure_coherence(run, root, scratch: Path, force: bool):
         print(f"  coherence: building fresh (labelmap {lm.name})")
         build(run_dir / f"{stem}_coherence")
         write_options(coh_png, DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"])
+        write_scale(coh_png, scale, scale_file)
         return coh_png, events, run_dir, True
 
     # canonical figure exists but is stale (regions changed) or forced: archive the old
     # outputs into old/ (timestamped, nothing is deleted) and rebuild in place, so the
     # run folder always holds one consistent set derived from the current regions.
     print(f"  coherence: rebuilding (inputs, display options changed, or --force)")
-    archive([coh_png, coh_pdf, events, Path(str(coh_png) + ".display.json")], run_dir)
+    archive([coh_png, coh_pdf, events, Path(str(coh_png) + ".display.json"), _scale_sidecar(coh_png)], run_dir)
     build(run_dir / f"{stem}_coherence")
     write_options(coh_png, DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"])
+    write_scale(coh_png, scale, scale_file)
     return coh_png, events, run_dir, True
 
 
@@ -516,8 +555,13 @@ def main(argv=None) -> int:
     ap.add_argument("--show-other", dest="hide_other", action="store_false",
                     help="show other cells as recorded")
     ap.add_argument("--edge-um", type=float, default=2.0, help="soft edge of the display mask (um)")
+    ap.add_argument("--scale", choices=["auto", "common", "zscore"], default="auto",
+                    help="trace amplitude scale: auto (default, each run's own range), common (one "
+                         "cohort dF/F per inch from stats/plot_scale.json, amplitudes compare across "
+                         "runs) or zscore (traces / noise SD). Display only.")
     args = ap.parse_args(argv)
     DISPLAY["mask"], DISPLAY["edge_um"], DISPLAY["hide_other"] = args.mask, args.edge_um, args.hide_other
+    DISPLAY["scale"] = args.scale
 
     root = Path(args.root).resolve() if args.root else fs.project_root()
     runs = fs.build_status(root)

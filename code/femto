@@ -11,6 +11,7 @@
 #   femto stats              per-run metrics for every cell + cohort table/summary/figures (stats/)
 #   femto restore PATH|all     re-extract 4D stacks removed to save space (RECOVERY_4D.csv)
 #   femto mark RUN exclude|revisit|clear [--reason TEXT]  set a whole run aside (files kept)
+#   femto rate RUN very_good|good|questionable|clear [--reason TEXT]  quality rating (run stays in stats)
 #   femto ignore RUN_DIR NAME...  leave named regions out of figures + statistics (--keep NAME / --clear)
 #   femto auto <cmd> [args]  run any of the above on the automatic mirror tree (auto_pipeline/)
 #                            e.g.  femto auto panel   /   femto auto stats   /   femto auto status
@@ -43,10 +44,11 @@ case "${1:-panel}" in
   regions) shift; "$PY" code/STEP7_workflow/wrap_segments_napari.py "$@" ;;
   ignore)  shift; "$PY" code/common/regions.py "$@" ;;
   mark)    shift; "$PY" code/common/run_marks.py "$@" ;;
+  rate)    shift; "$PY" code/common/run_marks.py rate "$@" ;;
   restore) shift; "$PY" code/STEP1_extract/recover_4d.py restore "${1:-all}" ;;
   figure)  shift; "$PY" code/STEP7_workflow/coherence_with_behavior.py --run "$@" ;;
   movies)  shift; b="$1"; shift; "$PY" code/STEP7_workflow/make_movies.py --run "$b" "$@" ;;
   stats)   "$PY" code/STEP8_stats/run_metrics.py --all && "$PY" code/STEP8_stats/coupling_phenotype.py --all && "$PY" code/STEP8_stats/behavior_coupling.py --all && "$PY" code/STEP8_stats/cohort_stats.py ;;
-  -h|--help|help) sed -n '2,15p' "$0" ;;
-  *) echo "unknown command: $1"; sed -n '2,15p' "$0"; exit 1 ;;
+  -h|--help|help) sed -n '2,16p' "$0" ;;
+  *) echo "unknown command: $1"; sed -n '2,16p' "$0"; exit 1 ;;
 esac
