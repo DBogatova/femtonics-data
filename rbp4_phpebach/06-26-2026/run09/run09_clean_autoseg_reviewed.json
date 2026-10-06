@@ -1,0 +1,220 @@
+{
+  "reviews": [
+    {
+      "tool": "auto_mask",
+      "version": "0.5.1",
+      "created": "2026-10-05T14:49:28.722816+00:00",
+      "output": "run09_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 15617,
+      "n_arcs": 1,
+      "flags": [],
+      "confidence": "auto",
+      "intruders": [],
+      "bifurcations": [],
+      "side_paths": [],
+      "chunk_period_px": 28,
+      "boundary_bridges": [
+        {
+          "x": 28,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 56,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 84,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 112,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 140,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 168,
+          "predicted_shift": [
+            -0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 196,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 224,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 252,
+          "predicted_shift": [
+            -0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 280,
+          "predicted_shift": [
+            0.25,
+            -0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 308,
+          "predicted_shift": [
+            -0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 336,
+          "predicted_shift": [
+            0.0,
+            -0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 364,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 392,
+          "predicted_shift": [
+            -5.25,
+            -3.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 420,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        }
+      ],
+      "params": {
+        "alpha": 0.4,
+        "radius_x": 2.0,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "soma_detected": true,
+        "soma_end_x": 21,
+        "soma_voxels": 2225,
+        "median_trunk_width": 26,
+        "cell_end_x": 475,
+        "cell_start_x": 0,
+        "width_ratio": 1.875,
+        "calibration_method": "hybrid_ml_v0.5.0"
+      },
+      "voxel_zyx_um": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "n_components": 1,
+      "label_convention": "cell 1, class 2 (structure) -> label 2"
+    },
+    {
+      "tool": "trace_mask_napari",
+      "version": "0.1.0",
+      "created": "2026-10-05T15:07:06.742342+00:00",
+      "output": "run09_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 11824,
+      "n_arcs": 1,
+      "islands_removed": [],
+      "min_island_voxels": 20,
+      "arc_lengths_vox": [
+        468
+      ],
+      "voxel_zyx_um": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "params": {
+        "alpha": 0.5,
+        "radius_x": 1.5,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "manually_erased_voxels": 654,
+        "manually_added_voxels": 0,
+        "other_cells": {
+          "alpha": 0.5,
+          "radius_x": 1.5,
+          "pad": 0,
+          "erased": 0,
+          "added": 0
+        },
+        "n_other_cell_arcs": 0
+      },
+      "label_convention": "cell 1, class 2 (structure) -> label 2; anatomy assigned later by wrap_segments"
+    }
+  ],
+  "exclude": {
+    "file": "run09_clean_exclude_labelmap.tif",
+    "voxels": 0,
+    "n_intruder_arcs": 0,
+    "updated": "2026-10-05T15:07:06.747214+00:00",
+    "note": "voxels of other (crossing/neighbouring) cells: blacked out in movies and figure MIPs; never used for traces"
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "created": "2026-10-05T15:10:55.856844-04:00",
+  "tool": "wrap_segments_napari.py",
+  "voxel_zyx_um": [
+    0.8,
+    0.5,
+    0.5
+  ],
+  "labels": {
+    "1": "soma",
+    "2": "trunk",
+    "3": "branch1"
+  },
+  "voxels_per_label": {
+    "1": 7454,
+    "2": 1347,
+    "3": 936
+  },
+  "source_clean": "/Users/daria/Desktop/femtonics-data/rbp4_141_phpeb/06-23-2026/preprocessed/run01/run01_clean.tif",
+  "source_autoseg": "/Users/daria/Desktop/femtonics-data/rbp4_141_phpeb/06-23-2026/preprocessed/run01/run01_clean_autoseg_labelmap_reviewed.tif",
+  "accepted_cells": [
+    1
+  ],
+  "segment_names": {
+    "1": "interval1",
+    "2": "trunk1",
+    "3": "trunk2"
+  },
+  "islands_removed": [],
+  "min_island_voxels": 20,
+  "wrap_clicks": [
+    {
+      "click_zyx": [
+        9,
+        22,
+        40
+      ],
+      "arc": -1,
+      "label": 3,
+      "name": "interval1",
+      "size": 7454,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        10,
+        20,
+        7
+      ],
+      "length_um": 22.23,
+      "merged_from": [
+        "interval2",
+        "interval2"
+      ]
+    },
+    {
+      "click_zyx": [
+        8,
+        14,
+        142
+      ],
+      "arc": -1,
+      "label": 4,
+      "name": "trunk1",
+      "size": 1347,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        8,
+        20,
+        181
+      ],
+      "length_um": 24.29
+    },
+    {
+      "click_zyx": [
+        10,
+        15,
+        326
+      ],
+      "arc": -1,
+      "label": 5,
+      "name": "trunk2",
+      "size": 936,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        9,
+        17,
+        368
+      ],
+      "length_um": 22.19
+    }
+  ]
+}

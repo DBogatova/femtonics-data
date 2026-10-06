@@ -37,10 +37,15 @@ def scanline_grid(vol, period=None):
     neg = median_filter(prof, size=9) - prof
     dips, _ = find_peaks(neg, distance=12, prominence=15)
     if period is None:
+        period = None
         if len(dips) > 2:
             sp = np.diff(dips)
-            period = int(np.median(sp[np.abs(sp - np.median(sp)) <= 3]))
-        else:
+            keep = sp[np.abs(sp - np.median(sp)) <= 3]
+            # an empty selection makes np.median return NaN, which int() rejects;
+            # fall through to the default rather than raising
+            if keep.size:
+                period = int(np.median(keep))
+        if period is None or period < 2:
             period = 24
     phase = int(dips[0]) % period if len(dips) else 0
     dark = np.zeros(X, bool)

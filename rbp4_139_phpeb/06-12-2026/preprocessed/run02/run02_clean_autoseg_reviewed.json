@@ -1,0 +1,231 @@
+{
+  "reviews": [
+    {
+      "tool": "auto_mask",
+      "version": "0.5.1",
+      "created": "2026-10-05T16:44:33.552903+00:00",
+      "output": "run02_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 5057,
+      "n_arcs": 3,
+      "flags": [],
+      "confidence": "auto",
+      "intruders": [],
+      "bifurcations": [
+        {
+          "x": 5,
+          "zyx": [
+            3,
+            4,
+            5
+          ],
+          "side_path_voxels": 678,
+          "suspect": false
+        },
+        {
+          "x": 223,
+          "zyx": [
+            4,
+            6,
+            223
+          ],
+          "side_path_voxels": 47,
+          "suspect": false
+        }
+      ],
+      "side_paths": [
+        {
+          "n_voxels": 678,
+          "centroid_zyx": [
+            1.1136363636363635,
+            3.040909090909091,
+            114.47727272727273
+          ],
+          "bifurcation_x": 5,
+          "suspect": false,
+          "reasons": [
+            "z_edge (z=1.1)"
+          ]
+        },
+        {
+          "n_voxels": 47,
+          "centroid_zyx": [
+            4.333333333333333,
+            6.416666666666667,
+            216.5
+          ],
+          "bifurcation_x": 223,
+          "suspect": false,
+          "reasons": [
+            "small (47 vox)"
+          ]
+        }
+      ],
+      "chunk_period_px": 26,
+      "boundary_bridges": [
+        {
+          "x": 26,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 52,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 78,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 104,
+          "predicted_shift": [
+            0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 130,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 156,
+          "predicted_shift": [
+            0.0,
+            0.5
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 182,
+          "predicted_shift": [
+            -0.25,
+            0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 208,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 234,
+          "predicted_shift": [
+            0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 260,
+          "predicted_shift": [
+            0.0,
+            0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 286,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 312,
+          "predicted_shift": [
+            0.0,
+            0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 338,
+          "predicted_shift": [
+            -1.25,
+            3.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 364,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 390,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        }
+      ],
+      "params": {
+        "alpha": 0.4,
+        "radius_x": 2.0,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "soma_detected": true,
+        "soma_end_x": 20,
+        "soma_voxels": 926,
+        "median_trunk_width": 9,
+        "cell_end_x": 441,
+        "cell_start_x": 0,
+        "width_ratio": 2.111111111111111,
+        "calibration_method": "hybrid_ml_v0.5.0"
+      },
+      "voxel_zyx_um": [
+        1.0,
+        0.6594,
+        0.6594
+      ],
+      "n_components": 1,
+      "label_convention": "cell 1, class 2 (structure) -> label 2"
+    }
+  ],
+  "exclude": {
+    "file": "run02_clean_exclude_labelmap.tif",
+    "voxels": 0,
+    "n_intruder_arcs": 0,
+    "updated": "2026-10-05T16:44:33.554056+00:00"
+  }
+}

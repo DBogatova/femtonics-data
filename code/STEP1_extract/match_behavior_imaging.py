@@ -70,13 +70,27 @@ POS_WEAK = ["maybe", "might be useful", "first time"]
 
 
 # ---------------------------------------------------------------- imaging side
+# A session lives at <root>/<mouse>/<MM-DD-YYYY>/... . Anything else at the top
+# level (code/, stats/, auto_pipeline/ and other working dirs) is NOT mouse data.
+# auto_pipeline/ in particular holds a MIRROR of the data tree, so without this
+# guard every mirrored session is scanned a second time as mouse="auto_pipeline",
+# date="<real mouse>", and every run in it is paired twice -- 24 duplicate rows
+# on this project, which silently broke the one-run-one-partner invariant.
+DATE_DIR_RE = re.compile(r"^\d{2}-\d{2}-\d{4}$")
+
+
+def is_session_path(parts):
+    """True when parts = (mouse, MM-DD-YYYY, ...) -- a real session location."""
+    return len(parts) >= 2 and bool(DATE_DIR_RE.match(parts[1]))
+
+
 def load_summaries(root):
     """{(mouse, date): {'summary': path, 'mesc': path|None, 'units': [...]}}"""
     sessions = {}
     for summary in glob.glob(os.path.join(root, "**", "*.summary.csv"), recursive=True):
         rel = os.path.relpath(summary, root)
         parts = rel.split(os.sep)
-        if len(parts) < 2:
+        if not is_session_path(parts):
             continue
         mouse, date = parts[0], parts[1]
         rows = list(csv.DictReader(open(summary)))
@@ -187,7 +201,7 @@ def load_behavior(root):
     sessions = defaultdict(list)
     for info in glob.glob(os.path.join(root, "**", "behavior", "*_info.txt"), recursive=True):
         rel = os.path.relpath(info, root).split(os.sep)
-        if len(rel) < 3:
+        if len(rel) < 3 or not is_session_path(rel):
             continue
         sessions[(rel[0], rel[1])].append(parse_info(info))
     for v in sessions.values():

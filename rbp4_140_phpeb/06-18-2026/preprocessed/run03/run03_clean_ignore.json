@@ -1,0 +1,8 @@
+{
+  "ignore": [
+    "branch2"
+  ],
+  "updated": "2026-10-05T18:20:26.321318+00:00",
+  "regions_file": "run03_clean_segments_final.tif",
+  "reason": "other structure crossing the tube (one-voxel bridge, r~0.2 with every region, opposite behavior coupling); see pi_demo hook figure"
+}

@@ -1,0 +1,549 @@
+{
+  "reviews": [
+    {
+      "tool": "auto_mask",
+      "version": "0.5.1",
+      "created": "2026-10-05T14:49:43.219884+00:00",
+      "output": "munit11_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 9037,
+      "n_arcs": 16,
+      "flags": [],
+      "confidence": "auto",
+      "intruders": [
+        {
+          "voxels": 327,
+          "centroid_zyx": [
+            0.7614678899082569,
+            3.0,
+            77.0
+          ],
+          "reasons": [
+            "thin_neck (1 bridge voxels)",
+            "z_edge (z=0.8)",
+            "tube_corner",
+            "low_local_r (0.25)"
+          ]
+        },
+        {
+          "voxels": 5,
+          "centroid_zyx": [
+            3.230769230769231,
+            1.0769230769230769,
+            17.0
+          ],
+          "reasons": [
+            "thin_neck (1 bridge voxels)",
+            "y_edge (y=1.1)",
+            "small (5 vox)",
+            "low_local_r (0.25)"
+          ]
+        },
+        {
+          "voxels": 92,
+          "centroid_zyx": [
+            11.526315789473685,
+            2.6315789473684212,
+            471.0
+          ],
+          "reasons": [
+            "z_edge (z=11.5)",
+            "tube_corner",
+            "low_local_r (0.25)"
+          ]
+        }
+      ],
+      "bifurcations": [
+        {
+          "x": 23,
+          "zyx": [
+            2,
+            0,
+            23
+          ],
+          "side_path_voxels": 327,
+          "suspect": true
+        },
+        {
+          "x": 131,
+          "zyx": [
+            0,
+            4,
+            131
+          ],
+          "side_path_voxels": 354,
+          "suspect": false
+        },
+        {
+          "x": 301,
+          "zyx": [
+            8,
+            6,
+            301
+          ],
+          "side_path_voxels": 564,
+          "suspect": false
+        },
+        {
+          "x": 23,
+          "zyx": [
+            2,
+            0,
+            23
+          ],
+          "side_path_voxels": 5,
+          "suspect": true
+        },
+        {
+          "x": 131,
+          "zyx": [
+            0,
+            4,
+            131
+          ],
+          "side_path_voxels": 61,
+          "suspect": false
+        },
+        {
+          "x": 301,
+          "zyx": [
+            8,
+            6,
+            301
+          ],
+          "side_path_voxels": 34,
+          "suspect": false
+        },
+        {
+          "x": 183,
+          "zyx": [
+            0,
+            8,
+            183
+          ],
+          "side_path_voxels": 71,
+          "suspect": false
+        },
+        {
+          "x": 407,
+          "zyx": [
+            8,
+            4,
+            407
+          ],
+          "side_path_voxels": 28,
+          "suspect": false
+        },
+        {
+          "x": 480,
+          "zyx": [
+            11,
+            2,
+            480
+          ],
+          "side_path_voxels": 61,
+          "suspect": false
+        },
+        {
+          "x": 462,
+          "zyx": [
+            13,
+            2,
+            462
+          ],
+          "side_path_voxels": 39,
+          "suspect": false
+        },
+        {
+          "x": 301,
+          "zyx": [
+            8,
+            6,
+            301
+          ],
+          "side_path_voxels": 162,
+          "suspect": false
+        },
+        {
+          "x": 514,
+          "zyx": [
+            10,
+            3,
+            514
+          ],
+          "side_path_voxels": 125,
+          "suspect": false
+        },
+        {
+          "x": 480,
+          "zyx": [
+            11,
+            2,
+            480
+          ],
+          "side_path_voxels": 92,
+          "suspect": true
+        },
+        {
+          "x": 408,
+          "zyx": [
+            9,
+            4,
+            408
+          ],
+          "side_path_voxels": 165,
+          "suspect": false
+        }
+      ],
+      "side_paths": [
+        {
+          "n_voxels": 327,
+          "centroid_zyx": [
+            0.7614678899082569,
+            3.0,
+            77.0
+          ],
+          "bifurcation_x": 23,
+          "suspect": true,
+          "reasons": [
+            "thin_neck (1 bridge voxels)",
+            "z_edge (z=0.8)",
+            "tube_corner",
+            "low_local_r (0.25)"
+          ]
+        },
+        {
+          "n_voxels": 354,
+          "centroid_zyx": [
+            1.1886792452830188,
+            5.943396226415095,
+            157.0
+          ],
+          "bifurcation_x": 131,
+          "suspect": false,
+          "reasons": [
+            "z_edge (z=1.2)"
+          ]
+        },
+        {
+          "n_voxels": 564,
+          "centroid_zyx": [
+            4.882352941176471,
+            6.1344537815126055,
+            242.0
+          ],
+          "bifurcation_x": 301,
+          "suspect": false,
+          "reasons": []
+        },
+        {
+          "n_voxels": 5,
+          "centroid_zyx": [
+            3.230769230769231,
+            1.0769230769230769,
+            17.0
+          ],
+          "bifurcation_x": 23,
+          "suspect": true,
+          "reasons": [
+            "thin_neck (1 bridge voxels)",
+            "y_edge (y=1.1)",
+            "small (5 vox)",
+            "low_local_r (0.25)"
+          ]
+        },
+        {
+          "n_voxels": 61,
+          "centroid_zyx": [
+            3.8333333333333335,
+            5.666666666666667,
+            128.5
+          ],
+          "bifurcation_x": 131,
+          "suspect": false,
+          "reasons": []
+        },
+        {
+          "n_voxels": 34,
+          "centroid_zyx": [
+            5.0,
+            6.0,
+            301.8
+          ],
+          "bifurcation_x": 301,
+          "suspect": false,
+          "reasons": [
+            "small (34 vox)"
+          ]
+        },
+        {
+          "n_voxels": 71,
+          "centroid_zyx": [
+            5.375,
+            8.125,
+            179.5
+          ],
+          "bifurcation_x": 183,
+          "suspect": false,
+          "reasons": []
+        },
+        {
+          "n_voxels": 28,
+          "centroid_zyx": [
+            6.0,
+            4.333333333333333,
+            409.5
+          ],
+          "bifurcation_x": 407,
+          "suspect": false,
+          "reasons": [
+            "small (28 vox)"
+          ]
+        },
+        {
+          "n_voxels": 61,
+          "centroid_zyx": [
+            7.25,
+            4.25,
+            480.5
+          ],
+          "bifurcation_x": 480,
+          "suspect": false,
+          "reasons": [
+            "perpendicular (cos=0.00)"
+          ]
+        },
+        {
+          "n_voxels": 39,
+          "centroid_zyx": [
+            9.2,
+            3.6,
+            463.2
+          ],
+          "bifurcation_x": 462,
+          "suspect": false,
+          "reasons": [
+            "small (39 vox)"
+          ]
+        },
+        {
+          "n_voxels": 162,
+          "centroid_zyx": [
+            10.333333333333334,
+            5.08,
+            338.0
+          ],
+          "bifurcation_x": 301,
+          "suspect": false,
+          "reasons": []
+        },
+        {
+          "n_voxels": 125,
+          "centroid_zyx": [
+            10.542857142857143,
+            2.3142857142857145,
+            497.0
+          ],
+          "bifurcation_x": 514,
+          "suspect": false,
+          "reasons": [
+            "tube_corner"
+          ]
+        },
+        {
+          "n_voxels": 92,
+          "centroid_zyx": [
+            11.526315789473685,
+            2.6315789473684212,
+            471.0
+          ],
+          "bifurcation_x": 480,
+          "suspect": true,
+          "reasons": [
+            "z_edge (z=11.5)",
+            "tube_corner",
+            "low_local_r (0.25)"
+          ]
+        },
+        {
+          "n_voxels": 165,
+          "centroid_zyx": [
+            11.785714285714286,
+            3.9642857142857144,
+            434.5
+          ],
+          "bifurcation_x": 408,
+          "suspect": false,
+          "reasons": [
+            "z_edge (z=11.8)"
+          ]
+        }
+      ],
+      "chunk_period_px": 18,
+      "boundary_bridges": [
+        {
+          "x": 18,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 36,
+          "predicted_shift": [
+            -0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 54,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 72,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 90,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 108,
+          "predicted_shift": [
+            0.0,
+            -0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 126,
+          "predicted_shift": [
+            0.0,
+            -0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 144,
+          "predicted_shift": [
+            0.0,
+            -0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 162,
+          "predicted_shift": [
+            0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 180,
+          "predicted_shift": [
+            0.0,
+            0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 198,
+          "predicted_shift": [
+            0.0,
+            0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 216,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 234,
+          "predicted_shift": [
+            -0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 252,
+          "predicted_shift": [
+            -1.75,
+            0.75
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 270,
+          "predicted_shift": [
+            0.25,
+            0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        }
+      ],
+      "params": {
+        "alpha": 0.4,
+        "radius_x": 2.0,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "soma_detected": false,
+        "soma_end_x": null,
+        "soma_voxels": 0,
+        "median_trunk_width": 19,
+        "cell_end_x": 521,
+        "cell_start_x": 0,
+        "width_ratio": 1.375,
+        "calibration_method": "hybrid_ml_v0.5.0"
+      },
+      "voxel_zyx_um": [
+        1.1429,
+        1.1333,
+        1.1333
+      ],
+      "n_components": 1,
+      "label_convention": "cell 1, class 2 (structure) -> label 2"
+    }
+  ],
+  "exclude": {
+    "file": "munit11_clean_exclude_labelmap.tif",
+    "voxels": 412,
+    "n_intruder_arcs": 3,
+    "updated": "2026-10-05T14:49:43.222105+00:00"
+  }
+}

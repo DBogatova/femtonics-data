@@ -1,0 +1,112 @@
+{
+  "created": "2026-10-05T15:18:19.226383-04:00",
+  "tool": "wrap_segments_napari.py",
+  "voxel_zyx_um": [
+    0.85,
+    0.7958,
+    0.7958
+  ],
+  "labels": {
+    "1": "soma",
+    "2": "trunk",
+    "3": "branch1",
+    "4": "branch2"
+  },
+  "voxels_per_label": {
+    "1": 301,
+    "2": 265,
+    "3": 358,
+    "4": 257
+  },
+  "source_clean": "/Users/daria/Desktop/femtonics-data/rbp4_140_phpeb/06-18-2026/preprocessed/run02/run02_clean.tif",
+  "source_autoseg": "/Users/daria/Desktop/femtonics-data/rbp4_140_phpeb/06-18-2026/preprocessed/run02/run02_clean_autoseg_labelmap_reviewed.tif",
+  "accepted_cells": [
+    1
+  ],
+  "segment_names": {
+    "1": "trunk1",
+    "2": "trunk2",
+    "3": "trunk3",
+    "4": "branch"
+  },
+  "islands_removed": [],
+  "min_island_voxels": 20,
+  "wrap_clicks": [
+    {
+      "click_zyx": [
+        9,
+        6,
+        18
+      ],
+      "arc": -1,
+      "label": 3,
+      "name": "trunk1",
+      "size": 301,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        11,
+        5,
+        3
+      ],
+      "length_um": 13.0
+    },
+    {
+      "click_zyx": [
+        8,
+        7,
+        91
+      ],
+      "arc": -1,
+      "label": 4,
+      "name": "trunk2",
+      "size": 265,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        10,
+        5,
+        114
+      ],
+      "length_um": 19.62
+    },
+    {
+      "click_zyx": [
+        11,
+        5,
+        242
+      ],
+      "arc": -1,
+      "label": 5,
+      "name": "trunk3",
+      "size": 358,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        10,
+        5,
+        214
+      ],
+      "length_um": 23.96
+    },
+    {
+      "click_zyx": [
+        7,
+        9,
+        288
+      ],
+      "arc": -1,
+      "label": 6,
+      "name": "branch",
+      "size": 257,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        2,
+        11,
+        310
+      ],
+      "length_um": 22.55
+    }
+  ]
+}

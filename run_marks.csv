@@ -1,11 +1,42 @@
 behavior_base,mark,reason,updated
+rbp4_139_phpeb_26-06-12_Run002,revisit,,2026-10-05T14:45:58
+rbp4_139_phpeb_26-06-12_Run004,excluded,,2026-10-05T11:02:59
+rbp4_140_phpeb_26-06-18_Run002,excluded,"very noisy (Daria, 2026-10-05)",2026-10-05T15:32:54
+rbp4_140_phpeb_26-06-23_Run002,excluded,"very noisy (Daria, 2026-10-05)",2026-10-05T15:34:42
 rbp4_141_phpeb_26-06-17_Run001,revisit,,2026-10-03T23:06:33
 rbp4_141_phpeb_26-06-17_Run004,excluded,,2026-10-04T22:25:06
 rbp4_141_phpeb_26-06-17_Run009,revisit,,2026-10-04T14:03:55
+rbp4_141_phpeb_26-06-23_Run001,excluded,"pretty noisy (Daria, 2026-10-05)",2026-10-05T16:04:13
 rbp4_141_phpeb_26-06-25_Run003,excluded,,2026-10-04T23:32:17
+rbp4_141_phpeb_26-06-25_Run004,excluded,,2026-10-05T11:01:25
+rbp4_155_26-09-23_MUnit19,excluded,,2026-10-05T12:42:52
+rbp4_155_26-09-28_MUnit11,excluded,,2026-10-05T12:18:45
+rbp4_155_26-09-28_MUnit22,excluded,,2026-10-05T12:43:39
+rbp4_155_26-09-29_MUnit15,excluded,,2026-10-05T12:20:56
+rbp4_155_26-09-29_MUnit17,excluded,,2026-10-05T12:16:09
+rbp4_155_26-09-29_MUnit19,excluded,,2026-10-05T12:16:49
+rbp4_155_26-09-29_MUnit22,excluded,,2026-10-05T12:42:10
+rbp4_155_26-09-29_MUnit29,excluded,,2026-10-05T12:42:29
+rbp4_155_26-09-29_MUnit31,excluded,,2026-10-05T12:43:16
+rbp4_phpebne_050_26-09-15_MUnit43,excluded,,2026-10-05T12:37:34
 rbp4_phpebne_050_26-09-15_Run009,revisit,"[auto-QC] large motion drift: reference volume needed block registration, traces are unregistered - check before use",2026-10-04T01:10:14
-rbp4_phpebne_050_26-09-15_Run019,revisit,"[auto-QC] large motion drift: reference volume needed block registration, traces are unregistered - check before use",2026-10-04T01:10:14
+rbp4_phpebne_050_26-09-15_Run010,excluded,"[z-QC] thin slab: pc1 90.6%, 2 effective planes of 10; Z not independently resolved",2026-10-05T12:28:42
+rbp4_phpebne_050_26-09-15_Run011,excluded,"[z-QC] thin slab: pc1 93.1%, 2 effective planes of 10; worst of the set",2026-10-05T12:28:42
+rbp4_phpebne_050_26-09-15_Run012,excluded,"[z-QC] thin slab: pc1 88.9%, 2 effective planes of 10",2026-10-05T12:28:42
+rbp4_phpebne_050_26-09-15_Run014,excluded,"[z-QC] thin slab: pc1 84.2%, 2 effective planes of 17",2026-10-05T12:28:42
+rbp4_phpebne_050_26-09-15_Run015,excluded,,2026-10-05T12:43:58
+rbp4_phpebne_050_26-09-15_Run016,excluded,,2026-10-05T12:34:44
+rbp4_phpebne_050_26-09-15_Run017,excluded,,2026-10-05T12:17:18
+rbp4_phpebne_050_26-09-15_Run018,revisit,"[z-QC] borderline: pc1 84.5% (above the 77% June max) but 5 effective planes of 17 - 3D geometry weak, in-plane analysis fine",2026-10-05T12:28:42
+rbp4_phpebne_050_26-09-15_Run019,revisit,[z-QC] borderline: pc1 83.1% but 9 effective planes of 17 - the best-resolved of the 09-15 set after Run011/MUnit_22,2026-10-05T12:28:42
+rbp4_phpebne_050_26-09-15_Run020,excluded,,2026-10-05T12:18:26
+rbp4_phpebne_050_26-09-15_Run021,excluded,,2026-10-05T12:44:14
 rbp4_phpebne_053_26-09-14_MUnit16,revisit,[auto-QC] cell sits on the tube's Z edge for 80% of its length (partly out of frame); comment: forgot behavior,2026-10-04T01:37:07
+rbp4_phpebne_053_26-09-14_Run005,excluded,,2026-10-05T12:15:02
+rbp4_phpebne_053_26-09-14_Run007,excluded,"[z-QC] thin slab: 1 shared image explains 90.4% of across-plane variance, 2 components for 95% (June P1 range 33-77%, 4-14 comps); Z is not independently resolved",2026-10-05T12:28:42
+rbp4_phpebne_053_26-09-14_Run010,excluded,,2026-10-05T12:15:39
+rbp4_phpebne_053_26-09-18_MUnit14,excluded,,2026-10-05T12:19:50
 rbp4_phpebne_053_26-09-18_MUnit21,revisit,"[auto-QC] automatic mask missed the dendrite (activity outside the mask 6.6x inside; the dendrite is clearly visible - hand-mask it); comment: good dendrites, bad soma",2026-10-04T01:37:07
 rbp4_phpebne_053_26-09-18_MUnit37,revisit,[auto-QC] cell runs along the tube's Z edge for 83% of its length (partly out of frame); right half of the tube bright through all planes - check,2026-10-04T01:37:07
+rbp4_phpebne_053_26-09-18_MUnit8,excluded,,2026-10-05T12:20:35
 rbp4_phpebne_053_26-09-18_MUnit9,revisit,[auto-QC] no cell (imaging comment: 'run 5. no cell'); no regions could be placed,2026-10-04T01:09:42

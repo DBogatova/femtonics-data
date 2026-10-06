@@ -1,0 +1,394 @@
+{
+  "reviews": [
+    {
+      "tool": "auto_mask",
+      "version": "0.5.1",
+      "created": "2026-10-05T16:44:33.714199+00:00",
+      "output": "run01_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 4889,
+      "n_arcs": 7,
+      "flags": [],
+      "confidence": "auto",
+      "intruders": [],
+      "bifurcations": [
+        {
+          "x": 364,
+          "zyx": [
+            4,
+            13,
+            364
+          ],
+          "side_path_voxels": 237,
+          "suspect": false
+        },
+        {
+          "x": 207,
+          "zyx": [
+            7,
+            8,
+            207
+          ],
+          "side_path_voxels": 19,
+          "suspect": false
+        },
+        {
+          "x": 220,
+          "zyx": [
+            8,
+            9,
+            220
+          ],
+          "side_path_voxels": 22,
+          "suspect": false
+        },
+        {
+          "x": 266,
+          "zyx": [
+            9,
+            11,
+            266
+          ],
+          "side_path_voxels": 14,
+          "suspect": false
+        },
+        {
+          "x": 220,
+          "zyx": [
+            8,
+            9,
+            220
+          ],
+          "side_path_voxels": 25,
+          "suspect": false
+        },
+        {
+          "x": 266,
+          "zyx": [
+            9,
+            11,
+            266
+          ],
+          "side_path_voxels": 81,
+          "suspect": false
+        }
+      ],
+      "side_paths": [
+        {
+          "n_voxels": 237,
+          "centroid_zyx": [
+            5.05050505050505,
+            10.464646464646465,
+            315.0
+          ],
+          "bifurcation_x": 364,
+          "suspect": false,
+          "reasons": [
+            "thin_neck (0 bridge voxels)"
+          ]
+        },
+        {
+          "n_voxels": 19,
+          "centroid_zyx": [
+            4.6,
+            8.6,
+            205.8
+          ],
+          "bifurcation_x": 207,
+          "suspect": false,
+          "reasons": [
+            "small (19 vox)"
+          ]
+        },
+        {
+          "n_voxels": 22,
+          "centroid_zyx": [
+            5.166666666666667,
+            9.083333333333334,
+            214.5
+          ],
+          "bifurcation_x": 220,
+          "suspect": false,
+          "reasons": [
+            "small (22 vox)"
+          ]
+        },
+        {
+          "n_voxels": 14,
+          "centroid_zyx": [
+            6.5,
+            8.5,
+            263.5
+          ],
+          "bifurcation_x": 266,
+          "suspect": false,
+          "reasons": [
+            "small (14 vox)"
+          ]
+        },
+        {
+          "n_voxels": 25,
+          "centroid_zyx": [
+            6.833333333333333,
+            8.833333333333334,
+            214.5
+          ],
+          "bifurcation_x": 220,
+          "suspect": false,
+          "reasons": [
+            "small (25 vox)"
+          ]
+        },
+        {
+          "n_voxels": 81,
+          "centroid_zyx": [
+            7.680851063829787,
+            10.851063829787234,
+            243.0
+          ],
+          "bifurcation_x": 266,
+          "suspect": false,
+          "reasons": []
+        }
+      ],
+      "chunk_period_px": 26,
+      "boundary_bridges": [
+        {
+          "x": 26,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 52,
+          "predicted_shift": [
+            0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 78,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 104,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 130,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 156,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 182,
+          "predicted_shift": [
+            -0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 208,
+          "predicted_shift": [
+            -0.25,
+            -0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 234,
+          "predicted_shift": [
+            -0.25,
+            -0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 260,
+          "predicted_shift": [
+            -0.25,
+            -0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 286,
+          "predicted_shift": [
+            0.0,
+            0.25
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 312,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 338,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 364,
+          "predicted_shift": [
+            0.25,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        },
+        {
+          "x": 390,
+          "predicted_shift": [
+            0.0,
+            0.0
+          ],
+          "accepted": true,
+          "score": 0.0
+        }
+      ],
+      "params": {
+        "alpha": 0.4299999999999998,
+        "radius_x": 2.0,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "soma_detected": false,
+        "soma_end_x": null,
+        "soma_voxels": 0,
+        "median_trunk_width": 11,
+        "cell_end_x": 441,
+        "cell_start_x": 0,
+        "width_ratio": 2.4,
+        "calibration_method": "hybrid_ml_v0.5.0"
+      },
+      "voxel_zyx_um": [
+        1.0,
+        0.6594,
+        0.6594
+      ],
+      "n_components": 1,
+      "label_convention": "cell 1, class 2 (structure) -> label 2"
+    },
+    {
+      "tool": "trace_mask_napari",
+      "version": "0.1.0",
+      "created": "2026-10-05T18:30:23.439788+00:00",
+      "output": "run01_clean_autoseg_labelmap_reviewed.tif",
+      "mask_voxels": 3698,
+      "n_arcs": 37,
+      "islands_removed": [],
+      "min_island_voxels": 20,
+      "arc_lengths_vox": [
+        99,
+        207,
+        5,
+        12,
+        6,
+        12,
+        47,
+        12,
+        7,
+        11,
+        13,
+        17,
+        19,
+        7,
+        7,
+        6,
+        13,
+        42,
+        2,
+        7,
+        6,
+        13,
+        14,
+        11,
+        20,
+        15,
+        13,
+        17,
+        7,
+        7,
+        37,
+        21,
+        12,
+        3,
+        4,
+        40,
+        55
+      ],
+      "voxel_zyx_um": [
+        1.0,
+        0.6594,
+        0.6594
+      ],
+      "params": {
+        "alpha": 0.5,
+        "radius_x": 1.5,
+        "pad": 0,
+        "dim_pct": 15.0,
+        "reference_channel": "cofire_mean",
+        "manually_erased_voxels": 914,
+        "manually_added_voxels": 0,
+        "other_cells": {
+          "alpha": 0.5,
+          "radius_x": 1.5,
+          "pad": 0,
+          "erased": 0,
+          "added": 0
+        },
+        "n_other_cell_arcs": 0
+      },
+      "label_convention": "cell 1, class 2 (structure) -> label 2; anatomy assigned later by wrap_segments"
+    }
+  ],
+  "exclude": {
+    "file": "run01_clean_exclude_labelmap.tif",
+    "voxels": 0,
+    "n_intruder_arcs": 0,
+    "updated": "2026-10-05T18:30:23.443388+00:00",
+    "note": "voxels of other (crossing/neighbouring) cells: blacked out in movies and figure MIPs; never used for traces"
+  }
+}

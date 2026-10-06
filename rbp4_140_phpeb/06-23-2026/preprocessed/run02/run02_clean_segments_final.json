@@ -1,0 +1,115 @@
+{
+  "created": "2026-10-05T15:07:16.651496-04:00",
+  "tool": "wrap_segments_napari.py",
+  "voxel_zyx_um": [
+    0.9,
+    0.7,
+    0.7
+  ],
+  "labels": {
+    "1": "soma",
+    "2": "trunk",
+    "3": "branch1",
+    "4": "branch2"
+  },
+  "voxels_per_label": {
+    "1": 1127,
+    "2": 414,
+    "3": 456,
+    "4": 217
+  },
+  "source_clean": "/Users/daria/Desktop/femtonics-data/rbp4_140_phpeb/06-23-2026/preprocessed/run02/run02_clean.tif",
+  "source_autoseg": "/Users/daria/Desktop/femtonics-data/rbp4_140_phpeb/06-23-2026/preprocessed/run02/run02_clean_autoseg_labelmap_reviewed.tif",
+  "accepted_cells": [
+    1
+  ],
+  "segment_names": {
+    "1": "soma",
+    "2": "trunk",
+    "3": "trunk2",
+    "4": "branch"
+  },
+  "islands_removed": [],
+  "min_island_voxels": 20,
+  "wrap_clicks": [
+    {
+      "click_zyx": [
+        9,
+        8,
+        63
+      ],
+      "arc": -1,
+      "label": 3,
+      "name": "soma",
+      "size": 1127,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        7,
+        8,
+        33
+      ],
+      "length_um": 25.1,
+      "merged_from": [
+        "interval2"
+      ]
+    },
+    {
+      "click_zyx": [
+        12,
+        8,
+        148
+      ],
+      "arc": -1,
+      "label": 4,
+      "name": "trunk",
+      "size": 414,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        12,
+        8,
+        175
+      ],
+      "length_um": 19.78
+    },
+    {
+      "click_zyx": [
+        7,
+        18,
+        369
+      ],
+      "arc": -1,
+      "label": 5,
+      "name": "trunk2",
+      "size": 456,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        8,
+        15,
+        330
+      ],
+      "length_um": 29.49
+    },
+    {
+      "click_zyx": [
+        8,
+        17,
+        470
+      ],
+      "arc": -1,
+      "label": 6,
+      "name": "branch",
+      "size": 217,
+      "soma_suggested": false,
+      "kind": "interval",
+      "click2_zyx": [
+        9,
+        18,
+        492
+      ],
+      "length_um": 18.87
+    }
+  ]
+}
