@@ -3,7 +3,15 @@
 
 One window: the ranked run table (live stage detection, same logic as
 femto_status.py - imported, not duplicated), and buttons that run the next
-step for the selected run:
+step for the selected run.
+
+Table: click any column header to sort (rank numerically, dates in time order;
+click again to reverse). The 'Show:' bar above it filters by free text, mouse,
+session date and stage, and hides excluded / 'revisit later' / not-local runs
+('hide excluded' is on by default; the count on the right says how many are
+hidden). Filter choices are remembered between sessions, separately for the
+real tree and the automatic mirror. Buttons act on the selected row whatever the
+sort order. Buttons:
 
   [Run next step]            registration / reference / auto mask / coherence;
                              chains until the run needs a human or is complete
@@ -150,6 +158,72 @@ def provenance(run: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# table columns, sort keys and filters (module level so --selftest checks them headless)
+COLS = ["rank", "mouse", "date", "run", "priority", "rating", "set aside",
+        "stage", "mask/regions by", "next step"]
+C = {name: i for i, name in enumerate(COLS)}
+PROV_TEXT = {"auto": "program", "yours": "you", "mixed": "both"}
+RATING_ORDER = {"very_good": 0, "good": 1, "questionable": 2}
+MARK_TEXT = {"excluded": "excluded", "revisit": "revisit later"}
+STAGE_FILTERS = ["all stages", "to do (not complete)"] + list(fs.STAGES)
+
+
+def date_key(d: str) -> str:
+    """'10-08-2026' (MM-DD-YYYY) -> '2026-10-08', so dates sort in time order."""
+    p = (d or "").split("-")
+    return f"{p[2]}-{p[0]}-{p[1]}" if len(p) == 3 and len(p[2]) == 4 else (d or "")
+
+
+def row_cells(run: dict, desc: str, gui: bool) -> list[tuple[str, object]]:
+    """(display text, sort key) per column. Sort keys of one column share a type;
+    empty values sort last."""
+    rank = run.get("rank")
+    rating = run.get("rating") or ""
+    mark = run.get("mark") or ""
+    stage = run.get("stage", "?")
+    prov = PROV_TEXT.get(provenance(run), "")
+    nxt = ("[GUI] " if gui else "") + desc
+    base = run.get("behavior_base") or f"{run.get('mouse', '')} {run.get('munit', '')}"
+    return [
+        (str(rank if rank is not None else ""), float(rank) if isinstance(rank, (int, float)) else 1e9),
+        (run.get("mouse", ""), run.get("mouse", "")),
+        (run.get("date", ""), date_key(run.get("date", ""))),
+        (base, base),
+        (str(run.get("priority", "")), str(run.get("priority", "")) or "~"),
+        (RATING_TEXT.get(rating, ""), float(RATING_ORDER.get(rating, 9))),
+        (MARK_TEXT.get(mark, ""), mark or "~"),
+        (stage, float(fs.STAGE_IDX.get(stage, -1))),
+        (prov, prov or "~"),
+        (nxt, nxt),
+    ]
+
+
+DEFAULT_FILTER = {"text": "", "mouse": "", "date": "", "stage": STAGE_FILTERS[0],
+                  "hide_excluded": True, "hide_revisit": False, "local_only": False}
+
+
+def run_visible(run: dict, texts: list[str], f: dict) -> bool:
+    """Does this run pass the filter bar? texts = the row's displayed cell texts."""
+    if f.get("hide_excluded") and run.get("mark") == "excluded":
+        return False
+    if f.get("hide_revisit") and run.get("mark") == "revisit":
+        return False
+    if f.get("local_only") and run.get("stage") == "not_local":
+        return False
+    if f.get("mouse") and run.get("mouse") != f["mouse"]:
+        return False
+    if f.get("date") and run.get("date") != f["date"]:
+        return False
+    st = f.get("stage") or STAGE_FILTERS[0]
+    if st == "to do (not complete)" and run.get("stage") == "complete":
+        return False
+    if st in fs.STAGE_IDX and run.get("stage") != st:
+        return False
+    hay = " ".join(texts + [run.get("munit", "") or "", run.get("quality_notes", "") or ""]).lower()
+    return all(w in hay for w in (f.get("text") or "").lower().split())
+
+
+# ---------------------------------------------------------------------------
 def selftest() -> int:
     runs = build_runs()
     assert len(runs) >= 44, f"expected at least 44 runs, got {len(runs)}"
@@ -190,8 +264,18 @@ def selftest() -> int:
 
 
 # ---------------------------------------------------------------------------
-def run_gui() -> int:
+def run_gui(gui_selftest: bool = False) -> int:
     from qtpy import QtWidgets, QtCore, QtGui
+
+    class _SortItem(QtWidgets.QTableWidgetItem):
+        """Sorts by the key in UserRole+1 (numbers as numbers, dates in time order)."""
+        def __lt__(self, other):
+            a = self.data(QtCore.Qt.UserRole + 1)
+            b = other.data(QtCore.Qt.UserRole + 1)
+            try:
+                return a < b
+            except TypeError:
+                return str(a) < str(b)
 
     class Panel(QtWidgets.QMainWindow):
         log_signal = QtCore.Signal(str)
@@ -216,16 +300,59 @@ def run_gui() -> int:
             lay.setSpacing(4)
             lay.setContentsMargins(6, 6, 6, 6)
 
-            # ---- table (stretches) ----
+            # ---- filter bar ----
+            fbar = QtWidgets.QHBoxLayout()
+            fbar.setSpacing(6)
+            fbar.addWidget(self._sectionLabel("Show:"))
+            self.f_text = QtWidgets.QLineEdit()
+            self.f_text.setPlaceholderText("search (run, mouse, MUnit, stage, comment…)")
+            self.f_text.setClearButtonEnabled(True)
+            self.f_text.setMinimumWidth(220)
+            self.f_mouse = QtWidgets.QComboBox(); self.f_mouse.setToolTip("only this mouse")
+            self.f_date = QtWidgets.QComboBox(); self.f_date.setToolTip("only this session date")
+            self.f_stage = QtWidgets.QComboBox(); self.f_stage.addItems(STAGE_FILTERS)
+            self.f_stage.setToolTip("only runs at this stage ('to do' = everything not complete)")
+            self.f_excl = QtWidgets.QCheckBox("hide excluded")
+            self.f_excl.setToolTip("hide runs you excluded with 'Mark / rate…' (files are kept)")
+            self.f_rev = QtWidgets.QCheckBox("hide 'revisit later'")
+            self.f_local = QtWidgets.QCheckBox("only local stacks")
+            self.f_local.setToolTip("hide runs whose 4D stack is not on this computer")
+            self.f_reset = QtWidgets.QPushButton("Reset filters")
+            self.f_count = QtWidgets.QLabel("")
+            self.f_count.setStyleSheet("color: #555; padding: 0 4px;")
+            for cbx in (self.f_mouse, self.f_date, self.f_stage):
+                cbx.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+            self.f_text.setMinimumWidth(260)
+            # row 1: what to look for; row 2: what to hide + how many are shown
+            fbar.addWidget(self.f_text, 1)                      # the search box takes the spare width
+            for wdg in (self.f_mouse, self.f_date, self.f_stage, self.f_reset):
+                fbar.addWidget(wdg)
+            lay.addLayout(fbar)
+            hbar = QtWidgets.QHBoxLayout()
+            hbar.setSpacing(10)
+            hbar.addWidget(self._sectionLabel("Hide:"))
+            self.f_excl.setText("excluded"); self.f_rev.setText("'revisit later'")
+            self.f_local.setText("runs without a local stack")
+            for wdg in (self.f_excl, self.f_rev, self.f_local):
+                hbar.addWidget(wdg)
+            hbar.addStretch(1)
+            hbar.addWidget(self.f_count)
+            lay.addLayout(hbar)
+
+            # ---- table (stretches; click a header to sort, click again to reverse) ----
             self.table = QtWidgets.QTableWidget()
-            self.table.setColumnCount(7)
-            self.table.setHorizontalHeaderLabels(
-                ["rank", "run", "priority", "rating", "stage", "mask/regions by", "next step"])
+            self.table.setColumnCount(len(COLS))
+            self.table.setHorizontalHeaderLabels(COLS)
             self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
             self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
             self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+            self.table.verticalHeader().setVisible(False)
             hdr = self.table.horizontalHeader()
             hdr.setStretchLastSection(True)
+            hdr.setSortIndicatorShown(True)
+            hdr.setToolTip("click a column header to sort by it; click again to reverse")
+            self.table.setSortingEnabled(True)
+            self.table.sortByColumn(C["rank"], QtCore.Qt.AscendingOrder)
             lay.addWidget(self.table, stretch=4)
 
             # ---- button rows: grouped into labeled sections in a grid ----
@@ -410,6 +537,17 @@ def run_gui() -> int:
             self.refresh_signal.connect(self.refresh)
             self.busy = False
             self.runs = []
+            # filter choices persist between sessions (separately for the real tree and the mirror)
+            self.settings = QtCore.QSettings("femtonics-data",
+                                             os.environ.get("FEMTO_PANEL_SETTINGS", "femto_panel"))
+            self._skey = "auto/" if ROOT != CODE_ROOT else "real/"
+            self._load_filter_settings()
+            self.f_text.textChanged.connect(lambda _=None: self.apply_filter())
+            for cbx in (self.f_mouse, self.f_date, self.f_stage):
+                cbx.currentIndexChanged.connect(lambda _=None: self.apply_filter())
+            for chk in (self.f_excl, self.f_rev, self.f_local):
+                chk.toggled.connect(lambda _=None: self.apply_filter())
+            self.f_reset.clicked.connect(self.reset_filters)
             self.refresh()
 
         @staticmethod
@@ -425,28 +563,68 @@ def run_gui() -> int:
             self.log_toggle.setText("▼ Log" if vis else "► Log")
 
         # ---- table ------------------------------------------------------
+        def _current_key(self):
+            r = self._run_at(self.table.currentRow())
+            return (r.get("behavior_base"), str(r.get("run_dir"))) if r else None
+
+        def _run_at(self, row):
+            """The run shown in table row `row` (rows move when sorted, so never index self.runs by row)."""
+            it = self.table.item(row, 0) if row >= 0 else None
+            if it is None:
+                return None
+            i = it.data(QtCore.Qt.UserRole)
+            return self.runs[i] if isinstance(i, int) and 0 <= i < len(self.runs) else None
+
+        def _set_choices(self, combo, label_all, values):
+            keep = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(label_all, "")
+            for v in values:
+                combo.addItem(v, v)
+            k = combo.findData(keep if keep is not None else "")
+            combo.setCurrentIndex(max(0, k))
+            combo.blockSignals(False)
+
         def refresh(self):
+            keep = self._current_key()
             self.runs = build_runs()
+            self._set_choices(self.f_mouse, "all mice",
+                              sorted({r.get("mouse", "") for r in self.runs if r.get("mouse")}))
+            self._set_choices(self.f_date, "all dates",
+                              sorted({r.get("date", "") for r in self.runs if r.get("date")},
+                                     key=date_key, reverse=True))
+            if getattr(self, "_pending_combo", None):            # saved choices from last session
+                for combo, val in self._pending_combo.items():
+                    k = combo.findData(val)
+                    if k >= 0:
+                        combo.blockSignals(True); combo.setCurrentIndex(k); combo.blockSignals(False)
+                self._pending_combo = None
+
+            self.table.setSortingEnabled(False)                 # fill first, then let Qt sort once
             self.table.setRowCount(len(self.runs))
+            self._texts = []
             for i, r in enumerate(self.runs):
                 desc, argv, gui = next_command(r,
                                                auto_mask=self.auto_mask.isChecked(),
                                                auto_regions=self.auto_regions.isChecked())
-                # Elide long 'next step' text
-                max_chars = 80
-                display_desc = desc if len(desc) <= max_chars else desc[:max_chars - 1] + "…"
-                cells = [str(r.get("rank", "")), r.get("behavior_base", ""),
-                         str(r.get("quality", r.get("priority", ""))),
-                         RATING_TEXT.get(r.get("rating") or "", ""),
-                         r.get("stage", "?"), {"auto": "program", "yours": "you", "mixed": "both"}.get(provenance(r), ""),
-                         ("[GUI] " if gui else "") + display_desc]
-                for j, txt in enumerate(cells):
-                    it = QtWidgets.QTableWidgetItem(txt)
-                    if j == 6:   # next step column: full text as tooltip
-                        it.setToolTip(("[GUI] " if gui else "") + desc)
-                    if j == 3 and r.get("rating"):   # rating: subtle tint, reason as tooltip
+                cells = row_cells(r, desc, gui)
+                self._texts.append([t for t, _ in cells])
+                for j, (txt, key) in enumerate(cells):
+                    shown = txt
+                    if j == C["next step"] and len(txt) > 80:   # elide; full text in the tooltip
+                        shown = txt[:79] + "…"
+                    it = _SortItem(shown)
+                    it.setData(QtCore.Qt.UserRole + 1, key)
+                    if j == 0:
+                        it.setData(QtCore.Qt.UserRole, i)       # row -> run, survives sorting
+                    if j == C["next step"]:
+                        it.setToolTip(txt)
+                    if j == C["rating"] and r.get("rating"):
                         it.setBackground(QtGui.QColor(RATING_TINT[r["rating"]]))
                         it.setToolTip(RATING_TEXT[r["rating"]] + (f": {r['rating_reason']}" if r.get("rating_reason") else ""))
+                    if j == C["set aside"] and r.get("mark_reason"):
+                        it.setToolTip(r["mark_reason"])
                     if r.get("mark") == "excluded":
                         it.setForeground(QtGui.QColor("#c62828"))
                     elif r.get("mark") == "revisit":
@@ -456,18 +634,79 @@ def run_gui() -> int:
                     elif r.get("stage") == "not_local":
                         it.setForeground(QtGui.QColor("#9e9e9e"))
                     self.table.setItem(i, j, it)
+            self.table.setSortingEnabled(True)                  # re-applies the header's sort
             self.table.resizeColumnsToContents()
             # Limit the "next step" column so it does not push the window too wide
-            if self.table.columnCount() > 6:
-                self.table.setColumnWidth(6, min(self.table.columnWidth(6), 400))
+            self.table.setColumnWidth(C["next step"], min(self.table.columnWidth(C["next step"]), 400))
+            self.apply_filter()
+            if keep:                                            # keep the same run selected
+                for row in range(self.table.rowCount()):
+                    r = self._run_at(row)
+                    if r and (r.get("behavior_base"), str(r.get("run_dir"))) == keep:
+                        self.table.selectRow(row)
+                        break
             self.logline("table refreshed from disk")
 
+        def filter_state(self) -> dict:
+            return {"text": self.f_text.text(), "mouse": self.f_mouse.currentData() or "",
+                    "date": self.f_date.currentData() or "", "stage": self.f_stage.currentText(),
+                    "hide_excluded": self.f_excl.isChecked(), "hide_revisit": self.f_rev.isChecked(),
+                    "local_only": self.f_local.isChecked()}
+
+        def apply_filter(self):
+            f = self.filter_state()
+            shown = 0
+            for row in range(self.table.rowCount()):
+                it = self.table.item(row, 0)
+                i = it.data(QtCore.Qt.UserRole) if it else None
+                ok = isinstance(i, int) and run_visible(self.runs[i], self._texts[i], f)
+                self.table.setRowHidden(row, not ok)
+                shown += ok
+            n = len(self.runs)
+            n_excl = sum(1 for r in self.runs if r.get("mark") == "excluded")
+            self.f_count.setText(f"{shown} of {n} runs"
+                                 + (f" ({n_excl} excluded hidden)" if f["hide_excluded"] and n_excl else ""))
+            cur = self.table.currentRow()
+            if cur >= 0 and self.table.isRowHidden(cur):
+                self.table.clearSelection(); self.table.setCurrentCell(-1, -1)
+            for k, v in f.items():
+                self.settings.setValue(self._skey + k, v)
+
+        def _load_filter_settings(self):
+            def get(k):
+                v = self.settings.value(self._skey + k, DEFAULT_FILTER[k])
+                if isinstance(DEFAULT_FILTER[k], bool):
+                    return v in (True, "true", "True", 1, "1")
+                return v or ""
+            self.f_text.setText(get("text"))
+            k = self.f_stage.findText(get("stage") or STAGE_FILTERS[0])
+            self.f_stage.setCurrentIndex(max(0, k))
+            self.f_excl.setChecked(get("hide_excluded"))
+            self.f_rev.setChecked(get("hide_revisit"))
+            self.f_local.setChecked(get("local_only"))
+            # mouse/date lists are only known after the first scan
+            self._pending_combo = {self.f_mouse: get("mouse"), self.f_date: get("date")}
+
+        def reset_filters(self):
+            for wdg in (self.f_text, self.f_mouse, self.f_date, self.f_stage,
+                        self.f_excl, self.f_rev, self.f_local):
+                wdg.blockSignals(True)
+            self.f_text.clear()
+            self.f_mouse.setCurrentIndex(0); self.f_date.setCurrentIndex(0); self.f_stage.setCurrentIndex(0)
+            self.f_excl.setChecked(DEFAULT_FILTER["hide_excluded"])
+            self.f_rev.setChecked(DEFAULT_FILTER["hide_revisit"])
+            self.f_local.setChecked(DEFAULT_FILTER["local_only"])
+            for wdg in (self.f_text, self.f_mouse, self.f_date, self.f_stage,
+                        self.f_excl, self.f_rev, self.f_local):
+                wdg.blockSignals(False)
+            self.apply_filter()
+
         def selected(self):
-            i = self.table.currentRow()
-            if i < 0 or i >= len(self.runs):
+            row = self.table.currentRow()
+            r = self._run_at(row) if row >= 0 and not self.table.isRowHidden(row) else None
+            if r is None:
                 self.logline("!! select a run first")
-                return None
-            return self.runs[i]
+            return r
 
         def _on_progress(self, done, total, label):
             if total <= 0:
@@ -889,11 +1128,60 @@ def run_gui() -> int:
 
     app = QtWidgets.QApplication(sys.argv)
     panel = Panel()
+    if gui_selftest:
+        return _gui_selftest(panel, QtCore)
     panel.show()
     return app.exec_()
+
+
+def _gui_selftest(panel, QtCore) -> int:
+    """Offscreen check of sorting, filtering and row->run mapping (no window shown)."""
+    t = panel.table
+    panel.settings.clear()            # selftest uses its own settings store (FEMTO_PANEL_SETTINGS)
+    panel.reset_filters()
+    vis = lambda: [panel._run_at(r) for r in range(t.rowCount()) if not t.isRowHidden(r)]
+    n_excl = sum(1 for r in panel.runs if r.get("mark") == "excluded")
+    assert len(vis()) == len(panel.runs) - n_excl, "default view should hide only excluded runs"
+    assert all(r.get("mark") != "excluded" for r in vis())
+    panel.f_excl.setChecked(False)
+    assert len(vis()) == len(panel.runs)
+    # sort by date, newest first: shown dates must be non-increasing in time
+    t.sortByColumn(C["date"], QtCore.Qt.DescendingOrder)
+    keys = [date_key(r.get("date", "")) for r in vis()]
+    assert keys == sorted(keys, reverse=True), "date sort is not chronological"
+    # sort by rank: numeric, not text ('10' after '9')
+    t.sortByColumn(C["rank"], QtCore.Qt.AscendingOrder)
+    ranks = [r["rank"] for r in vis()]
+    assert ranks == sorted(ranks), "rank sort is not numeric"
+    # every row's displayed run name belongs to the run it maps to (sorting kept them together)
+    for row in range(t.rowCount()):
+        r = panel._run_at(row)
+        assert t.item(row, C["run"]).text() == (r.get("behavior_base") or f"{r.get('mouse', '')} {r.get('munit', '')}")
+    # mouse filter + selection maps to the right run after sorting
+    mouse = sorted({r["mouse"] for r in panel.runs if r.get("mouse")})[0]
+    panel.f_mouse.setCurrentIndex(panel.f_mouse.findData(mouse))
+    shown = vis()
+    assert shown and all(r["mouse"] == mouse for r in shown)
+    row = next(r for r in range(t.rowCount()) if not t.isRowHidden(r))
+    t.selectRow(row)
+    assert panel.selected() is panel._run_at(row)
+    # text search
+    panel.reset_filters(); panel.f_excl.setChecked(False)
+    panel.f_text.setText(mouse)
+    hits = [r for r in range(t.rowCount()) if not t.isRowHidden(r)]
+    assert hits and all(mouse.lower() in " ".join(panel._texts[t.item(r, 0).data(QtCore.Qt.UserRole)]).lower()
+                        for r in hits), "text search shows a row without the search text"
+    assert len(hits) >= len(shown)
+    panel.reset_filters()
+    print(f"GUI SELFTEST PASS ({len(panel.runs)} runs, {n_excl} excluded hidden by default)")
+    return 0
 
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(selftest())
+    if "--gui-selftest" in sys.argv:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ["FEMTO_PANEL_SETTINGS"] = "femto_panel_selftest"   # never touch your saved filters
+        sys.exit(run_gui(gui_selftest=True))
     sys.exit(run_gui())
