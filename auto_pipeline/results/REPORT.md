@@ -1,6 +1,6 @@
 # Automatic Pipeline Statistical Report (v4)
 
-Generated: 2026-10-05 23:30
+Generated: 2026-10-09 13:28
 n = 17 cells from 7 mice (14 with behavior, 3 imaging-only)
 All masks and regions fully automatic (no manual curation).
 Set aside (run_marks.csv; reasons starting [auto-QC] are automatic, others are Daria's), not in any statistic: rbp4_139_phpeb_26-06-12_Run002 (revisit); rbp4_139_phpeb_26-06-12_Run004 (excluded); rbp4_140_phpeb_26-06-18_Run002 (excluded: very noisy (Daria, 2026-10-05)); rbp4_140_phpeb_26-06-23_Run002 (excluded: very noisy (Daria, 2026-10-05)); rbp4_141_phpeb_26-06-17_Run001 (revisit); rbp4_141_phpeb_26-06-17_Run004 (excluded); rbp4_141_phpeb_26-06-17_Run009 (revisit); rbp4_141_phpeb_26-06-23_Run001 (excluded: pretty noisy (Daria, 2026-10-05)); rbp4_141_phpeb_26-06-25_Run003 (excluded); rbp4_141_phpeb_26-06-25_Run004 (excluded); rbp4_155_26-09-23_MUnit19 (excluded); rbp4_155_26-09-28_MUnit11 (excluded); rbp4_155_26-09-28_MUnit22 (excluded); rbp4_155_26-09-29_MUnit15 (excluded); rbp4_155_26-09-29_MUnit17 (excluded); rbp4_155_26-09-29_MUnit19 (excluded); rbp4_155_26-09-29_MUnit22 (excluded); rbp4_155_26-09-29_MUnit29 (excluded); rbp4_155_26-09-29_MUnit31 (excluded); rbp4_phpebne_050_26-09-15_MUnit43 (excluded); rbp4_phpebne_050_26-09-15_Run009 (revisit: [auto-QC] large motion drift: reference volume needed block registration, traces are unregistered - check before use); rbp4_phpebne_050_26-09-15_Run010 (excluded: [z-QC] thin slab: pc1 90.6%, 2 effective planes of 10; Z not independently resolved); rbp4_phpebne_050_26-09-15_Run011 (excluded: [z-QC] thin slab: pc1 93.1%, 2 effective planes of 10; worst of the set); rbp4_phpebne_050_26-09-15_Run012 (excluded: [z-QC] thin slab: pc1 88.9%, 2 effective planes of 10); rbp4_phpebne_050_26-09-15_Run014 (excluded: [z-QC] thin slab: pc1 84.2%, 2 effective planes of 17); rbp4_phpebne_050_26-09-15_Run015 (excluded); rbp4_phpebne_050_26-09-15_Run016 (excluded); rbp4_phpebne_050_26-09-15_Run017 (excluded); rbp4_phpebne_050_26-09-15_Run018 (revisit: [z-QC] borderline: pc1 84.5% (above the 77% June max) but 5 effective planes of 17 - 3D geometry weak, in-plane analysis fine); rbp4_phpebne_050_26-09-15_Run019 (revisit: [z-QC] borderline: pc1 83.1% but 9 effective planes of 17 - the best-resolved of the 09-15 set after Run011/MUnit_22); rbp4_phpebne_050_26-09-15_Run020 (excluded); rbp4_phpebne_050_26-09-15_Run021 (excluded); rbp4_phpebne_053_26-09-14_MUnit16 (revisit: [auto-QC] cell sits on the tube's Z edge for 80% of its length (partly out of frame); comment: forgot behavior); rbp4_phpebne_053_26-09-14_Run005 (excluded); rbp4_phpebne_053_26-09-14_Run007 (excluded: [z-QC] thin slab: 1 shared image explains 90.4% of across-plane variance, 2 components for 95% (June P1 range 33-77%, 4-14 comps); Z is not independently resolved); rbp4_phpebne_053_26-09-14_Run010 (excluded); rbp4_phpebne_053_26-09-18_MUnit14 (excluded); rbp4_phpebne_053_26-09-18_MUnit21 (revisit: [auto-QC] automatic mask missed the dendrite (activity outside the mask 6.6x inside; the dendrite is clearly visible - hand-mask it); comment: good dendrites, bad soma); rbp4_phpebne_053_26-09-18_MUnit37 (revisit: [auto-QC] cell runs along the tube's Z edge for 83% of its length (partly out of frame); right half of the tube bright through all planes - check); rbp4_phpebne_053_26-09-18_MUnit8 (excluded); rbp4_phpebne_053_26-09-18_MUnit9 (revisit: [auto-QC] no cell (imaging comment: 'run 5. no cell'); no regions could be placed)
@@ -14,11 +14,11 @@ trivially-significant Wilcoxon-vs-0 and wrong-direction binomial.
 ## Summary
 
 Across 17 cells from 7 mice (14 with behavior, 3 imaging-only):
-- **Branches are less coupled to the reference than trunks**: mean r(ref, branch)=0.5071, r(ref, trunk)=0.7554, paired Wilcoxon p=7.63e-06 (17 cells, 7 mice).
-- **Branches have genuine independent events**: 15 cells tested; mean frac_independent=0.4132, bracketed between coupled-noise and independent null distributions.
-- **Coupling decays with geodesic distance**: 17 cells, Spearman ρ=-0.5411.
-- **Branch tends to fire first**: mean fraction=0.8324 (10 cells).
-- **Behavior coupling**: 12 cells with behavior data (imaging-only cells excluded from behavior analyses).
+- **Branches are less coupled to the reference than trunks**: mean r(ref, branch)=0.5345, r(ref, trunk)=0.7574, paired Wilcoxon p=7.63e-06 (17 cells, 7 mice).
+- **Branches have genuine independent events**: 15 cells tested; mean frac_independent=0.4019, bracketed between coupled-noise and independent null distributions.
+- **Coupling decays with geodesic distance**: 17 cells, Spearman ρ=-0.5121.
+- **Branch tends to fire first**: mean fraction=0.8522 (11 cells).
+- **Behavior coupling**: 13 cells with behavior data (imaging-only cells excluded from behavior analyses).
 
 Validation on 7 hand-curated cells: mask Dice run03=0.7757, run04=0.688, run04_phpebach=0.887, run05=0.8825, run05_140_0623=0.8535, run06_140_0623=0.9006, run07_phpebach=0.6894. Leave-one-out calibration caveat: alpha calibration uses anatomy, not Dice, so holding one cell out does not change parameters; but n=3 limits validation power.
 
@@ -55,7 +55,7 @@ Mask: Dice=0.688, precision=0.622, recall=0.770
 |--------|--------|------|---|
 | r_soma_branch | 0.5585 | 0.8497 | +0.2912 |
 | r_soma_trunk | 0.9225 | 0.9348 | +0.0123 |
-| frac_branch_independent | 0.4818 | 0.1667 | -0.3152 |
+| frac_branch_independent | 0.4818 | 0.1389 | -0.3429 |
 | branch_first_frac | 0.5789 | 1.0000 | +0.4211 |
 | n_branch_events | 110.0000 | 72.0000 | -38.0000 |
 | n_soma_events | 46.0000 | 45.0000 | -1.0000 |
@@ -72,8 +72,8 @@ Mask: Dice=0.887, precision=0.918, recall=0.858
 |--------|--------|------|---|
 | r_soma_branch | 0.4805 | 0.4635 | -0.0170 |
 | r_soma_trunk | 0.5820 | 0.5755 | -0.0065 |
-| frac_branch_independent | 0.2000 | 0.3143 | +0.1143 |
-| branch_first_frac | 0.5455 | 0.5000 | -0.0455 |
+| frac_branch_independent | 0.2000 | 0.2000 | +0.0000 |
+| branch_first_frac | 0.5455 | 0.6000 | +0.0545 |
 | n_branch_events | 35.0000 | 35.0000 | +0.0000 |
 | n_soma_events | 46.0000 | 45.0000 | -1.0000 |
 | r_soma_branch_corr | 0.4893 | 0.4702 | -0.0191 |
@@ -150,14 +150,14 @@ Mask: Dice=0.689, precision=0.531, recall=0.982
 # 2. Soma/Reference-Branch vs Reference-Trunk Coupling
 
 n = 17 cells from 7 mice
-r(ref, branch): mean=0.507, 95% CI [0.402, 0.608]
-r(ref, trunk):  mean=0.755, 95% CI [0.652, 0.842]
+r(ref, branch): mean=0.535, 95% CI [0.425, 0.642]
+r(ref, trunk):  mean=0.757, 95% CI [0.657, 0.846]
   (3 of 17 are imaging-only cells, included because this is an imaging analysis)
 Wilcoxon signed-rank (trunk > branch): W=153.0, p=7.63e-06
 Branch coupling lower than trunk: 17/17 cells
-Noise-corrected r(ref, branch): mean=0.518, 95% CI [0.410, 0.620]
+Noise-corrected r(ref, branch): mean=0.545, 95% CI [0.432, 0.655]
 Halo control: full - core mean diff = 0.0487 (small = not halo artifact)
-Mixed model (trunk-branch ~ 1 | mouse): intercept=0.2483, p=1.24e-13
+Mixed model (trunk-branch ~ 1 | mouse): intercept=0.2228, p=1.41e-05
 
 # 3. Independent Branch Events: Dual-Null Surrogate Test
 
@@ -171,16 +171,16 @@ n = 15 cells from 7 mice with sufficient events
 
 Cells excluded (2): rbp4_132_phpeb_26-06-08_Run004 (< 3 branch events); rbp4_phpebne_053_26-09-14_MUnit18 (< 3 branch events)
 
-Observed frac_independent: mean=0.413, 95% CI [0.285, 0.549]
-Coupled-noise null mean:   0.284
-Independent null mean:     0.905
+Observed frac_independent: mean=0.402, 95% CI [0.278, 0.535]
+Coupled-noise null mean:   0.245
+Independent null mean:     0.906
 
 ## Test A: Observed > Coupled-Noise Null
   (Real independent events beyond what detection noise produces)
-  Wilcoxon signed-rank (observed - null_A > 0): W=90.0, p=0.0473
-  Observed > coupled null: 9/15 cells
-  Stouffer combined p: 0.00315 (z=2.73)
-  Fisher combined p:   2.89e-10
+  Wilcoxon signed-rank (observed - null_A > 0): W=99.0, p=0.0128
+  Observed > coupled null: 10/15 cells
+  Stouffer combined p: 2.29e-05 (z=4.08)
+  Fisher combined p:   2.69e-12
 
 ## Test B: Observed < Independent Null
   (Real coupling: independence is less than what fully unrelated traces give)
@@ -202,18 +202,18 @@ Independent null mean:     0.905
 | rbp4_141_phpeb_26-06-17_Run006 | 0.250 | 0.364±0.058 | 0.862±0.116 | 0.972 | < 0.002 (resolution 1/501) | 8 | 34 |
 | rbp4_141_phpeb_26-06-25_Run007 | 0.714 | 0.249±0.066 | 0.896±0.076 | < 0.002 (resolution 1/501) | 0.0419 | 14 | 30 |
 | rbp4_155_26-09-29_MUnit13 | 0.800 | 0.871±0.018 | 0.953±0.033 | 0.998 | 0.00399 | 45 | 22 |
+| rbp4_phpebach_26-06-26_Run002 | 0.364 | 0.081±0.064 | 0.967±0.053 | < 0.002 (resolution 1/501) | < 0.002 (resolution 1/501) | 11 | 13 |
 | rbp4_phpebach_26-06-26_Run004 | 0.314 | 0.231±0.032 | 0.859±0.070 | < 0.002 (resolution 1/501) | < 0.002 (resolution 1/501) | 35 | 45 |
-| rbp4_phpebach_26-06-26_Run002 | 0.533 | 0.666±0.046 | 0.949±0.056 | 0.99 | < 0.002 (resolution 1/501) | 15 | 24 |
 | rbp4_phpebach_26-06-26_Run005 | 0.154 | 0.069±0.037 | 0.865±0.094 | 0.024 | < 0.002 (resolution 1/501) | 13 | 35 |
 | rbp4_phpebach_26-06-26_Run007 | 0.000 | 0.167±0.077 | 0.952±0.092 | 1 | < 0.002 (resolution 1/501) | 5 | 14 |
 | rbp4_phpebach_26-06-26_Run009 | 0.800 | 0.853±0.019 | 0.866±0.082 | 0.998 | 0.339 | 15 | 34 |
 | rbp4_phpebne_053_26-09-14_Run011 | 0.250 | 0.316±0.056 | 0.941±0.065 | 0.882 | < 0.002 (resolution 1/501) | 12 | 41 |
 
-Per-cell FDR (test A, obs > coupled): 9/15 significant at q<0.05
+Per-cell FDR (test A, obs > coupled): 10/15 significant at q<0.05
 Per-cell FDR (test B, obs < independent): 11/15 significant at q<0.05
 
 ### Interpretation
-  Majority of cells (9/15) show more independent branch events than
+  Majority of cells (10/15) show more independent branch events than
   the coupled-noise null: real independent events exist beyond detection noise.
   Majority of cells (15/15) show less independence than the
   independent null: real coupling between branch and reference exists.
@@ -331,19 +331,19 @@ out does not change parameters. But n=3 limits validation power.
 # 4. Coupling vs Geodesic Distance from Reference
 
 n = 71 regions from 17 cells
-Pooled Spearman (descriptive, pseudo-replicated): rho=-0.541, p=1.11e-06
+Pooled Spearman (descriptive, pseudo-replicated): rho=-0.512, p=4.99e-06
   NOTE: regions from the same cell are not independent; the mixed model below is the primary test.
-Per-cell slope: mean=-0.161 r/100um, 95% CI [-0.208, -0.119]
-Mixed model (r ~ distance + (1|cell), PRIMARY): slope=-0.001415/um, p=3.13e-20
+Per-cell slope: mean=-0.149 r/100um, 95% CI [-0.196, -0.108]
+Mixed model (r ~ distance + (1|cell), PRIMARY): slope=-0.001309/um, p=2.08e-18
 
 # 5. Event Order: Branch-First Fraction
 
-n = 10 cells, 48 paired events
-Branch peaks first: 40/48 (83.3%)
-Pooled binomial (descriptive, pseudo-replicated): p=1.65e-06
+n = 11 cells, 58 paired events
+Branch peaks first: 49/58 (84.5%)
+Pooled binomial (descriptive, pseudo-replicated): p=4.48e-08
   NOTE: events from the same cell are not independent; the sign test below is the primary test.
-Per-cell sign test (PRIMARY): 9/10 cells with fraction > 0.5, p=0.0107
-Mean branch-first fraction: 0.832, 95% CI [0.730, 0.932]
+Per-cell sign test (PRIMARY): 11/11 cells with fraction > 0.5, p=0.000488
+Mean branch-first fraction: 0.852, 95% CI [0.761, 0.941]
 
 # 6. Branch Amplitude Predicts Propagation
 
@@ -353,17 +353,17 @@ SKIP: per-event amplitude data not available in aggregate metrics.
 
 # 7. Behavior Coupling
 
-n = 12 cells with behavior data
+n = 13 cells with behavior data
   (3 imaging-only cells excluded from behavior analyses — behavior data not available)
 
-  whisking: 6/12 significant at p<0.05 (uncorrected), mean peak r=0.182
-  pupil: 4/12 significant at p<0.05 (uncorrected), mean peak r=0.139
-  accelerometer: 5/12 significant at p<0.05 (uncorrected), mean peak r=0.105
+  whisking: 6/13 significant at p<0.05 (uncorrected), mean peak r=0.186
+  pupil: 4/13 significant at p<0.05 (uncorrected), mean peak r=0.138
+  accelerometer: 5/13 significant at p<0.05 (uncorrected), mean peak r=0.091
 
-After BH-FDR across all 36 behavior tests: 11 significant at q<0.05
+After BH-FDR across all 39 behavior tests: 11 significant at q<0.05
 
-Quiet vs active: 7/12 cells more coupled when active
-Wilcoxon (active vs quiet): p=0.424
+Quiet vs active: 7/13 cells more coupled when active
+Wilcoxon (active vs quiet): p=0.455
 
 # 8. Coupling vs Expression Time
 
@@ -371,14 +371,14 @@ n = 9 cells from 4 mice
 DPI range: 241–258
 Spearman r(ref, branch) vs DPI: rho=0.093, p=0.812
 Mixed model (r ~ dpi + (1|mouse)): slope=-0.002402/day, p=0.881
-Spearman r(ref, branch) vs soma F: rho=-0.355, p=0.162
+Spearman r(ref, branch) vs soma F: rho=-0.471, p=0.0566
 
 CAVEAT: DPI range is narrow (17 days across 5 mice), so this test has limited power.
 rbp4_phpebach excluded (unknown injection date).
 
 # 9. Co-firing Groups
 
-n = 17 cells
+n = 18 cells
 Co-firing groups per cell: mean=1.9, range [1, 3]
 Soma shares a group with any branch: 2/9 cells
 
@@ -388,6 +388,7 @@ Soma shares a group with any branch: 2/9 cells
 |-----|-------|--------|----------|---------|-----------|-----------|-------------|---------------|-------|
 | phpeb/06-08-2026/preprocessed/run03 | rbp4_132_phpeb | - | 6053 | 4 | soma | 0 | 36 | 4 | no_bifurcation |
 | phpeb/06-08-2026/preprocessed/run04 | rbp4_132_phpeb | - | 5648 | 4 | soma | 0 | 32 | 1 | no_bifurcation |
+| 4_139_phpeb/06-12-2026/traces/run04 |  | - | 9582 | 5 | proximal_trunk | 0 | 0 | 0 | no_soma, no_bifurcation, no_behavior |
 | 4_139_phpeb/06-12-2026/traces/run05 | rbp4_139_phpeb | - | 4043 | 4 | proximal_trunk | 3 | 18 | 26 | no_soma, no_bifurcation, 3_suspects, no_behavior |
 | phpeb/06-18-2026/preprocessed/run03 **[GT]** | rbp4_140_phpeb | - | 6673 | 5 | proximal_trunk | 0 | 15 | 7 | no_soma, no_bifurcation |
 | phpeb/06-18-2026/preprocessed/run04 **[GT]** | rbp4_140_phpeb | - | 4439 | 7 | proximal_trunk | 0 | 45 | 72 | no_soma |
@@ -397,11 +398,13 @@ Soma shares a group with any branch: 2/9 cells
 | phpeb/06-17-2026/preprocessed/run04 |  | - | 5367 | 5 | proximal_trunk | 0 | 0 | 0 | no_soma, no_bifurcation, low_reliability |
 | phpeb/06-17-2026/preprocessed/run06 | rbp4_141_phpeb | - | 6926 | 5 | proximal_trunk | 0 | 34 | 8 | no_soma, no_bifurcation, low_reliability |
 | phpeb/06-17-2026/preprocessed/run09 |  | - | 6043 | 5 | proximal_trunk | 0 | 0 | 0 | no_soma, no_bifurcation |
+| _WRONG_NZ15_was_MUnit4_misextracted |  | - | 4546 | 4 | soma | 0 | 0 | 0 | no_bifurcation, no_behavior |
+| phpeb/06-25-2026/preprocessed/run03 |  | - | 8133 | 4 | soma | 0 | 0 | 0 | no_bifurcation |
 | phpeb/06-25-2026/preprocessed/run07 | rbp4_141_phpeb | - | 8349 | 5 | soma | 0 | 30 | 14 | no_bifurcation |
-| _phpeb/06-25-2026/preprocessed/run3 |  | - | 4546 | 4 | soma | 0 | 0 | 0 | no_bifurcation |
 | 155/09-29-2026/preprocessed/munit13 | rbp4_155 | - | 8407 | 5 | soma | 1 | 22 | 45 | no_bifurcation, 1_suspects, low_reliability, no_behavior |
+| _WRONG_NZ19_was_MUnit3_misextracted | rbp4_phpebach | - | 7387 | 5 | proximal_trunk | 0 | 24 | 15 | no_soma, no_bifurcation, low_reliability, no_behavior |
+| rbp4_phpebach/06-26-2026/run02 | rbp4_phpebach | - | 6040 | 5 | proximal_trunk | 0 | 13 | 11 | no_soma, no_bifurcation |
 | rbp4_phpebach/06-26-2026/run04 | rbp4_phpebach | - | 7722 | 7 | proximal_trunk | 0 | 45 | 35 | no_soma |
-| rbp4_phpebach/06-26-2026/run04/run2 | rbp4_phpebach | - | 7387 | 5 | proximal_trunk | 0 | 24 | 15 | no_soma, no_bifurcation, low_reliability |
 | rbp4_phpebach/06-26-2026/run05 **[GT]** | rbp4_phpebach | - | 12395 | 5 | soma | 0 | 35 | 13 | no_bifurcation |
 | rbp4_phpebach/06-26-2026/run07 | rbp4_phpebach | - | 12109 | 5 | soma | 0 | 14 | 5 | no_bifurcation |
 | rbp4_phpebach/06-26-2026/run09 | rbp4_phpebach | - | 18371 | 5 | soma | 0 | 34 | 15 | no_bifurcation |
@@ -414,7 +417,7 @@ Soma shares a group with any branch: 2/9 cells
 | 053/09-18-2026/preprocessed/munit21 |  | - | 11877 | 5 | soma | 0 | 0 | 0 | no_bifurcation, no_behavior |
 | 053/09-18-2026/preprocessed/munit37 |  | - | 4681 | 5 | soma | 2 | 0 | 0 | 2_suspects, low_reliability, no_behavior |
 
-All 27 runs have confidence='auto' (fully automatic, no manual review).
+All 30 runs have confidence='auto' (fully automatic, no manual review).
 Rating = Daria's quality rating (run_quality.csv: very good / good / questionable; '-' = unrated). A rating never removes a run; see the Sensitivity Analysis section.
 
 ---
@@ -425,18 +428,18 @@ Per-cell surrogate p-values and pseudo-replicated (pooled) p-values are excluded
 
 | Test | p | q (BH) |
 |------|---|--------|
-| test02_coupling | 7.63e-06 | 2.54e-05 **|
-| test02_coupling | 1.24e-13 | 6.2e-13 **|
-| test03_independence | 0.0473 | 0.0788 |
+| test02_coupling | 7.63e-06 | 3.81e-05 **|
+| test02_coupling | 1.41e-05 | 4.71e-05 **|
+| test03_independence | 0.0128 | 0.0213 **|
 | test03_independence | 3.05e-05 | 7.63e-05 **|
-| test04_distance | 3.13e-20 | 3.13e-19 **|
-| test05_event_order | 0.0107 | 0.0215 **|
-| test07_behavior | 0.424 | 0.53 |
+| test04_distance | 2.08e-18 | 2.08e-17 **|
+| test05_event_order | 0.000488 | 0.000977 **|
+| test07_behavior | 0.455 | 0.569 |
 | test08_expression | 0.812 | 0.881 |
 | test08_expression | 0.881 | 0.881 |
-| test08_expression | 0.162 | 0.231 |
+| test08_expression | 0.0566 | 0.0808 |
 
-10 tests, 5 significant at q<0.05
+10 tests, 6 significant at q<0.05
 
 ---
 ## Sensitivity Analysis
@@ -453,16 +456,16 @@ Ratings among the 17 cells: very good 0, good 0, questionable 0, unrated 17. Rat
 
 | Test | main p (q) | (a) no questionable p (q) | (b) very good only p (q) |
 |------|-----------|---------------------------|--------------------------|
-| test02_coupling | 7.63e-06 (2.54e-05) | 7.63e-06 (2.54e-05) | n/a |
-| test02_coupling #2 | 1.24e-13 (6.2e-13) | 1.24e-13 (6.2e-13) | n/a |
-| test03_independence | 0.0473 (0.0788) | 0.0473 (0.0788) | n/a |
+| test02_coupling | 7.63e-06 (3.81e-05) | 7.63e-06 (3.81e-05) | n/a |
+| test02_coupling #2 | 1.41e-05 (4.71e-05) | 1.41e-05 (4.71e-05) | n/a |
+| test03_independence | 0.0128 (0.0213) | 0.0128 (0.0213) | n/a |
 | test03_independence #2 | 3.05e-05 (7.63e-05) | 3.05e-05 (7.63e-05) | n/a |
-| test04_distance | 3.13e-20 (3.13e-19) | 3.13e-20 (3.13e-19) | n/a |
-| test05_event_order | 0.0107 (0.0215) | 0.0107 (0.0215) | n/a |
-| test07_behavior | 0.424 (0.53) | 0.424 (0.53) | n/a |
+| test04_distance | 2.08e-18 (2.08e-17) | 2.08e-18 (2.08e-17) | n/a |
+| test05_event_order | 0.000488 (0.000977) | 0.000488 (0.000977) | n/a |
+| test07_behavior | 0.455 (0.569) | 0.455 (0.569) | n/a |
 | test08_expression | 0.812 (0.881) | 0.812 (0.881) | n/a |
 | test08_expression #2 | 0.881 (0.881) | 0.881 (0.881) | n/a |
-| test08_expression #3 | 0.162 (0.231) | 0.162 (0.231) | n/a |
+| test08_expression #3 | 0.0566 (0.0808) | 0.0566 (0.0808) | n/a |
 
 ---
 ## Statistical Notes
@@ -492,13 +495,8 @@ so leave-one-out produces the same parameters.
 ---
 ## Cross-Check: cohort_stats.py vs RESULTS.json
 
-cohort_stats.py: 44 runs, r(soma,branch) mean 0.44, r(soma,trunk) mean 0.66, Wilcoxon p=3.07e-08, 10 set aside
-paper_stats.py:  17 runs, r(soma,branch) mean 0.5071, r(soma,trunk) mean 0.7554, Wilcoxon p=7.63e-06
+cohort_stats.py: 17 runs, r(soma,branch) mean 0.53, r(soma,trunk) mean 0.76, Wilcoxon p=7.63e-06, 41 set aside
+paper_stats.py:  17 runs, r(soma,branch) mean 0.5345, r(soma,trunk) mean 0.7574, Wilcoxon p=7.63e-06
 
-**Differences found:**
-  - n runs: cohort_stats 44 vs paper_stats 17
-  - r(soma,branch): cohort_stats 0.4400 vs paper_stats 0.5071 (cohort_stats includes all cells with branch regions; paper_stats test 2 requires both branch and trunk for pairing)
-  - r(soma,trunk): cohort_stats 0.6600 vs paper_stats 0.7554
-
-Explanation: cohort_stats.py counts all cells including those without branch regions (for distance and trunk coupling), while paper_stats.py test 2 requires both r_soma_branch and r_soma_trunk (paired test). Cells without a branch region are excluded from the paired coupling test but included in the distance regression and independence test where applicable. The difference in n is expected and correct.
+Numbers agree within rounding tolerance.
 

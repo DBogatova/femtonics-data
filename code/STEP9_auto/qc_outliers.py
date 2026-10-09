@@ -333,7 +333,7 @@ def run_qc_all(output_dir: str = None):
     run_dirs = []
     for mask_file in sorted(root.rglob("*_autoseg_labelmap_reviewed.tif")):
         rd = mask_file.parent
-        if "old" in str(rd) or "_e2e" in str(rd):
+        if "old" in str(rd) or "_e2e" in str(rd) or "/_" in str(rd):
             continue
         stem = mask_file.name.replace("_autoseg_labelmap_reviewed.tif", "")
         ref = rd / f"{stem}_ref3d.tif"

@@ -197,7 +197,7 @@ def enumerate_runs(roots: dict) -> list[dict]:
     for tag, root in roots.items():
         coh = _cohort_bases(root)
         for f in sorted(glob.glob(str(root / "rbp4_*/**/*_metrics.json"), recursive=True)):
-            if "/old/" in f:
+            if "/old/" in f or "/_" in f:      # archives (old/, _archived_wrong_nz/, _audit_*)
                 continue
             mp = Path(f); stem = mp.name[:-len("_metrics.json")]
             stack, seg = mp.with_name(stem + ".tif"), mp.with_name(stem + "_segments_final.tif")

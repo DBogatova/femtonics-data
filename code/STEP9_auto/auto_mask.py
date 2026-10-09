@@ -363,7 +363,7 @@ def period_from_mesc(run_dir: Path) -> tuple[int, str] | None:
         sys.path.insert(0, str(_ROOT / "code/STEP1_extract"))
         from summarize_mesc import parse_json_attr
 
-        if run_dir.parent.name == "preprocessed":
+        if run_dir.parent.name in ("preprocessed", "traces"):   # 139_phpeb/06-12 uses traces/
             session = run_dir.parents[1]
         else:
             session = run_dir.parent

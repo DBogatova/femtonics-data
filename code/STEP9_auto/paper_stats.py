@@ -655,7 +655,7 @@ def collect_all_metrics() -> pd.DataFrame:
     """Collect all metrics JSONs from auto_pipeline into a DataFrame."""
     rows = []
     for f in sorted(glob.glob(str(AUTO_ROOT / "rbp4_*/**/*_metrics.json"), recursive=True)):
-        if "/old/" in f:
+        if "/old/" in f or "/_" in f:          # archives (old/, _archived_wrong_nz/, _audit_*)
             continue
         m = json.load(open(f))
         if "note" in m or is_set_aside(m.get("behavior_base", "")):
@@ -680,7 +680,7 @@ def collect_all_metrics() -> pd.DataFrame:
 def collect_distance() -> pd.DataFrame:
     rows = []
     for f in sorted(glob.glob(str(AUTO_ROOT / "rbp4_*/**/*_metrics.json"), recursive=True)):
-        if "/old/" in f:
+        if "/old/" in f or "/_" in f:          # archives (old/, _archived_wrong_nz/, _audit_*)
             continue
         m = json.load(open(f))
         if is_set_aside(m.get("behavior_base", "")):
@@ -694,7 +694,7 @@ def collect_distance() -> pd.DataFrame:
 def collect_behavior() -> pd.DataFrame:
     rows = []
     for f in sorted(glob.glob(str(AUTO_ROOT / "rbp4_*/**/*_behavior_coupling.json"), recursive=True)):
-        if "/old/" in f:
+        if "/old/" in f or "/_" in f:          # archives (old/, _archived_wrong_nz/, _audit_*)
             continue
         bc = json.load(open(f))
         if is_set_aside(bc.get("behavior_base", "")):

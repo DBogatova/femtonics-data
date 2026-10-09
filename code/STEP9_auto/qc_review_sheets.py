@@ -268,7 +268,7 @@ def find_all_runs(root: Path) -> list[tuple[Path, str]]:
     runs = []
     for mask_file in sorted(root.rglob("*_autoseg_labelmap_reviewed.tif")):
         rd = mask_file.parent
-        if "old" in str(rd):
+        if "old" in str(rd) or "/_" in str(rd):          # archives (_archived_wrong_nz/ ...)
             continue
         stem = mask_file.name.replace("_autoseg_labelmap_reviewed.tif", "")
         ref = rd / f"{stem}_ref3d.tif"

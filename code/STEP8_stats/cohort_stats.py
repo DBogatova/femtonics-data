@@ -128,7 +128,7 @@ def collect() -> pd.DataFrame:
     _RATINGS = load_quality()          # human quality rating per run; never sets a run aside
     rows = []
     for f in glob.glob(str(ROOT / "rbp4_*/**/*_metrics.json"), recursive=True):
-        if "/old/" in f:
+        if "/old/" in f or "/_" in f:          # archives (old/, _archived_wrong_nz/, _audit_*)
             continue
         m = json.load(open(f))
         if "note" in m or is_set_aside(m.get("behavior_base", "")):
@@ -167,7 +167,7 @@ def collect() -> pd.DataFrame:
 def collect_distance() -> pd.DataFrame:
     rows = []
     for f in glob.glob(str(ROOT / "rbp4_*/**/*_metrics.json"), recursive=True):
-        if "/old/" in f:
+        if "/old/" in f or "/_" in f:          # archives (old/, _archived_wrong_nz/, _audit_*)
             continue
         m = json.load(open(f))
         if is_set_aside(m.get("behavior_base", "")) or not _is_current(f):
@@ -457,7 +457,7 @@ def tests(d: pd.DataFrame, dd: pd.DataFrame | None = None, sensitivity: bool = T
     L.append("Behavior (whole cell, cross-correlation within +-5 s, circular-shift null; q = BH across all runs x behaviors)")
     brow = []
     for f in sorted(glob.glob(str(ROOT / "rbp4_*/**/*_behavior_coupling.json"), recursive=True)):
-        if "/old/" in f:
+        if "/old/" in f or "/_" in f:          # archives (old/, _archived_wrong_nz/, _audit_*)
             continue
         j = json.load(open(f)); wc = j.get("regions", {}).get("whole cell")
         if is_set_aside(j.get("behavior_base", "")) or not wc:
