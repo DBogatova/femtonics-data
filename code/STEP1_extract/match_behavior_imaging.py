@@ -15,6 +15,11 @@ flagged as `order_within_group` so you can eyeball them.
 Secondary sanity check: the behavior `imaging window` length vs the .mesc
 `duration_calc_s` (n_t * t_step_ms).
 
+Sessions whose raw triggers recorded no Andor edges (October 2026) cannot use
+the fingerprint; their units are paired to behavior_raw/ trigger .mat files by
+save time instead (match_confidence = raw_time_paired, see pair_raw_by_time).
+Those rows stay unranked until the behavior pipeline has processed them.
+
 Usage
 -----
     python code/STEP1_extract/match_behavior_imaging.py [ROOT] [-o OUT.csv]
@@ -299,6 +304,83 @@ def match_session(units, behavior):
     return pairs, rest_u, rest_b
 
 
+# ------------------------------------------- raw trigger pairing (no Andor edges)
+# Some sessions (rbp4_155 10-06 / 10-08, rbp4Flp0_008 10-08) recorded ZERO
+# AndorXylaTrigger edges, so the plane-count fingerprint above cannot work. For
+# those, and only those, a raw trigger .mat is paired to the imaging unit that
+# ended just before the .mat was saved: the acquisition script writes the .mat
+# RAW_SAVE_LAG_S after the imaging stops (14-15 s on 10-08). A pair also needs the
+# trigger record to outlast the imaging by 0..RAW_RECORD_PAD_S. Anything outside
+# those windows (e.g. file mtimes lost in a copy) is left unpaired, never guessed.
+RAW_SAVE_LAG_S = (0.0, 60.0)
+RAW_RECORD_PAD_S = (0.0, 30.0)
+
+
+def _utc(ts):
+    from datetime import datetime, timezone
+    try:
+        return datetime.strptime(ts.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc).timestamp()
+    except (AttributeError, ValueError):
+        return None
+
+
+def load_raw_triggers(session_dir, mouse_date):
+    """Raw trigger .mat files of one session, with their trig_*.csv summary.
+
+    -> list of dicts (mouse_date, run_number, mat, saved_utc, record_s, andor_edges,
+       camera_edges). Only files listed in a trig_*.csv are returned: that CSV is
+       where the Andor edge count comes from."""
+    raw = os.path.join(session_dir, "behavior_raw")
+    out = []
+    for tcsv in sorted(glob.glob(os.path.join(raw, "trig_*.csv"))):
+        for r in csv.DictReader(open(tcsv)):
+            mat = os.path.join(raw, "trigger", os.path.basename(r.get("file", "")))
+            if not os.path.isfile(mat):
+                continue
+            out.append({
+                "mouse_date": mouse_date,
+                "run_number": int(_f(r.get("run_number")) or 0) or None,
+                "mat": mat,
+                "saved_utc": os.path.getmtime(mat),
+                "record_s": _f(r.get("record_s")),
+                "andor_edges": int(_f(r.get("AndorXylaTrigger_edges")) or 0),
+                "camera_edges": _i(_f(r.get("baslerExposureTrigger_edges"))),
+            })
+    return out
+
+
+def pair_raw_by_time(units, triggers):
+    """{id(unit): trigger} for triggers with zero Andor edges, one-to-one.
+
+    Each trigger takes the unit whose end (timestamp + duration) is closest
+    before its save time, inside RAW_SAVE_LAG_S and RAW_RECORD_PAD_S."""
+    out, taken = {}, set()
+    for t in sorted((t for t in triggers if t["andor_edges"] == 0),
+                    key=lambda t: t["saved_utc"]):
+        best = None
+        for u in units:
+            if id(u) in taken:
+                continue
+            t0 = _utc(u["timestamp"])
+            if t0 is None or not u["duration_s"]:
+                continue
+            lag = t["saved_utc"] - (t0 + u["duration_s"])
+            if not (RAW_SAVE_LAG_S[0] <= lag <= RAW_SAVE_LAG_S[1]):
+                continue
+            if t["record_s"] is not None:
+                pad = t["record_s"] - u["duration_s"]
+                if not (RAW_RECORD_PAD_S[0] <= pad <= RAW_RECORD_PAD_S[1]):
+                    continue
+            if best is None or lag < best[1]:
+                best = (u, lag)
+        if best:
+            u, lag = best
+            taken.add(id(u))
+            out[id(u)] = dict(t, lag_s=round(lag, 1))
+    return out
+
+
 # -------------------------------------------------------------------- quality
 def comment_quality(comment):
     """-> (quality, score, notes).  quality in good/ok/caution/bad/unknown."""
@@ -350,7 +432,7 @@ def priority(row):
     if row["mesc_present"] != "yes":
         return "P4", "imaging .mesc file missing"
     if not row["behavior_base"]:
-        if row["match_confidence"] == "raw_behavior_unprocessed":
+        if row["match_confidence"] in ("raw_behavior_unprocessed", "raw_time_paired"):
             return "P4", "behavior recorded but not yet processed"
         return "P4", "no matching behavior recording"
     if not row["munit"]:
@@ -500,6 +582,8 @@ COLUMNS = [
     "duration_mismatch_s",
     "extracted_tif", "extracted_tif_other_candidates", "extracted_tif_suspect_nz",
     "quality_score", "flags",
+    # raw-trigger pairing for sessions with no Andor edges (see pair_raw_by_time)
+    "raw_trigger_mat", "raw_trigger_lag_s",
 ]
 
 
@@ -602,6 +686,62 @@ def main():
         real = img.get("mesc_real")
         for u, b, *_ in pairs:
             claimed[(real, u["session"], u["unit"])] = "%s/%s" % key
+
+    # ---- pass 1b: sessions whose raw triggers have no Andor edges. Pair the
+    #      leftover units to behavior_raw/ trigger .mat files by save time, and
+    #      for a two-mouse .mesc give every leftover unit to the right animal
+    #      (paired -> the trigger's mouse; unpaired -> mouse of the nearest
+    #      time-paired unit). Units with a processed-behavior match are untouched.
+    raw_pair, raw_owner_note = {}, {}
+    groups = defaultdict(list)
+    for key in keys:
+        img = imaging.get(key)
+        if img and img.get("mesc_real"):
+            groups[img["mesc_real"]].append(key)
+    for real, gkeys in groups.items():
+        # one copy of the unit list: the folder that owns the .mesc (others hold
+        # symlinks and, when they have a summary, a duplicate unit list)
+        owner_key = next((k for k in gkeys if imaging[k].get("owns_mesc")), gkeys[0])
+        trig = {}
+        for key in gkeys:
+            if behavior.get(key):
+                continue
+            for t in load_raw_triggers(os.path.join(root, *key), "%s/%s" % key):
+                sig = (os.path.basename(t["mat"]), os.path.getsize(t["mat"]), t["saved_utc"])
+                if sig in trig:
+                    # same file copied into two mouse folders: animal unknown
+                    trig[sig]["mouse_date"] = None
+                else:
+                    trig[sig] = t
+        if not trig:
+            continue
+        lone = list(matched_by_session[owner_key][1])
+        hits = pair_raw_by_time(lone, list(trig.values()))
+        if not hits:
+            continue
+        raw_pair.update(hits)
+        if len(gkeys) < 2 or any(h["mouse_date"] is None for h in hits.values()):
+            continue                   # single mouse, or trigger folders not split by animal
+        paired = [(_utc(u["timestamp"]), hits[id(u)]["mouse_date"])
+                  for u in lone if id(u) in hits]
+        moved = defaultdict(list)
+        for u in lone:
+            if id(u) in hits:
+                target = hits[id(u)]["mouse_date"]
+            else:
+                t0 = _utc(u["timestamp"]) or 0
+                target = min(paired, key=lambda p: abs(p[0] - t0))[1]
+                raw_owner_note[id(u)] = target
+            claimed[(real, u["session"], u["unit"])] = target
+            tkey = tuple(target.split("/"))
+            if tkey != owner_key and tkey in matched_by_session:
+                matched_by_session[owner_key][1].remove(u)
+                moved[tkey].append(u)
+        for key in gkeys:
+            if key != owner_key:       # drop the duplicate lists, keep only moved units
+                matched_by_session[key][1][:] = moved.get(key, [])
+    for key in keys:
+        matched_by_session[key][1].sort(key=lambda u: (u["timestamp"], u["unit"]))
 
     rows, notes = [], []
     for (mouse, date) in keys:
@@ -746,10 +886,33 @@ def main():
                          "raw_behavior_unprocessed" if raw_beh_note else "no_behavior", "")
             r["flags"] = (raw_beh_note if raw_beh_note
                           else "NO BEHAVIOR FILE for this imaging run")
+            rp = raw_pair.get(id(u))
+            if rp:
+                r["match_confidence"] = "raw_time_paired"
+                r["behavior_run_number"] = rp["run_number"]
+                r["behavior_andor_edges"] = rp["andor_edges"]
+                r["behavior_camera_edges"] = rp["camera_edges"]
+                r["raw_trigger_mat"] = os.path.relpath(rp["mat"], root)
+                r["raw_trigger_lag_s"] = rp["lag_s"]
+                r["flags"] = (f"paired by time to behavior_raw Run{rp['run_number']:03d} "
+                              f"(.mat saved {rp['lag_s']} s after imaging ended; the "
+                              f"trigger has no Andor edges, so no trigger-count check) "
+                              f"- behavior not yet processed")
+                crn = r["comment_run_number"]
+                if crn != "" and rp["run_number"] and int(crn) != rp["run_number"]:
+                    r["comment_run_conflict"] = "yes"
+                    r["flags"] += (f" | CHECK: comment says run {crn} but the trigger "
+                                   f"saved right after it is Run{rp['run_number']:03d}")
             if is_shared:
-                r["flags"] += (" | this .mesc holds two mice ("
-                               + ", ".join(others) + "); which animal this unit "
-                               "belongs to is unresolved without a behavior match")
+                if rp and rp["mouse_date"]:
+                    r["flags"] += f" | this .mesc holds two mice; unit belongs to {mouse}"
+                elif id(u) in raw_owner_note:
+                    r["flags"] += (f" | this .mesc holds two mice; assigned to {mouse} "
+                                   "by the nearest time-paired unit (no trigger of its own)")
+                else:
+                    r["flags"] += (" | this .mesc holds two mice ("
+                                   + ", ".join(others) + "); which animal this unit "
+                                   "belongs to is unresolved without a behavior match")
             r["priority"], r["priority_reason"] = priority(r)
             rows.append(r)
 
